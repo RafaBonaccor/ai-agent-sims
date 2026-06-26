@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+
+java/out/
+java/save/*.properties
+
+*.log
+*.tmp
+.env
+.env.*
+
+.DS_Store
+Thumbs.db

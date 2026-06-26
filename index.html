@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Protocol Lab 3D</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.165.0/build/three.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <canvas id="game" aria-label="Laboratorio 3D degli agenti AI"></canvas>
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true"></span>
+        <div>
+          <p class="brand__kicker">Agent Protocol Lab</p>
+          <h1>AI House</h1>
+        </div>
+      </div>
+
+      <div class="toolbar" aria-label="Controlli">
+        <button id="run-toggle" class="button button--primary" type="button">Pausa</button>
+        <button id="auto-toggle" class="button button--primary" type="button">Auto</button>
+        <div class="segmented" id="speed-control" aria-label="Velocita">
+          <button class="segment segment--active" data-speed="1" type="button">1x</button>
+          <button class="segment" data-speed="2" type="button">2x</button>
+          <button class="segment" data-speed="4" type="button">4x</button>
+        </div>
+        <button id="camera-left" class="button button--icon" type="button" aria-label="Ruota camera a sinistra">Q</button>
+        <button id="camera-right" class="button button--icon" type="button" aria-label="Ruota camera a destra">E</button>
+      </div>
+    </header>
+
+    <aside class="inspector" aria-label="Stato agente">
+      <section class="panel-section">
+        <p class="section-label">Agente</p>
+        <h2 id="selected-name">Orchestrator</h2>
+        <dl class="fact-grid">
+          <div>
+            <dt>Ruolo</dt>
+            <dd id="selected-role">coordinator</dd>
+          </div>
+          <div>
+            <dt>Carico</dt>
+            <dd id="selected-load">0%</dd>
+          </div>
+          <div>
+            <dt>Tile</dt>
+            <dd id="selected-tile">-</dd>
+          </div>
+          <div class="fact-grid__wide">
+            <dt>Lavoro</dt>
+            <dd id="selected-job">routing</dd>
+          </div>
+          <div class="fact-grid__wide">
+            <dt>Stato</dt>
+            <dd id="selected-status">idle</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="panel-section">
+        <p class="section-label">Postazioni</p>
+        <div class="station-list" id="station-list"></div>
+      </section>
+    </aside>
+
+    <section class="command-strip" aria-label="Azioni">
+      <div class="command-group">
+        <button id="intent-task" class="button" type="button">Task</button>
+        <button id="intent-memory" class="button" type="button">Memoria</button>
+        <button id="intent-review" class="button" type="button">Review</button>
+      </div>
+      <div class="metrics" id="metrics"></div>
+      <ol class="event-log" id="event-log" aria-live="polite"></ol>
+    </section>
+
+    <p class="boot-message" id="boot-message" role="status"></p>
+
+    <noscript>Abilita JavaScript per usare la simulazione.</noscript>
+    <script>
+      window.__agentLabBooted = false;
+      window.setTimeout(() => {
+        if (!window.__agentLabBooted) {
+          const message = document.querySelector("#boot-message");
+          if (message) {
+            message.textContent =
+              "Il motore 3D non e partito. Avvia con run.bat e verifica la connessione per caricare Three.js.";
+          }
+        }
+      }, 3000);
+    </script>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>
