@@ -4,7 +4,6 @@ setlocal EnableExtensions EnableDelayedExpansion
 set "PROJECT_ROOT=%~dp0"
 set "HOST=127.0.0.1"
 set "PORT="
-set "PYTHON_CMD="
 set "OPEN_BROWSER=1"
 
 if /I "%~1"=="--no-browser" set "OPEN_BROWSER=0"
@@ -21,17 +20,19 @@ if exist "%PROJECT_ROOT%index.html" (
   exit /b 1
 )
 
-where python >nul 2>nul
-if %errorlevel%==0 (
-  set "PYTHON_CMD=python"
-) else (
-  where py >nul 2>nul
-  if %errorlevel%==0 (
-    set "PYTHON_CMD=py -3"
+if not defined PYTHON_EXE if not defined PYTHON_CMD (
+  where python >nul 2>nul
+  if !errorlevel!==0 (
+    set "PYTHON_CMD=python"
+  ) else (
+    where py >nul 2>nul
+    if !errorlevel!==0 (
+      set "PYTHON_CMD=py -3"
+    )
   )
 )
 
-if "%PYTHON_CMD%"=="" (
+if not defined PYTHON_EXE if not defined PYTHON_CMD (
   echo Python non trovato.
   echo Installa Python 3 oppure aggiungilo al PATH, poi rilancia questo file.
   pause
@@ -68,7 +69,11 @@ if "%OPEN_BROWSER%"=="1" (
   echo Apri manualmente: %URL%
 )
 
-%PYTHON_CMD% -m http.server %PORT% --bind %HOST%
+if defined PYTHON_EXE (
+  "%PYTHON_EXE%" -m uvicorn agent_runtime.server:app --host %HOST% --port %PORT%
+) else (
+  %PYTHON_CMD% -m uvicorn agent_runtime.server:app --host %HOST% --port %PORT%
+)
 set "SERVER_EXIT=%ERRORLEVEL%"
 popd
 exit /b %SERVER_EXIT%

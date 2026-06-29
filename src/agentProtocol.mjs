@@ -87,6 +87,43 @@ export class AgentNetwork {
     return this.protocolMap.get(id);
   }
 
+  registerAgent(agent) {
+    if (this.agentMap.has(agent.id)) {
+      return this.agentMap.get(agent.id);
+    }
+    const registered = {
+      reliability: 0.82,
+      capabilities: [],
+      ...agent,
+      position: { ...(agent.position ?? { x: 0.5, y: 0.5 }) },
+      runtime: {
+        load: agent.runtime?.load ?? 0.08,
+        inbox: agent.runtime?.inbox ?? 0,
+        outbox: agent.runtime?.outbox ?? 0,
+        status: agent.runtime?.status ?? "idle",
+        lastProtocol: agent.runtime?.lastProtocol ?? null,
+      },
+    };
+    this.agentMap.set(registered.id, registered);
+    this.log(`${registered.label} joined the runtime.`);
+    return registered;
+  }
+
+  registerRelation(relation) {
+    if (this.relationMap.has(relation.id)) {
+      return this.relationMap.get(relation.id);
+    }
+    const registered = {
+      latency: 0.8,
+      trust: 0.8,
+      bandwidth: 2,
+      bidirectional: true,
+      ...relation,
+    };
+    this.relationMap.set(registered.id, registered);
+    return registered;
+  }
+
   moveAgent(id, position) {
     const agent = this.getAgent(id);
     if (!agent) {
@@ -203,6 +240,7 @@ export class AgentNetwork {
       relationId: relation.id,
       type: messageInput.type,
       payload: messageInput.payload ?? {},
+      external: messageInput.external ?? false,
       color: messageType.color ?? protocol.color,
       priority,
       progress: 0,
@@ -259,7 +297,9 @@ export class AgentNetwork {
     recipient.runtime.status = `ricevuto ${messageType.shortLabel}`;
     recipient.runtime.lastProtocol = protocol.id;
 
-    this.applyProtocolRules(protocol, message, recipient);
+    if (!message.external) {
+      this.applyProtocolRules(protocol, message, recipient);
+    }
   }
 
   applyProtocolRules(protocol, message, recipient) {

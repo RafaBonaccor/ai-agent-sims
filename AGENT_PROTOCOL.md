@@ -1,6 +1,6 @@
 # Agent Protocol Lab
 
-Questa demo trasforma la base browser in una visualizzazione 3D di agenti AI, relazioni e messaggi di protocollo. La forma visuale e una piccola stanza/laboratorio a blocchi: gli agenti stanno su caselle, si muovono tile-by-tile tra postazioni, lavorano e comunicano.
+Questa applicazione combina un runtime agenti nativo in Python con una visualizzazione 3D di agenti, task e messaggi di protocollo. La stanza Three.js e un control plane: mostra eventi prodotti dal runtime, ma non decide il comportamento degli agenti.
 
 ## Struttura
 
@@ -10,6 +10,76 @@ Questa demo trasforma la base browser in una visualizzazione 3D di agenti AI, re
 - `src/agentWorld.mjs`: stato del mondo di gioco, griglia di blocchi, postazioni, pathfinding, target manuali e lavori degli agenti.
 - `src/scenarios.mjs`: scenario modificabile con agenti, relazioni, protocolli e intenti.
 - `src/agentProtocol.mjs`: motore logico di messaggistica, scheduling e regole di protocollo.
+- `src/runtimeClient.mjs`: client REST/WebSocket del runtime nativo.
+- `agent_runtime/models.py`: contratti validati per agenti, task, messaggi ed eventi.
+- `agent_runtime/engine.py`: state machine, routing e ciclo di esecuzione.
+- `agent_runtime/execution.py`: provider model, tool registry e tool loop.
+- `agent_runtime/protocols.py`: tipi messaggio e transizioni ammesse.
+- `agent_runtime/storage.py`: persistenza SQLite di agenti, task ed event log.
+- `agent_runtime/server.py`: API FastAPI, WebSocket e hosting del frontend.
+- `config/agents.json`: definizioni degli agenti iniziali.
+
+## Runtime nativo
+
+Il flusso principale e:
+
+```text
+Browser 3D -> REST (comandi) -> AgentRuntime
+Browser 3D <- WebSocket (eventi) <- AgentRuntime
+AgentRuntime -> RuntimeStore -> SQLite
+```
+
+Gli stati agente sono `idle`, `receiving`, `planning`, `executing`, `waiting`,
+`verifying`, `blocked`, `failed` e `stopped`.
+
+Il task contract applica la sequenza:
+
+```text
+created -> announced -> awarded -> accepted -> running -> verifying -> completed
+```
+
+Le transizioni non dichiarate vengono rifiutate. Il runtime attuale usa un executor simulato, intenzionalmente separato dal protocollo: un provider LLM o un tool executor reale potra sostituirlo senza modificare UI, persistenza o state machine.
+
+## API
+
+- `GET /api/health`: stato runtime.
+- `GET|POST /api/agents`: elenco e creazione agenti.
+- `PUT /api/agents/{id}`: modifica completa della configurazione agente.
+- `GET|PUT /api/agents/{id}/memory`: memoria privata persistente.
+- `GET|POST /api/tasks`: elenco e avvio task.
+- `GET /api/events`: event log persistente.
+- `GET /api/tools`: catalogo tool registrati e livello di rischio.
+- `GET /api/protocols`: protocolli e message type ammessi.
+- `WS /ws/events`: snapshot iniziale ed eventi live.
+
+## Provider e tool
+
+Ogni agente sceglie un provider indipendente:
+
+- `simulated`: executor deterministico locale usato per sviluppo e test.
+- `openai-compatible`: endpoint Chat Completions configurabile per agente.
+
+La chiave API non viene salvata nel database: la configurazione memorizza solo il
+nome della variabile d'ambiente, per esempio `MODEL_API_KEY`.
+
+Il tool registry nativo espone inizialmente:
+
+- `runtime_time` (`runtime`): lettura ora UTC.
+- `task_context` (`tasks`): lettura task assegnato.
+- `memory_read` (`memory`): lettura memoria privata agente.
+- `memory_append` (`memory`): aggiunta di un fatto durevole.
+
+Il provider vede solo tool appartenenti ai toolset abilitati per l'agente. Prima
+dell'esecuzione il runtime controlla anche il risk level contro la approval policy.
+Toolset come `web`, `files` e `terminal` sono gia configurabili ma resteranno non
+eseguibili finche i rispettivi adapter e sandbox non saranno implementati.
+
+## Configurazione oggetti
+
+Seleziona qualsiasi agente 3D e premi `Configure`. Il pannello permette di vedere
+e modificare identita, ruolo, istruzioni, capacita, protocolli, provider, modello,
+toolset, budget, approval policy e memoria privata. Le modifiche vengono persistite
+e pubblicate live come `agent.updated` e `memory.updated`.
 
 ## Modello logico
 
@@ -39,7 +109,9 @@ Un intento e un comando alto livello che genera uno o piu messaggi iniziali. La 
 
 ## Estensione
 
-Per aggiungere un agente, modifica `agents` in `src/scenarios.mjs` e collega almeno una `relation`. Per aggiungere un protocollo, inserisci un nuovo oggetto in `protocols` con `messageTypes` e `rules`, poi usa il suo `protocolId` nelle relazioni o negli intenti.
+Per aggiungere un agente durante l'esecuzione, usa il pulsante `+ Agent`. Il runtime valida la definizione, la salva in SQLite e pubblica `agent.created`; il frontend crea immediatamente il personaggio e il canale verso l'orchestrator.
+
+Gli agenti iniziali sono in `config/agents.json` e vengono importati solo quando il database e vuoto. Per aggiungere un protocollo runtime, registra tipi messaggio e transizioni in `agent_runtime/protocols.py`. `src/scenarios.mjs` resta il fallback demo quando il backend non e disponibile.
 
 Le regole supportano destinatari flessibili:
 
@@ -49,8 +121,9 @@ Le regole supportano destinatari flessibili:
 
 ## Prossimi step
 
-- Persistenza dello scenario in JSON modificabile dall'interfaccia.
-- Adattatori verso agenti reali tramite WebSocket o HTTP.
-- Validazione formale dei protocolli con schema JSON.
+- Adapter sandbox per tool web, file e terminal.
+- Approval queue interattiva per operazioni bloccate.
+- Skill procedurali a caricamento progressivo.
+- Delegazione con contesti isolati e budget per child agent.
 - Timeline ispezionabile con replay e filtri per protocollo.
-- Politiche di sicurezza per autorizzazioni, rate limit e isolamento dei tool.
+- Sandbox tool, rate limit e cancellazione task.

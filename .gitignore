@@ -1,9 +1,12 @@
 node_modules/
+.venv/
 dist/
 build/
 
 java/out/
 java/save/*.properties
+data/*.db
+data/*.db-*
 
 *.log
 *.tmp

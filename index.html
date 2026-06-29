@@ -19,13 +19,15 @@
     <header class="topbar">
       <div class="brand">
         <span class="brand__mark" aria-hidden="true"></span>
-        <div>
-          <p class="brand__kicker">Agent Protocol Lab</p>
+        <div class="brand__copy">
+          <p class="brand__kicker">Agent Operations</p>
           <h1>AI House</h1>
         </div>
+        <span class="live-status live-status--connecting" id="runtime-status">Connecting</span>
       </div>
 
       <div class="toolbar" aria-label="Controlli">
+        <button id="add-agent" class="button" type="button">+ Agent</button>
         <button id="run-toggle" class="button button--primary" type="button">Pausa</button>
         <button id="auto-toggle" class="button button--primary" type="button">Auto</button>
         <div class="segmented" id="speed-control" aria-label="Velocita">
@@ -41,7 +43,10 @@
     <aside class="inspector" aria-label="Stato agente">
       <section class="panel-section">
         <p class="section-label">Agente</p>
-        <h2 id="selected-name">Orchestrator</h2>
+        <div class="object-heading">
+          <h2 id="selected-name">Orchestrator</h2>
+          <button class="button button--compact" id="configure-agent" type="button">Configure</button>
+        </div>
         <dl class="fact-grid">
           <div>
             <dt>Ruolo</dt>
@@ -74,15 +79,143 @@
 
     <section class="command-strip" aria-label="Azioni">
       <div class="command-group">
-        <button id="intent-task" class="button" type="button">Task</button>
-        <button id="intent-memory" class="button" type="button">Memoria</button>
-        <button id="intent-review" class="button" type="button">Review</button>
+        <button id="intent-task" class="button button--intent" type="button">New task</button>
+        <button id="intent-memory" class="button button--intent" type="button">Sync memory</button>
+        <button id="intent-review" class="button button--intent" type="button">Run review</button>
       </div>
       <div class="metrics" id="metrics"></div>
       <ol class="event-log" id="event-log" aria-live="polite"></ol>
     </section>
 
     <p class="boot-message" id="boot-message" role="status"></p>
+
+    <dialog class="agent-dialog" id="agent-dialog" aria-labelledby="agent-dialog-title">
+      <form class="agent-form" id="agent-form" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <p class="section-label">Runtime configuration</p>
+            <h2 id="agent-dialog-title">Add agent</h2>
+          </div>
+          <button class="dialog-close" data-dialog-close type="button" aria-label="Close">×</button>
+        </div>
+
+        <label>
+          <span>Name</span>
+          <input name="name" required minlength="2" maxlength="80" placeholder="Data Analyst" />
+        </label>
+
+        <div class="form-row">
+          <label>
+            <span>Role</span>
+            <select name="role">
+              <option value="specialist">Specialist</option>
+              <option value="planner">Planner</option>
+              <option value="researcher">Researcher</option>
+              <option value="builder">Builder</option>
+              <option value="reviewer">Reviewer</option>
+              <option value="memory">Memory</option>
+            </select>
+          </label>
+          <label>
+            <span>Color</span>
+            <input name="color" type="color" value="#5ee7f2" />
+          </label>
+        </div>
+
+        <label>
+          <span>Capabilities</span>
+          <input name="capabilities" required placeholder="analysis, reporting, data" />
+          <small>Comma-separated capabilities used by task routing.</small>
+        </label>
+
+        <label>
+          <span>Toolsets</span>
+          <input name="toolsets" placeholder="files, web" />
+        </label>
+
+        <p class="form-error" id="agent-form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="button" data-dialog-close type="button">Cancel</button>
+          <button class="button button--primary" id="create-agent" type="submit">Create agent</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="agent-dialog agent-dialog--wide" id="agent-settings-dialog" aria-labelledby="agent-settings-title">
+      <form class="agent-form" id="agent-settings-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="section-label">Selected object</p>
+            <h2 id="agent-settings-title">Agent settings</h2>
+          </div>
+          <button class="dialog-close" data-settings-close type="button" aria-label="Close">×</button>
+        </div>
+
+        <section class="settings-section">
+          <div class="settings-section__heading">
+            <strong>Identity and behavior</strong>
+            <small>Changes affect routing and future task runs.</small>
+          </div>
+          <div class="form-grid">
+            <label><span>ID</span><input name="id" readonly /></label>
+            <label><span>Name</span><input name="name" required /></label>
+            <label><span>Role</span><input name="role" required /></label>
+            <label><span>Color</span><input name="color" type="color" /></label>
+            <label class="form-grid__wide"><span>Instructions</span><textarea name="instructions" rows="4" placeholder="How this agent should reason and behave"></textarea></label>
+            <label class="form-grid__wide"><span>Capabilities</span><input name="capabilities" placeholder="planning, routing" /></label>
+            <label class="form-grid__wide"><span>Protocols</span><input name="protocols" placeholder="agent-lifecycle, task-contract" /></label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="settings-section__heading">
+            <strong>Model provider</strong>
+            <small>API keys are read from environment variables and never stored here.</small>
+          </div>
+          <div class="form-grid">
+            <label>
+              <span>Provider</span>
+              <select name="provider">
+                <option value="simulated">Native simulator</option>
+                <option value="openai-compatible">OpenAI compatible</option>
+              </select>
+            </label>
+            <label><span>Model</span><input name="model" required /></label>
+            <label class="form-grid__wide"><span>Base URL</span><input name="base_url" placeholder="https://api.example.com/v1" /></label>
+            <label><span>API key environment</span><input name="api_key_env" placeholder="MODEL_API_KEY" /></label>
+            <label><span>Temperature</span><input name="temperature" type="number" min="0" max="2" step="0.1" /></label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="settings-section__heading">
+            <strong>Tools, limits, and approvals</strong>
+            <small>Only registered tools from enabled toolsets can execute.</small>
+          </div>
+          <div class="form-grid form-grid--three">
+            <label class="form-grid__wide"><span>Toolsets</span><input name="toolsets" placeholder="tasks, memory, runtime" /></label>
+            <label><span>Max iterations</span><input name="max_iterations" type="number" min="1" max="200" /></label>
+            <label><span>Timeout seconds</span><input name="timeout_seconds" type="number" min="10" /></label>
+            <label><span>Parallel tasks</span><input name="max_parallel_tasks" type="number" min="1" max="16" /></label>
+            <label class="form-grid__wide"><span>Approval risks</span><input name="approvals" placeholder="external-write, destructive" /></label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="settings-section__heading">
+            <strong>Private persistent memory</strong>
+            <small>Injected into this agent's model context; maximum 8,000 characters.</small>
+          </div>
+          <label><textarea name="memory" rows="7" maxlength="8000" placeholder="Durable facts, preferences, and project context"></textarea></label>
+        </section>
+
+        <p class="form-error" id="agent-settings-error" role="alert"></p>
+        <div class="dialog-actions dialog-actions--sticky">
+          <button class="button" data-settings-close type="button">Cancel</button>
+          <button class="button button--primary" id="save-agent-settings" type="submit">Save settings</button>
+        </div>
+      </form>
+    </dialog>
 
     <noscript>Abilita JavaScript per usare la simulazione.</noscript>
     <script>

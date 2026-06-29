@@ -126,13 +126,16 @@ function roleStationId(agent) {
   if (agent.role === "coordinator") {
     return "hub";
   }
-  if (agent.role === "specialist" && agent.capabilities.includes("planning")) {
+  if (agent.role === "supervisor") {
+    return "hub";
+  }
+  if ((agent.role === "specialist" || agent.role === "planner") && agent.capabilities.includes("planning")) {
     return "planning";
   }
-  if (agent.role === "specialist" && agent.capabilities.includes("research")) {
+  if ((agent.role === "specialist" || agent.role === "researcher") && agent.capabilities.includes("research")) {
     return "research";
   }
-  if (agent.role === "specialist" && agent.capabilities.includes("implementation")) {
+  if ((agent.role === "specialist" || agent.role === "builder") && agent.capabilities.includes("implementation")) {
     return "build";
   }
   if (agent.role === "reviewer") {
@@ -181,34 +184,7 @@ export class AgentWorld {
     this.blockedTiles = this.buildBlockedTiles();
 
     for (const agent of network.agents) {
-      const seed = hashNumber(agent.id);
-      const startTile = this.findNearestOpenTile(scenarioToTile(agent.position), agent.id);
-      const world = tileToWorld(startTile);
-      this.states.set(agent.id, {
-        id: agent.id,
-        x: world.x,
-        z: world.z,
-        y: 0,
-        tile: startTile,
-        targetTile: startTile,
-        destinationTile: startTile,
-        targetX: world.x,
-        targetZ: world.z,
-        path: [],
-        facing: seed % 2 === 0 ? Math.PI * 0.25 : -Math.PI * 0.25,
-        speed: 2.65 + (seed % 5) * 0.1,
-        stationId: roleStationId(agent),
-        jobLabel: "starting",
-        mode: "idle",
-        workProgress: 0,
-        walkPhase: (seed % 100) / 100,
-        bubble: "",
-        lastRuntimeStatus: "",
-        nextDecisionAt: 0,
-        manualUntil: 0,
-        seed,
-      });
-      this.assignStation(agent, roleStationId(agent), "starting");
+      this.registerAgent(agent);
     }
   }
 
@@ -227,6 +203,42 @@ export class AgentWorld {
   getAgentPosition(id) {
     const state = this.getAgentState(id);
     return state ? { x: state.x, y: 1.2, z: state.z } : { x: 0, y: 1.2, z: 0 };
+  }
+
+  registerAgent(agent) {
+    if (this.states.has(agent.id)) {
+      return this.states.get(agent.id);
+    }
+    const seed = hashNumber(agent.id);
+    const startTile = this.findNearestOpenTile(scenarioToTile(agent.position), agent.id);
+    const world = tileToWorld(startTile);
+    const state = {
+      id: agent.id,
+      x: world.x,
+      z: world.z,
+      y: 0,
+      tile: startTile,
+      targetTile: startTile,
+      destinationTile: startTile,
+      targetX: world.x,
+      targetZ: world.z,
+      path: [],
+      facing: seed % 2 === 0 ? Math.PI * 0.25 : -Math.PI * 0.25,
+      speed: 2.65 + (seed % 5) * 0.1,
+      stationId: roleStationId(agent),
+      jobLabel: "starting",
+      mode: "idle",
+      workProgress: 0,
+      walkPhase: (seed % 100) / 100,
+      bubble: "",
+      lastRuntimeStatus: "",
+      nextDecisionAt: 0,
+      manualUntil: 0,
+      seed,
+    };
+    this.states.set(agent.id, state);
+    this.assignStation(agent, roleStationId(agent), "starting");
+    return state;
   }
 
   isBlockedTile(tile) {

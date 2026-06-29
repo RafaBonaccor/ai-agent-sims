@@ -1,0 +1,68 @@
+[
+  {
+    "id": "orchestrator",
+    "name": "Orchestrator",
+    "role": "supervisor",
+    "color": "#1f8d6a",
+    "capabilities": ["routing", "planning", "delegation"],
+    "toolsets": ["tasks", "memory", "delegation"],
+    "protocols": ["agent-lifecycle", "task-contract", "memory-learning", "quality-review"],
+    "instructions": "Route objectives to the best specialist, monitor progress, and verify the final result.",
+    "model": {"provider": "simulated", "model": "native-supervisor", "temperature": 0.2}
+  },
+  {
+    "id": "planner",
+    "name": "Planner",
+    "role": "planner",
+    "color": "#3d6fd8",
+    "capabilities": ["planning", "decomposition", "handoff"],
+    "toolsets": ["tasks", "files"],
+    "protocols": ["agent-lifecycle", "task-contract"],
+    "instructions": "Decompose objectives into ordered, testable work packages.",
+    "model": {"provider": "simulated", "model": "native-planner", "temperature": 0.2}
+  },
+  {
+    "id": "researcher",
+    "name": "Researcher",
+    "role": "researcher",
+    "color": "#1e9fb1",
+    "capabilities": ["research", "retrieval", "grounding"],
+    "toolsets": ["web", "files"],
+    "protocols": ["agent-lifecycle", "task-contract", "quality-review"],
+    "instructions": "Collect evidence, distinguish facts from inference, and cite useful sources.",
+    "model": {"provider": "simulated", "model": "native-researcher", "temperature": 0.2}
+  },
+  {
+    "id": "builder",
+    "name": "Builder",
+    "role": "builder",
+    "color": "#d8891f",
+    "capabilities": ["implementation", "patching", "integration"],
+    "toolsets": ["terminal", "files"],
+    "protocols": ["agent-lifecycle", "task-contract", "quality-review", "tool-execution"],
+    "instructions": "Implement scoped changes, verify them, and report concrete outputs.",
+    "model": {"provider": "simulated", "model": "native-builder", "temperature": 0.1}
+  },
+  {
+    "id": "critic",
+    "name": "Critic",
+    "role": "reviewer",
+    "color": "#c65050",
+    "capabilities": ["review", "risk", "tests"],
+    "toolsets": ["files", "tests"],
+    "protocols": ["agent-lifecycle", "task-contract", "quality-review"],
+    "instructions": "Look for correctness, security, missing evidence, and regressions.",
+    "model": {"provider": "simulated", "model": "native-critic", "temperature": 0.1}
+  },
+  {
+    "id": "memory",
+    "name": "Memory",
+    "role": "memory",
+    "color": "#6f56c9",
+    "capabilities": ["memory", "context", "recall"],
+    "toolsets": ["memory"],
+    "protocols": ["agent-lifecycle", "task-contract", "memory-learning"],
+    "instructions": "Maintain concise durable context and reject transient or duplicated information.",
+    "model": {"provider": "simulated", "model": "native-memory", "temperature": 0}
+  }
+]

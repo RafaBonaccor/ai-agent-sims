@@ -9,6 +9,7 @@ import {
   workstations,
 } from "./src/agentWorld.mjs";
 import { defaultScenario } from "./src/scenarios.mjs";
+import { RuntimeClient } from "./src/runtimeClient.mjs";
 
 const canvas = document.querySelector("#game");
 const bootMessage = document.querySelector("#boot-message");
@@ -26,32 +27,46 @@ const selectedTile = document.querySelector("#selected-tile");
 const eventLog = document.querySelector("#event-log");
 const metrics = document.querySelector("#metrics");
 const stationList = document.querySelector("#station-list");
+const runtimeStatus = document.querySelector("#runtime-status");
+const addAgentButton = document.querySelector("#add-agent");
+const agentDialog = document.querySelector("#agent-dialog");
+const agentForm = document.querySelector("#agent-form");
+const agentFormError = document.querySelector("#agent-form-error");
+const configureAgentButton = document.querySelector("#configure-agent");
+const agentSettingsDialog = document.querySelector("#agent-settings-dialog");
+const agentSettingsForm = document.querySelector("#agent-settings-form");
+const agentSettingsError = document.querySelector("#agent-settings-error");
 
 const network = new AgentNetwork(defaultScenario);
 const agentWorld = new AgentWorld(network);
+const runtimeClient = new RuntimeClient();
+const runtimeSnapshots = new Map();
 
 const PERFORMANCE = {
-  maxFps: 30,
-  maxPixelRatio: 1.25,
-  shadows: false,
+  maxFps: 45,
+  maxPixelRatio: 1.5,
+  shadows: true,
   hudRefreshMs: 500,
   relationRefreshMs: 120,
   messageLineSegments: 12,
-  fog: false,
+  fog: true,
 };
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
-  antialias: false,
-  powerPreference: "low-power",
+  antialias: true,
+  powerPreference: "high-performance",
 });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, PERFORMANCE.maxPixelRatio));
 renderer.shadowMap.enabled = PERFORMANCE.shadows;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xcfd9d2);
-scene.fog = PERFORMANCE.fog ? new THREE.Fog(0xcfd9d2, 18, 34) : null;
+scene.background = new THREE.Color(0x070c16);
+scene.fog = PERFORMANCE.fog ? new THREE.Fog(0x070c16, 17, 31) : null;
 
 const camera = new THREE.OrthographicCamera(-8, 8, 5, -5, 0.1, 100);
 let cameraYaw = Math.PI * 0.25;
@@ -87,20 +102,21 @@ const messageVisuals = new Map();
 const tileVisuals = new Map();
 
 const sharedMaterials = {
-  floor: new THREE.MeshStandardMaterial({ color: 0xe6e4d8, roughness: 0.94 }),
-  wall: new THREE.MeshStandardMaterial({ color: 0xbec8c2, roughness: 0.9 }),
-  trim: new THREE.MeshStandardMaterial({ color: 0x2c3531, roughness: 0.75 }),
+  floor: new THREE.MeshStandardMaterial({ color: 0x151f31, roughness: 0.84, metalness: 0.08 }),
+  wall: new THREE.MeshStandardMaterial({ color: 0x111a2a, roughness: 0.74, metalness: 0.14 }),
+  trim: new THREE.MeshStandardMaterial({ color: 0x050912, roughness: 0.55, metalness: 0.32 }),
   glass: new THREE.MeshStandardMaterial({
-    color: 0x9ad7df,
+    color: 0x67e8f9,
+    emissive: 0x123c48,
     transparent: true,
-    opacity: 0.32,
-    roughness: 0.2,
-    metalness: 0.05,
+    opacity: 0.38,
+    roughness: 0.12,
+    metalness: 0.26,
   }),
   shadow: new THREE.MeshBasicMaterial({
     color: 0x000000,
     transparent: true,
-    opacity: 0.13,
+    opacity: 0.3,
     depthWrite: false,
   }),
 };
@@ -115,12 +131,12 @@ const scratchCurve = new THREE.QuadraticBezierCurve3(
 );
 
 const tilePalette = {
-  even: new THREE.Color(0xe4e0d2),
-  odd: new THREE.Color(0xd9d5c8),
-  blocked: new THREE.Color(0xb8b4a6),
-  current: new THREE.Color(0x65b88d),
-  destination: new THREE.Color(0xe4b24d),
-  occupied: new THREE.Color(0xc9d7d1),
+  even: new THREE.Color(0x172238),
+  odd: new THREE.Color(0x131d30),
+  blocked: new THREE.Color(0x0b1120),
+  current: new THREE.Color(0x1d7180),
+  destination: new THREE.Color(0x725b2b),
+  occupied: new THREE.Color(0x273650),
 };
 
 function setBootMessage(message) {
@@ -178,7 +194,7 @@ function createTextSprite(text, options = {}) {
     labelCtx.font = `${options.weight ?? 800} ${options.size ?? 42}px Inter, Arial, sans-serif`;
     labelCtx.textAlign = "center";
     labelCtx.textBaseline = "middle";
-    labelCtx.fillStyle = options.color ?? "#1b201f";
+    labelCtx.fillStyle = options.color ?? "#eef6ff";
     labelCtx.fillText(text, width / 2, height / 2 + (options.offsetY ?? 0));
   }, options.width ?? 512, options.height ?? 128);
 
@@ -201,16 +217,16 @@ function replaceSpriteText(sprite, text, options = {}) {
   const oldTexture = sprite.material.map;
   const texture = makeCanvasTexture((labelCtx, width, height) => {
     labelCtx.clearRect(0, 0, width, height);
-    labelCtx.fillStyle = options.background ?? "rgba(255, 255, 255, 0.9)";
+    labelCtx.fillStyle = options.background ?? "rgba(8, 14, 25, 0.92)";
     drawRoundedRect(labelCtx, 8, 8, width - 16, height - 16, options.radius ?? 26);
     labelCtx.fill();
-    labelCtx.strokeStyle = options.border ?? "rgba(27, 32, 31, 0.14)";
+    labelCtx.strokeStyle = options.border ?? "rgba(167, 196, 226, 0.24)";
     labelCtx.lineWidth = 4;
     labelCtx.stroke();
     labelCtx.font = `${options.weight ?? 800} ${options.size ?? 34}px Inter, Arial, sans-serif`;
     labelCtx.textAlign = "center";
     labelCtx.textBaseline = "middle";
-    labelCtx.fillStyle = options.color ?? "#1b201f";
+    labelCtx.fillStyle = options.color ?? "#eef6ff";
     labelCtx.fillText(text.slice(0, 28), width / 2, height / 2 + 1);
   }, options.width ?? 512, options.height ?? 128);
   sprite.material.map = texture;
@@ -254,7 +270,9 @@ function buildRoom() {
           : tilePalette.odd;
       const material = new THREE.MeshStandardMaterial({
         color: baseColor,
-        roughness: 0.92,
+        emissive: baseColor.clone().multiplyScalar(0.035),
+        roughness: 0.76,
+        metalness: 0.12,
       });
       const mesh = new THREE.Mesh(tileGeometry, material);
       mesh.position.set(world.x, -roomConfig.blockHeight / 2, world.z);
@@ -286,6 +304,24 @@ function buildRoom() {
   leftWall.receiveShadow = true;
   scene.add(leftWall);
 
+  const accentMaterial = new THREE.MeshBasicMaterial({
+    color: 0x5ee7f2,
+    transparent: true,
+    opacity: 0.55,
+  });
+  const backAccent = new THREE.Mesh(
+    new THREE.BoxGeometry(roomConfig.width - 0.5, 0.025, 0.025),
+    accentMaterial
+  );
+  backAccent.position.set(0, 0.12, -roomConfig.depth / 2 + 0.05);
+  scene.add(backAccent);
+  const sideAccent = new THREE.Mesh(
+    new THREE.BoxGeometry(0.025, 0.025, roomConfig.depth - 0.5),
+    accentMaterial
+  );
+  sideAccent.position.set(-roomConfig.width / 2 + 0.05, 0.12, 0);
+  scene.add(sideAccent);
+
   const trimMaterial = sharedMaterials.trim;
   for (const z of [-roomConfig.depth / 2, roomConfig.depth / 2]) {
     const trim = new THREE.Mesh(new THREE.BoxGeometry(roomConfig.width, 0.08, 0.08), trimMaterial);
@@ -300,18 +336,30 @@ function buildRoom() {
 
   const rug = new THREE.Mesh(
     new THREE.CylinderGeometry(2.15, 2.15, 0.035, 32),
-    new THREE.MeshStandardMaterial({ color: 0xd8c89f, roughness: 0.86 })
+    new THREE.MeshStandardMaterial({
+      color: 0x17172e,
+      emissive: 0x151030,
+      roughness: 0.62,
+      metalness: 0.22,
+    })
   );
-  rug.rotation.x = Math.PI / 2;
   rug.position.set(0, 0.03, -3.75);
   rug.receiveShadow = true;
   scene.add(rug);
+
+  const rugRing = new THREE.Mesh(
+    new THREE.TorusGeometry(2.02, 0.025, 8, 64),
+    new THREE.MeshBasicMaterial({ color: 0x9b87f5, transparent: true, opacity: 0.6 })
+  );
+  rugRing.rotation.x = Math.PI / 2;
+  rugRing.position.set(0, 0.065, -3.75);
+  scene.add(rugRing);
 }
 
 function buildLights() {
-  scene.add(new THREE.HemisphereLight(0xf5fff9, 0x899288, 1.5));
+  scene.add(new THREE.HemisphereLight(0xbfe9ff, 0x070b14, 1.25));
 
-  const key = new THREE.DirectionalLight(0xfff6dd, 2.35);
+  const key = new THREE.DirectionalLight(0xddeeff, 2.8);
   key.position.set(5, 9, 6);
   key.castShadow = PERFORMANCE.shadows;
   key.shadow.mapSize.set(1024, 1024);
@@ -321,18 +369,31 @@ function buildLights() {
   key.shadow.camera.bottom = -11;
   scene.add(key);
 
-  const fill = new THREE.DirectionalLight(0xbcdfff, 0.85);
+  const fill = new THREE.DirectionalLight(0x647dff, 1.1);
   fill.position.set(-7, 6, -3);
   scene.add(fill);
+
+  const cyanGlow = new THREE.PointLight(0x5ee7f2, 10, 12, 2);
+  cyanGlow.position.set(-3.8, 2.8, 2.5);
+  scene.add(cyanGlow);
+
+  const violetGlow = new THREE.PointLight(0x9b87f5, 8, 10, 2);
+  violetGlow.position.set(3.8, 2.5, -2.8);
+  scene.add(violetGlow);
 }
 
 function createStationProp(station) {
   const group = new THREE.Group();
-  const stationMaterial = colorMaterial(station.color);
-  const darkMaterial = colorMaterial(0x25302d, { roughness: 0.8 });
+  const stationMaterial = colorMaterial(station.color, {
+    emissive: new THREE.Color(station.color).multiplyScalar(0.12),
+    roughness: 0.48,
+    metalness: 0.18,
+  });
+  const darkMaterial = colorMaterial(0x111a2a, { roughness: 0.52, metalness: 0.3 });
   const lightMaterial = colorMaterial(station.color, {
-    emissive: new THREE.Color(station.color).multiplyScalar(0.45),
-    roughness: 0.38,
+    emissive: new THREE.Color(station.color).multiplyScalar(0.8),
+    roughness: 0.24,
+    metalness: 0.16,
   });
 
   const base = new THREE.Mesh(
@@ -340,13 +401,23 @@ function createStationProp(station) {
     new THREE.MeshStandardMaterial({
       color: station.color,
       transparent: true,
-      opacity: 0.24,
-      roughness: 0.7,
+      opacity: 0.16,
+      emissive: new THREE.Color(station.color).multiplyScalar(0.2),
+      roughness: 0.42,
+      metalness: 0.24,
     })
   );
   base.position.y = 0.04;
   base.receiveShadow = true;
   group.add(base);
+
+  const baseRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.84, 0.018, 8, 40),
+    new THREE.MeshBasicMaterial({ color: station.color, transparent: true, opacity: 0.72 })
+  );
+  baseRing.rotation.x = Math.PI / 2;
+  baseRing.position.y = 0.085;
+  group.add(baseRing);
 
   if (station.id === "hub") {
     addMesh(group, new THREE.CylinderGeometry(0.76, 0.9, 0.42, 8), darkMaterial, { y: 0.26 });
@@ -406,7 +477,8 @@ function createStationProp(station) {
   }
 
   const label = createTextSprite(station.label, {
-    background: "rgba(255, 255, 255, 0.86)",
+    background: "rgba(8, 14, 25, 0.88)",
+    color: "#eef6ff",
     size: 34,
     scaleX: 2.3,
     scaleY: 0.48,
@@ -426,12 +498,17 @@ function createStationProp(station) {
 
 function createAgentVisual(agent) {
   const group = new THREE.Group();
-  const bodyMaterial = colorMaterial(agent.color);
-  const headMaterial = colorMaterial(0xf2d1b6, { roughness: 0.68 });
-  const darkMaterial = colorMaterial(0x26302d, { roughness: 0.86 });
+  const bodyMaterial = colorMaterial(agent.color, {
+    emissive: new THREE.Color(agent.color).multiplyScalar(0.1),
+    roughness: 0.42,
+    metalness: 0.2,
+  });
+  const headMaterial = colorMaterial(0xdce7f3, { roughness: 0.36, metalness: 0.28 });
+  const darkMaterial = colorMaterial(0x111827, { roughness: 0.5, metalness: 0.34 });
   const glowMaterial = colorMaterial(agent.color, {
-    emissive: new THREE.Color(agent.color).multiplyScalar(0.5),
-    roughness: 0.36,
+    emissive: new THREE.Color(agent.color).multiplyScalar(0.95),
+    roughness: 0.18,
+    metalness: 0.1,
   });
 
   const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.48, 16), sharedMaterials.shadow);
@@ -440,11 +517,26 @@ function createAgentVisual(agent) {
   shadow.userData.agentId = agent.id;
   group.add(shadow);
 
+  const selectionRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.46, 0.54, 32),
+    new THREE.MeshBasicMaterial({
+      color: agent.color,
+      transparent: true,
+      opacity: 0.8,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+  );
+  selectionRing.rotation.x = -Math.PI / 2;
+  selectionRing.position.y = 0.025;
+  selectionRing.visible = false;
+  group.add(selectionRing);
+
   const torso = addMesh(group, new THREE.CylinderGeometry(0.28, 0.34, 0.72, 12), bodyMaterial, {
     y: 0.72,
   });
   const head = addMesh(group, new THREE.SphereGeometry(0.25, 16, 12), headMaterial, { y: 1.22 });
-  const visor = addMesh(group, new THREE.BoxGeometry(0.32, 0.08, 0.035), darkMaterial, { y: 1.24, z: 0.22 });
+  const visor = addMesh(group, new THREE.BoxGeometry(0.32, 0.08, 0.035), glowMaterial, { y: 1.24, z: 0.22 });
   const leftLeg = addMesh(group, new THREE.BoxGeometry(0.13, 0.46, 0.14), darkMaterial, {
     x: -0.11,
     y: 0.28,
@@ -476,7 +568,8 @@ function createAgentVisual(agent) {
   group.add(diamondBottom);
 
   const name = createTextSprite(agent.label, {
-    background: "rgba(255, 255, 255, 0.86)",
+    background: "rgba(8, 14, 25, 0.9)",
+    color: "#f3f8ff",
     size: 36,
     scaleX: 1.7,
     scaleY: 0.42,
@@ -485,7 +578,8 @@ function createAgentVisual(agent) {
   group.add(name);
 
   const bubble = createTextSprite("", {
-    background: "rgba(255, 255, 255, 0.92)",
+    background: "rgba(8, 14, 25, 0.94)",
+    color: "#f3f8ff",
     size: 32,
     scaleX: 1.75,
     scaleY: 0.44,
@@ -510,6 +604,7 @@ function createAgentVisual(agent) {
     rightArm,
     diamondTop,
     diamondBottom,
+    selectionRing,
     bubble,
     name,
   });
@@ -517,19 +612,30 @@ function createAgentVisual(agent) {
 
 function buildRelationVisuals() {
   for (const relation of network.relations) {
-    const protocol = network.getProtocol(relation.protocolId);
-    const material = new THREE.LineBasicMaterial({
-      color: protocol.color,
-      transparent: true,
-      opacity: 0.18,
-    });
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(9), 3));
-    const line = new THREE.Line(geometry, material);
-    line.position.y = 0.06;
-    scene.add(line);
-    relationVisuals.set(relation.id, line);
+    createRelationVisual(relation);
   }
+}
+
+function createRelationVisual(relation) {
+  if (relationVisuals.has(relation.id)) {
+    return relationVisuals.get(relation.id);
+  }
+  const protocol = network.getProtocol(relation.protocolId);
+  if (!protocol) {
+    return null;
+  }
+  const material = new THREE.LineBasicMaterial({
+    color: protocol.color,
+    transparent: true,
+    opacity: 0.28,
+  });
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(9), 3));
+  const line = new THREE.Line(geometry, material);
+  line.position.y = 0.06;
+  scene.add(line);
+  relationVisuals.set(relation.id, line);
+  return line;
 }
 
 function updateRelationVisuals() {
@@ -564,7 +670,7 @@ function createMessageVisual(message) {
   const material = new THREE.LineBasicMaterial({
     color: message.color,
     transparent: true,
-    opacity: 0.72,
+    opacity: 0.86,
   });
   const lineGeometry = new THREE.BufferGeometry();
   lineGeometry.setAttribute(
@@ -585,7 +691,8 @@ function createMessageVisual(message) {
   scene.add(packet);
 
   const label = createTextSprite(protocol.messageTypes[message.type]?.shortLabel ?? message.type, {
-    background: "rgba(255, 255, 255, 0.88)",
+    background: "rgba(8, 14, 25, 0.94)",
+    color: "#f3f8ff",
     size: 30,
     scaleX: 1.4,
     scaleY: 0.34,
@@ -692,13 +799,16 @@ function updateAgents(elapsed) {
     const scale = selected ? 1.1 : 1;
     visual.diamondTop.scale.setScalar(scale);
     visual.diamondBottom.scale.setScalar(scale);
+    visual.selectionRing.visible = selected;
+    visual.selectionRing.material.opacity = 0.64 + Math.sin(elapsed * 3) * 0.14;
 
     const bubbleText = state.bubble || agent.runtime.status;
     visual.bubble.visible = Boolean(bubbleText) && selectedAgentId === agent.id;
     if (visual.bubble.visible) {
       replaceSpriteText(visual.bubble, bubbleText, {
-        background: "rgba(255, 255, 255, 0.92)",
-        border: selected ? agent.color : "rgba(27, 32, 31, 0.14)",
+        background: "rgba(8, 14, 25, 0.95)",
+        color: "#f3f8ff",
+        border: selected ? agent.color : "rgba(167, 196, 226, 0.24)",
       });
     }
   }
@@ -859,10 +969,255 @@ function setAutoAgents(nextAutoAgents) {
   updateHud();
 }
 
-function triggerIntent(intentId) {
-  network.triggerIntent(intentId);
-  agentWorld.triggerIntent(intentId, network, { autoEnabled: autoAgents });
+async function triggerIntent(intentId) {
+  if (runtimeClient.connected) {
+    const taskRecipes = {
+      task: {
+        title: "Plan the next agent workflow",
+        description: "Create and execute a structured plan through the native runtime.",
+        capability: "planning",
+        priority: 3,
+      },
+      "memory-sync": {
+        title: "Synchronize shared runtime context",
+        description: "Review current state and prepare a memory update.",
+        capability: "memory",
+        priority: 2,
+      },
+      review: {
+        title: "Review the latest runtime result",
+        description: "Check protocol consistency, risks, and expected output.",
+        capability: "review",
+        priority: 3,
+      },
+    };
+    try {
+      await runtimeClient.createTask(taskRecipes[intentId]);
+    } catch (error) {
+      setBootMessage(error.message);
+    }
+  } else {
+    network.triggerIntent(intentId);
+    agentWorld.triggerIntent(intentId, network, { autoEnabled: autoAgents });
+    updateHud();
+  }
+}
+
+function positionForAgent(id) {
+  let hash = 0;
+  for (const character of id) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  }
+  return {
+    x: 0.22 + (hash % 57) / 100,
+    y: 0.2 + (Math.floor(hash / 57) % 59) / 100,
+  };
+}
+
+function ensureSupervisorRelation(agentId) {
+  if (agentId === "orchestrator" || network.findRelation("orchestrator", agentId, "contract-net")) {
+    return;
+  }
+  const relation = network.registerRelation({
+    id: `runtime-orchestrator-${agentId}`,
+    from: "orchestrator",
+    to: agentId,
+    kind: "delegation",
+    protocolId: "contract-net",
+    latency: 0.75,
+    trust: 0.82,
+    bandwidth: 2,
+    bidirectional: true,
+  });
+  createRelationVisual(relation);
+}
+
+function ensureRuntimeAgent(snapshot) {
+  runtimeSnapshots.set(snapshot.id, snapshot);
+  const existing = network.getAgent(snapshot.id);
+  if (existing) {
+    existing.label = snapshot.name;
+    existing.role = snapshot.role;
+    existing.color = snapshot.color;
+    existing.capabilities = [...snapshot.capabilities];
+    existing.runtime.status = snapshot.state;
+    existing.runtime.load = snapshot.load;
+    applyAgentAppearance(existing);
+    const state = agentWorld.getAgentState(existing.id);
+    if (state) {
+      state.lastRuntimeStatus = "";
+    }
+    ensureSupervisorRelation(snapshot.id);
+    return existing;
+  }
+
+  const agent = network.registerAgent({
+    id: snapshot.id,
+    label: snapshot.name,
+    initials: snapshot.name.slice(0, 2).toUpperCase(),
+    role: snapshot.role,
+    color: snapshot.color,
+    reliability: 0.84,
+    capabilities: snapshot.capabilities,
+    position: positionForAgent(snapshot.id),
+    summary: `${snapshot.role} agent managed by the native runtime.`,
+    runtime: { status: snapshot.state, load: snapshot.load },
+  });
+  agentWorld.registerAgent(agent);
+  createAgentVisual(agent);
+  ensureSupervisorRelation(snapshot.id);
+  return agent;
+}
+
+function applyAgentAppearance(agent) {
+  const visual = agentVisuals.get(agent.id);
+  if (!visual) {
+    return;
+  }
+  const color = new THREE.Color(agent.color);
+  visual.torso.material.color.copy(color);
+  visual.torso.material.emissive.copy(color).multiplyScalar(0.1);
+  visual.diamondTop.material.color.copy(color);
+  visual.diamondTop.material.emissive.copy(color).multiplyScalar(0.95);
+  visual.selectionRing.material.color.copy(color);
+  replaceSpriteText(visual.name, agent.label, {
+    background: "rgba(8, 14, 25, 0.9)",
+    color: "#f3f8ff",
+    size: 36,
+  });
+}
+
+function renderRuntimeMessage(event) {
+  const message = event.data?.message;
+  if (!message || !network.getAgent(message.sender) || !network.getAgent(message.recipient)) {
+    return;
+  }
+  const typeMap = {
+    "task.announce": "task.announce",
+    "task.award": "task.award",
+    "task.accept": "task.proposal",
+    "task.progress": "task.status",
+    "task.result": "task.status",
+  };
+  const type = typeMap[message.type];
+  if (!type) {
+    return;
+  }
+  network.enqueue({
+    from: message.sender,
+    to: message.recipient,
+    protocolId: "contract-net",
+    type,
+    payload: message.payload,
+    priority: message.priority,
+    external: true,
+  });
+}
+
+function handleRuntimeEvent(event) {
+  if (event.type === "runtime.snapshot") {
+    for (const agent of event.agents ?? []) {
+      ensureRuntimeAgent(agent);
+    }
+    for (const historicEvent of (event.events ?? []).slice(-8)) {
+      network.log(historicEvent.summary);
+    }
+  } else if (event.type === "agent.created" || event.type === "agent.updated") {
+    ensureRuntimeAgent(event.data.agent);
+  } else if (event.type === "agent.state.changed") {
+    const agent = network.getAgent(event.agent_id);
+    if (agent) {
+      agent.runtime.status = event.data.to;
+      agent.runtime.load = event.data.load;
+    }
+  } else if (event.type === "protocol.message") {
+    renderRuntimeMessage(event);
+  } else if (event.type === "runtime.disconnected") {
+    setRuntimeConnection(false);
+  }
+
+  if (event.summary) {
+    network.log(event.summary);
+  }
   updateHud();
+}
+
+function setRuntimeConnection(connected) {
+  runtimeStatus.textContent = connected ? "Runtime live" : "Offline demo";
+  runtimeStatus.classList.toggle("live-status--connecting", false);
+  runtimeStatus.classList.toggle("live-status--offline", !connected);
+}
+
+async function connectRuntime() {
+  runtimeClient.onEvent(handleRuntimeEvent);
+  try {
+    await runtimeClient.connect();
+    network.autopilotClock = Number.POSITIVE_INFINITY;
+    setRuntimeConnection(true);
+  } catch (_error) {
+    setRuntimeConnection(false);
+    triggerIntent("task");
+  }
+}
+
+function splitValues(value) {
+  return value
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function slugify(value) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40);
+}
+
+function settingsField(name) {
+  return agentSettingsForm.elements.namedItem(name);
+}
+
+async function openAgentSettings() {
+  if (!runtimeClient.connected) {
+    setBootMessage("Start the project with run.command to edit persistent agent settings.");
+    return;
+  }
+  const snapshot = runtimeSnapshots.get(selectedAgentId);
+  if (!snapshot) {
+    setBootMessage("The selected object is not registered in the runtime yet.");
+    return;
+  }
+  agentSettingsError.textContent = "";
+  document.querySelector("#agent-settings-title").textContent = `${snapshot.name} settings`;
+  settingsField("id").value = snapshot.id;
+  settingsField("name").value = snapshot.name;
+  settingsField("role").value = snapshot.role;
+  settingsField("color").value = snapshot.color;
+  settingsField("instructions").value = snapshot.instructions ?? "";
+  settingsField("capabilities").value = snapshot.capabilities.join(", ");
+  settingsField("protocols").value = snapshot.protocols.join(", ");
+  settingsField("provider").value = snapshot.model.provider;
+  settingsField("model").value = snapshot.model.model;
+  settingsField("base_url").value = snapshot.model.base_url;
+  settingsField("api_key_env").value = snapshot.model.api_key_env;
+  settingsField("temperature").value = snapshot.model.temperature;
+  settingsField("toolsets").value = snapshot.toolsets.join(", ");
+  settingsField("max_iterations").value = snapshot.limits.max_iterations;
+  settingsField("timeout_seconds").value = snapshot.limits.timeout_seconds;
+  settingsField("max_parallel_tasks").value = snapshot.limits.max_parallel_tasks;
+  settingsField("approvals").value = snapshot.approvals.required_for.join(", ");
+  settingsField("memory").value = "Loading memory…";
+  agentSettingsDialog.showModal();
+  try {
+    const memory = await runtimeClient.getAgentMemory(snapshot.id);
+    settingsField("memory").value = memory.content;
+  } catch (error) {
+    settingsField("memory").value = "";
+    agentSettingsError.textContent = error.message;
+  }
 }
 
 function setPointerNdc(event) {
@@ -1005,13 +1360,107 @@ stationList.addEventListener("click", (event) => {
   updateHud();
 });
 
+addAgentButton.addEventListener("click", () => {
+  agentFormError.textContent = "";
+  if (!runtimeClient.connected) {
+    setBootMessage("Start the project with run.command to create persistent agents.");
+    return;
+  }
+  agentDialog.showModal();
+});
+
+agentDialog.querySelectorAll("[data-dialog-close]").forEach((button) => {
+  button.addEventListener("click", () => agentDialog.close());
+});
+
+agentForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formData = new FormData(agentForm);
+  const name = String(formData.get("name") ?? "").trim();
+  const capabilities = splitValues(String(formData.get("capabilities") ?? ""));
+  const createButton = document.querySelector("#create-agent");
+  createButton.disabled = true;
+  agentFormError.textContent = "";
+  try {
+    await runtimeClient.createAgent({
+      id: `${slugify(name)}-${Date.now().toString(36).slice(-4)}`,
+      name,
+      role: String(formData.get("role") ?? "specialist"),
+      color: String(formData.get("color") ?? "#5ee7f2"),
+      capabilities,
+      toolsets: splitValues(String(formData.get("toolsets") ?? "")),
+      protocols: ["agent-lifecycle", "task-contract"],
+      memory_scope: "agent",
+    });
+    agentForm.reset();
+    agentDialog.close();
+  } catch (error) {
+    agentFormError.textContent = error.message;
+  } finally {
+    createButton.disabled = false;
+  }
+});
+
+configureAgentButton.addEventListener("click", openAgentSettings);
+
+agentSettingsDialog.querySelectorAll("[data-settings-close]").forEach((button) => {
+  button.addEventListener("click", () => agentSettingsDialog.close());
+});
+
+agentSettingsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const snapshot = runtimeSnapshots.get(selectedAgentId);
+  if (!snapshot) {
+    agentSettingsError.textContent = "Selected agent is not available.";
+    return;
+  }
+  const saveButton = document.querySelector("#save-agent-settings");
+  saveButton.disabled = true;
+  agentSettingsError.textContent = "";
+  const value = (name) => String(settingsField(name).value ?? "").trim();
+  try {
+    await runtimeClient.updateAgent(snapshot.id, {
+      id: snapshot.id,
+      name: value("name"),
+      role: value("role"),
+      color: value("color"),
+      capabilities: splitValues(value("capabilities")),
+      toolsets: splitValues(value("toolsets")),
+      protocols: splitValues(value("protocols")),
+      instructions: value("instructions"),
+      model: {
+        provider: value("provider"),
+        model: value("model"),
+        base_url: value("base_url"),
+        api_key_env: value("api_key_env").toUpperCase(),
+        temperature: Number(value("temperature")),
+      },
+      memory_scope: snapshot.memory_scope,
+      limits: {
+        max_iterations: Number(value("max_iterations")),
+        timeout_seconds: Number(value("timeout_seconds")),
+        max_parallel_tasks: Number(value("max_parallel_tasks")),
+      },
+      approvals: {
+        required_for: splitValues(value("approvals")),
+      },
+    });
+    await runtimeClient.updateAgentMemory(snapshot.id, value("memory"));
+    agentSettingsDialog.close();
+  } catch (error) {
+    agentSettingsError.textContent = error.message;
+  } finally {
+    saveButton.disabled = false;
+  }
+});
+
 window.addEventListener("resize", resize);
 
 buildScene();
 resize();
 setSpeed(1);
 setAutoAgents(true);
-triggerIntent("task");
 setBootMessage("");
 window.__agentLabBooted = true;
+connectRuntime();
 requestAnimationFrame(animate);
