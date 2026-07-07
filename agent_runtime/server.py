@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from .engine import AgentRuntime
 from .models import (
@@ -20,25 +22,61 @@ from .models import (
     TaskRecord,
 )
 from .protocols import PROTOCOLS
+from .project_gateway import ProjectGateway, ProjectJob, ProjectJobCreate
+from .logging_config import configure_logging
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
+LOGGER = configure_logging(PROJECT_ROOT)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     runtime = AgentRuntime(DATA_DIR / "runtime.db", PROJECT_ROOT / "config" / "agents.json")
     app.state.runtime = runtime
+    app.state.project_gateway = ProjectGateway(PROJECT_ROOT, runtime.publish)
     yield
+    await app.state.project_gateway.shutdown()
     await runtime.shutdown()
 
 
 app = FastAPI(title="Agent Protocol Lab Runtime", version="0.1.0", lifespan=lifespan)
 
 
+class ClientLog(BaseModel):
+    level: str = Field(default="error", pattern=r"^(info|warning|error)$")
+    message: str = Field(min_length=1, max_length=4000)
+    context: dict[str, object] = Field(default_factory=dict)
+
+
+@app.middleware("http")
+async def log_http_request(request: Request, call_next):
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        LOGGER.exception("http_failed method=%s path=%s", request.method, request.url.path)
+        raise
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    LOGGER.info(
+        "http method=%s path=%s status=%s duration_ms=%.1f",
+        request.method,
+        request.url.path,
+        response.status_code,
+        elapsed_ms,
+    )
+    if request.url.path == "/" or request.url.path.endswith((".mjs", ".css", ".html")):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def runtime() -> AgentRuntime:
     return app.state.runtime
+
+
+def project_gateway() -> ProjectGateway:
+    return app.state.project_gateway
 
 
 @app.get("/api/health")
@@ -46,9 +84,25 @@ async def health() -> dict[str, object]:
     return {
         "status": "ok",
         "runtime": "native",
+        "version": "0.2.0",
+        "features": {"projectGateway": True, "persistentLogs": True},
         "agents": len(runtime().agents),
         "activeTasks": len(runtime().running_jobs),
     }
+
+
+@app.get("/api/diagnostics/logs")
+async def recent_logs(lines: int = Query(default=100, ge=1, le=500)) -> dict[str, object]:
+    path = PROJECT_ROOT / "runtime" / "agent-lab.log"
+    content = path.read_text(encoding="utf-8", errors="replace").splitlines() if path.exists() else []
+    return {"path": str(path), "lines": content[-lines:]}
+
+
+@app.post("/api/diagnostics/client", status_code=202)
+async def client_log(entry: ClientLog) -> dict[str, bool]:
+    log_method = getattr(LOGGER, entry.level, LOGGER.error)
+    log_method("client message=%s context=%s", entry.message, entry.context)
+    return {"accepted": True}
 
 
 @app.get("/api/agents", response_model=list[AgentSnapshot])
@@ -116,6 +170,28 @@ async def list_tools() -> list[dict[str, object]]:
         }
         for tool in runtime().executor.tools.DEFINITIONS.values()
     ]
+
+
+@app.get("/api/projects")
+async def list_projects() -> list[dict[str, object]]:
+    return project_gateway().list_projects()
+
+
+@app.get("/api/project-jobs", response_model=list[ProjectJob])
+async def list_project_jobs() -> list[ProjectJob]:
+    return project_gateway().list_jobs()
+
+
+@app.post("/api/project-jobs", response_model=ProjectJob, status_code=202)
+async def create_project_job(request: ProjectJobCreate) -> ProjectJob:
+    try:
+        return await project_gateway().create_job(request)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Project not found") from error
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.get("/api/protocols")

@@ -1,5 +1,7 @@
 node_modules/
 .venv/
+__pycache__/
+*.py[cod]
 dist/
 build/
 
@@ -7,11 +9,13 @@ java/out/
 java/save/*.properties
 data/*.db
 data/*.db-*
+runtime/
 
 *.log
 *.tmp
 .env
 .env.*
+config/*.local.json
 
 .DS_Store
 Thumbs.db

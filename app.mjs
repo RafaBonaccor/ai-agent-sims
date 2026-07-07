@@ -36,11 +36,26 @@ const configureAgentButton = document.querySelector("#configure-agent");
 const agentSettingsDialog = document.querySelector("#agent-settings-dialog");
 const agentSettingsForm = document.querySelector("#agent-settings-form");
 const agentSettingsError = document.querySelector("#agent-settings-error");
+const agentActionDialog = document.querySelector("#agent-action-dialog");
+const agentActionTitle = document.querySelector("#agent-action-title");
+const agentActionRole = document.querySelector("#agent-action-role");
+const agentActionStatus = document.querySelector("#agent-action-status");
+const workOptions = document.querySelector("#work-options");
+const projectDialog = document.querySelector("#project-dialog");
+const projectForm = document.querySelector("#project-form");
+const projectSelect = document.querySelector("#project-select");
+const projectAction = document.querySelector("#project-action");
+const projectParameters = document.querySelector("#project-parameters");
+const projectApprovalRow = document.querySelector("#project-approval-row");
+const projectRisk = document.querySelector("#project-risk");
+const projectResult = document.querySelector("#project-result");
+const projectError = document.querySelector("#project-error");
 
 const network = new AgentNetwork(defaultScenario);
 const agentWorld = new AgentWorld(network);
 const runtimeClient = new RuntimeClient();
 const runtimeSnapshots = new Map();
+let availableProjects = [];
 
 const PERFORMANCE = {
   maxFps: 45,
@@ -1132,6 +1147,19 @@ function handleRuntimeEvent(event) {
     }
   } else if (event.type === "protocol.message") {
     renderRuntimeMessage(event);
+  } else if (event.type?.startsWith("project.job.")) {
+    const job = event.data?.job;
+    const agent = job?.agent_id ? network.getAgent(job.agent_id) : null;
+    if (agent) {
+      const active = event.type === "project.job.queued" || event.type === "project.job.started";
+      agent.runtime.status = active ? "executing" : event.type.endsWith("failed") ? "failed" : "idle";
+      agent.runtime.load = active ? 0.82 : 0.08;
+    }
+    if (job && projectDialog.open) {
+      projectResult.textContent = job.error
+        ? `Errore\n${job.error}`
+        : JSON.stringify(job.result ?? { state: job.state, job: job.id }, null, 2);
+    }
   } else if (event.type === "runtime.disconnected") {
     setRuntimeConnection(false);
   }
@@ -1140,6 +1168,73 @@ function handleRuntimeEvent(event) {
     network.log(event.summary);
   }
   updateHud();
+}
+
+function selectedProject() {
+  return availableProjects.find((project) => project.id === projectSelect.value);
+}
+
+function selectedProjectAction() {
+  return selectedProject()?.actions.find((action) => action.id === projectAction.value);
+}
+
+function renderProjectActions() {
+  const project = selectedProject();
+  projectAction.innerHTML = (project?.actions ?? [])
+    .map((action) => `<option value="${action.id}">${action.label ?? action.id}</option>`)
+    .join("");
+  renderProjectParameters();
+}
+
+function renderProjectParameters() {
+  const action = selectedProjectAction();
+  const booleanParameters = new Set(["refresh-browser-profile", "include-details", "llm-screening"]);
+  projectParameters.innerHTML = (action?.parameters ?? [])
+    .map((name) => {
+      const type = booleanParameters.has(name) ? "checkbox" : name.includes("max-") ? "number" : "text";
+      const checkedClass = type === "checkbox" ? " project-parameter--check" : "";
+      return `<label class="${checkedClass}"><span>${name}</span><input data-project-parameter="${name}" type="${type}" /></label>`;
+    })
+    .join("");
+  projectRisk.textContent = action ? `Rischio: ${action.risk}` : "";
+  if (action?.description) {
+    projectRisk.textContent += ` | ${action.description}`;
+  }
+  projectApprovalRow.hidden = !action?.requiresApproval;
+  projectForm.elements.namedItem("approved").checked = false;
+}
+
+async function openProjectGateway() {
+  projectError.textContent = "";
+  projectResult.textContent = "Caricamento progetti...";
+  try {
+    availableProjects = await runtimeClient.listProjects();
+    const ready = availableProjects.filter((project) => project.enabled && project.available);
+    projectSelect.innerHTML = ready.map((project) => `<option value="${project.id}">${project.name}</option>`).join("");
+    if (!ready.length) {
+      throw new Error("Nessun progetto configurato e disponibile.");
+    }
+    renderProjectActions();
+    projectResult.textContent = "Seleziona un'azione da eseguire con l'agente corrente.";
+    projectDialog.showModal();
+  } catch (error) {
+    runtimeClient.logClient("error", error.message, { operation: "openProjectGateway", agentId: selectedAgentId });
+    setBootMessage(error.message);
+  }
+}
+
+function openAgentActions(agentId) {
+  const agent = network.getAgent(agentId);
+  if (!agent) {
+    return;
+  }
+  agentActionTitle.textContent = agent.label;
+  agentActionRole.textContent = agent.role;
+  agentActionStatus.textContent = agent.runtime.status;
+  workOptions.hidden = true;
+  if (!agentActionDialog.open) {
+    agentActionDialog.showModal();
+  }
 }
 
 function setRuntimeConnection(connected) {
@@ -1154,9 +1249,9 @@ async function connectRuntime() {
     await runtimeClient.connect();
     network.autopilotClock = Number.POSITIVE_INFINITY;
     setRuntimeConnection(true);
-  } catch (_error) {
+  } catch (error) {
     setRuntimeConnection(false);
-    triggerIntent("task");
+    setBootMessage(error.message);
   }
 }
 
@@ -1244,6 +1339,7 @@ function selectFromPointer(event) {
   if (agentId) {
     selectedAgentId = agentId;
     selectedStationId = null;
+    openAgentActions(agentId);
   } else if (stationId) {
     selectedStationId = stationId;
   } else if (hit.object.userData.tile) {
@@ -1369,6 +1465,70 @@ addAgentButton.addEventListener("click", () => {
   agentDialog.showModal();
 });
 
+agentActionDialog.querySelectorAll("[data-agent-action-close]").forEach((button) => {
+  button.addEventListener("click", () => agentActionDialog.close());
+});
+document.querySelector("#assign-work").addEventListener("click", () => {
+  workOptions.hidden = false;
+});
+document.querySelector("#action-configure-agent").addEventListener("click", () => {
+  agentActionDialog.close();
+  openAgentSettings();
+});
+document.querySelector("#work-projects").addEventListener("click", () => {
+  agentActionDialog.close();
+  openProjectGateway();
+});
+document.querySelector("#work-internal-task").addEventListener("click", () => {
+  agentActionDialog.close();
+  triggerIntent("task");
+});
+projectSelect.addEventListener("change", renderProjectActions);
+projectAction.addEventListener("change", renderProjectParameters);
+projectDialog.querySelectorAll("[data-project-close]").forEach((button) => {
+  button.addEventListener("click", () => projectDialog.close());
+});
+
+projectForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const action = selectedProjectAction();
+  if (!action) {
+    return;
+  }
+  const parameters = {};
+  for (const input of projectParameters.querySelectorAll("[data-project-parameter]")) {
+    const value = input.type === "checkbox" ? input.checked : input.value.trim();
+    if (value !== "" && value !== false) {
+      parameters[input.dataset.projectParameter] = input.type === "number" ? Number(value) : value;
+    }
+  }
+  const runButton = document.querySelector("#run-project-action");
+  runButton.disabled = true;
+  projectError.textContent = "";
+  projectResult.textContent = "Avvio in corso...";
+  try {
+    const job = await runtimeClient.createProjectJob({
+      project_id: projectSelect.value,
+      action: action.id,
+      parameters,
+      agent_id: selectedAgentId,
+      approved: projectForm.elements.namedItem("approved").checked,
+    });
+    projectResult.textContent = JSON.stringify({ state: job.state, job: job.id }, null, 2);
+  } catch (error) {
+    runtimeClient.logClient("error", error.message, {
+      operation: "createProjectJob",
+      projectId: projectSelect.value,
+      action: action.id,
+      agentId: selectedAgentId,
+    });
+    projectError.textContent = error.message;
+    projectResult.textContent = "Esecuzione non avviata.";
+  } finally {
+    runButton.disabled = false;
+  }
+});
+
 agentDialog.querySelectorAll("[data-dialog-close]").forEach((button) => {
   button.addEventListener("click", () => agentDialog.close());
 });
@@ -1455,6 +1615,18 @@ agentSettingsForm.addEventListener("submit", async (event) => {
 });
 
 window.addEventListener("resize", resize);
+window.addEventListener("error", (event) => {
+  runtimeClient.logClient("error", event.message || "Unhandled browser error", {
+    source: event.filename,
+    line: event.lineno,
+    column: event.colno,
+  });
+});
+window.addEventListener("unhandledrejection", (event) => {
+  runtimeClient.logClient("error", event.reason?.message ?? String(event.reason), {
+    operation: "unhandledrejection",
+  });
+});
 
 buildScene();
 resize();

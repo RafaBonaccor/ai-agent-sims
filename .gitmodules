@@ -1,0 +1,3 @@
+[submodule "projects/main-scraper"]
+	path = projects/main-scraper
+	url = https://github.com/RafaBonaccor/the-main-scraper.git

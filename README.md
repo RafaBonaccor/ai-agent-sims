@@ -50,8 +50,41 @@ http://localhost:8000
 - `src/scenarios.mjs`: scenario modificabile.
 - `agent_runtime/`: runtime Python, API, protocolli, state machine e persistenza.
 - `config/agents.json`: agenti iniziali modificabili.
+- `config/projects.json`: registro dei progetti esterni disponibili agli agenti.
+- `integrations/`: manifest, permessi e adapter dei progetti esterni.
+- `projects/main-scraper`: The Main Scraper, mantenuto come Git submodule.
 - `data/runtime.db`: stato persistente SQLite creato al primo avvio.
 - `AGENT_PROTOCOL.md`: note architetturali ed estensione.
+
+## Progetti esterni
+
+I progetti controllabili dagli agenti sono registrati in `config/projects.json`.
+Il loro codice vive in `projects/`, mentre la configurazione specifica del gioco
+resta in `integrations/`. Dopo un clone inizializza i submodule con:
+
+```powershell
+git submodule update --init --recursive
+```
+
+The Main Scraper espone solo le azioni dichiarate in
+`integrations/main-scraper/adapter.json`. Le azioni che preparano o inviano
+contatti richiedono approvazione esplicita.
+
+I percorsi dipendenti dalla macchina, incluso l'interprete Python dello scraper,
+sono configurati in `config/projects.local.json`, escluso da Git.
+
+Dal gioco clicca un agente, premi `Dai un lavoro`, poi `Progetti`; scegli l'azione
+dello scraper e compilane i parametri.
+Il runtime avvia la CLI in background e mostra risultato o errore nel dialogo; lo
+stato dell'agente selezionato passa a `executing` durante il job. Le azioni di
+contatto richiedono una conferma esplicita prima dell'avvio.
+
+Le richieste HTTP, gli errori frontend e il ciclo dei job vengono salvati in
+`runtime/agent-lab.log`, con rotazione automatica. Gli ultimi eventi sono disponibili
+anche da `GET /api/diagnostics/logs`; i valori dei parametri non vengono loggati.
+
+L'azione predefinita `Apri interfaccia scraper` avvia la GUI desktop come processo
+separato. `Controlla configurazione` esegue invece soltanto il comando CLI `status`.
 
 ## Controlli
 

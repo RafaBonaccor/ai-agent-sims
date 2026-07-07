@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "projects": [
+    {
+      "id": "main-scraper",
+      "name": "The Main Scraper",
+      "root": "projects/main-scraper",
+      "integration": "integrations/main-scraper/adapter.json",
+      "enabled": true,
+      "maxConcurrentJobs": 1,
+      "defaultTimeoutSeconds": 900
+    }
+  ]
+}

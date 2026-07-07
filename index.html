@@ -217,6 +217,73 @@
       </form>
     </dialog>
 
+    <dialog class="agent-dialog" id="agent-action-dialog" aria-labelledby="agent-action-title">
+      <div class="agent-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="section-label">Agente selezionato</p>
+            <h2 id="agent-action-title">Agent</h2>
+          </div>
+          <button class="dialog-close" data-agent-action-close type="button" aria-label="Close">x</button>
+        </div>
+        <dl class="fact-grid">
+          <div><dt>Ruolo</dt><dd id="agent-action-role">-</dd></div>
+          <div><dt>Stato</dt><dd id="agent-action-status">-</dd></div>
+        </dl>
+        <div class="agent-primary-actions" id="agent-primary-actions">
+          <button class="button button--primary" id="assign-work" type="button">Dai un lavoro</button>
+          <button class="button" id="action-configure-agent" type="button">Configura</button>
+        </div>
+        <section class="settings-section" id="work-options" hidden>
+          <div class="settings-section__heading">
+            <strong>Sorgente del lavoro</strong>
+            <small>Il lavoro verra assegnato a questo agente.</small>
+          </div>
+          <div class="work-source-grid">
+            <button class="button button--primary" id="work-projects" type="button">Progetti</button>
+            <button class="button" id="work-internal-task" type="button">Task interno</button>
+          </div>
+        </section>
+      </div>
+    </dialog>
+
+    <dialog class="agent-dialog agent-dialog--wide" id="project-dialog" aria-labelledby="project-dialog-title">
+      <form class="agent-form" id="project-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="section-label">Project Gateway</p>
+            <h2 id="project-dialog-title">The Main Scraper</h2>
+          </div>
+          <button class="dialog-close" data-project-close type="button" aria-label="Close">x</button>
+        </div>
+
+        <div class="form-grid">
+          <label><span>Progetto</span><select name="project_id" id="project-select"></select></label>
+          <label><span>Azione</span><select name="action" id="project-action"></select></label>
+        </div>
+
+        <section class="settings-section">
+          <div class="settings-section__heading">
+            <strong>Parametri</strong>
+            <small id="project-risk">read</small>
+          </div>
+          <div class="form-grid" id="project-parameters"></div>
+        </section>
+
+        <label class="approval-control" id="project-approval-row">
+          <input name="approved" type="checkbox" />
+          <span>Confermo l'esecuzione dell'azione esterna</span>
+        </label>
+
+        <pre class="project-result" id="project-result">Nessuna esecuzione avviata.</pre>
+        <p class="form-error" id="project-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="button" data-project-close type="button">Chiudi</button>
+          <button class="button button--primary" id="run-project-action" type="submit">Avvia</button>
+        </div>
+      </form>
+    </dialog>
+
     <noscript>Abilita JavaScript per usare la simulazione.</noscript>
     <script>
       window.__agentLabBooted = false;

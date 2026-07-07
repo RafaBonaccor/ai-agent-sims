@@ -22,6 +22,9 @@ export class RuntimeClient {
       throw new Error(`Runtime health check failed: ${response.status}`);
     }
     const health = await response.json();
+    if (!health.features?.projectGateway) {
+      throw new Error("Runtime non aggiornato: chiudi il vecchio server e riavvia run.bat.");
+    }
     this.connected = true;
     this.openSocket();
     return health;
@@ -53,7 +56,8 @@ export class RuntimeClient {
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      throw new Error(body.detail ?? `Runtime request failed: ${response.status}`);
+      const detail = body.detail ?? response.statusText ?? "Request failed";
+      throw new Error(`${options.method ?? "GET"} ${path}: ${response.status} ${detail}`);
     }
     return response.json();
   }
@@ -88,5 +92,25 @@ export class RuntimeClient {
       method: "POST",
       body: JSON.stringify(task),
     });
+  }
+
+  listProjects() {
+    return this.request("/api/projects");
+  }
+
+  createProjectJob(job) {
+    return this.request("/api/project-jobs", {
+      method: "POST",
+      body: JSON.stringify(job),
+    });
+  }
+
+  logClient(level, message, context = {}) {
+    return fetch("/api/diagnostics/client", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ level, message: String(message), context }),
+      keepalive: true,
+    }).catch(() => undefined);
   }
 }

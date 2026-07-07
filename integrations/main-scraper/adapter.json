@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "projectId": "main-scraper",
+  "runtime": {
+    "type": "python",
+    "entrypoint": "main.py",
+    "venvCandidates": [
+      ".venv/Scripts/python.exe",
+      "../.venv/Scripts/python.exe"
+    ]
+  },
+  "output": {
+    "format": "json",
+    "requiredFields": [
+      "schema_version",
+      "command",
+      "ok",
+      "generated_at"
+    ],
+    "runRequiredFields": ["source", "normalized"]
+  },
+  "actions": {
+    "gui.open": {
+      "label": "Apri interfaccia scraper",
+      "description": "Avvia la GUI completa di The Main Scraper.",
+      "risk": "local-ui",
+      "mode": "detached",
+      "arguments": ["gui"]
+    },
+    "status": {
+      "label": "Controlla configurazione",
+      "description": "Verifica ambiente e funzionalita disponibili senza aprire il browser.",
+      "risk": "read",
+      "arguments": ["status", "--stdout-json"]
+    },
+    "google_maps.search": {
+      "label": "Cerca lead Google Maps",
+      "risk": "browser-read",
+      "arguments": ["run", "google_maps", "--stdout-json", "--quiet", "--format", "none"],
+      "parameters": ["search", "city", "max-results"]
+    },
+    "vinted.search": {
+      "label": "Cerca prodotti Vinted",
+      "risk": "browser-read",
+      "arguments": ["run", "vinted", "--stdout-json", "--quiet", "--format", "none"],
+      "parameters": ["search", "max-results", "browser-mode"]
+    },
+    "vinted.details": {
+      "label": "Estrai dettagli Vinted",
+      "risk": "browser-read-write",
+      "arguments": ["run", "vinted_descriptions", "--stdout-json", "--quiet"],
+      "parameters": ["links-file", "db-path", "browser-mode", "refresh-browser-profile"]
+    },
+    "subito.search": {
+      "label": "Cerca lavori Subito",
+      "risk": "browser-read",
+      "arguments": ["run", "subito", "--stdout-json", "--quiet", "--format", "none"],
+      "parameters": [
+        "region",
+        "city",
+        "category",
+        "job-keywords",
+        "anchor-place",
+        "max-distance-km",
+        "max-results",
+        "browser-mode"
+      ]
+    },
+    "subito.contact.prepare": {
+      "label": "Prepara contatto Subito",
+      "risk": "external-write",
+      "requiresApproval": true,
+      "arguments": ["contact", "subito", "--stdout-json", "--quiet"],
+      "parameters": ["links-file", "attachment", "message", "browser-mode"]
+    },
+    "subito.contact.submit": {
+      "label": "Invia contatto Subito",
+      "risk": "external-submit",
+      "requiresApproval": true,
+      "arguments": ["contact", "subito", "--stdout-json", "--quiet", "--submit"],
+      "parameters": ["links-file", "attachment", "message", "browser-mode"]
+    }
+  }
+}
