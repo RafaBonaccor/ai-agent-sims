@@ -1321,13 +1321,17 @@ function setPointerNdc(event) {
   pointerNdc.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
 }
 
-function selectFromPointer(event) {
+function objectFromPointer(event) {
   setPointerNdc(event);
   raycaster.setFromCamera(pointerNdc, camera);
   const hits = raycaster.intersectObjects(selectableObjects, true);
-  const hit = hits.find(
+  return hits.find(
     (item) => item.object.userData.agentId || item.object.userData.stationId || item.object.userData.tile
   );
+}
+
+function selectFromPointer(event) {
+  const hit = objectFromPointer(event);
   if (!hit) {
     selectedStationId = null;
     updateHud();
@@ -1339,7 +1343,6 @@ function selectFromPointer(event) {
   if (agentId) {
     selectedAgentId = agentId;
     selectedStationId = null;
-    openAgentActions(agentId);
   } else if (stationId) {
     selectedStationId = stationId;
   } else if (hit.object.userData.tile) {
@@ -1463,6 +1466,18 @@ addAgentButton.addEventListener("click", () => {
     return;
   }
   agentDialog.showModal();
+});
+
+canvas.addEventListener("dblclick", (event) => {
+  const hit = objectFromPointer(event);
+  const agentId = hit?.object.userData.agentId;
+  if (!agentId) {
+    return;
+  }
+  selectedAgentId = agentId;
+  selectedStationId = null;
+  updateHud();
+  openAgentActions(agentId);
 });
 
 agentActionDialog.querySelectorAll("[data-agent-action-close]").forEach((button) => {
