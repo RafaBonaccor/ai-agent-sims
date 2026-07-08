@@ -491,7 +491,7 @@ h2 {
 .agent-quick-chat {
   position: fixed;
   z-index: 4;
-  width: min(310px, calc(100vw - 24px));
+  width: min(360px, calc(100vw - 24px));
   padding: 10px;
   border: 1px solid rgba(94, 231, 242, 0.42);
   border-radius: 8px;
@@ -511,6 +511,44 @@ h2 {
   background: #09101b;
   content: "";
   transform: translate(-50%, -5px) rotate(45deg);
+}
+
+.agent-quick-chat__history {
+  max-height: 220px;
+  min-height: 48px;
+  margin: 0 0 9px;
+  padding: 2px;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-color: rgba(141, 155, 176, 0.35) transparent;
+}
+
+.agent-quick-chat__message {
+  max-width: 88%;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #101a29;
+  color: #dce6f4;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.agent-quick-chat__message--user {
+  justify-self: end;
+  border-color: rgba(94, 231, 242, 0.25);
+  background: #173042;
+  color: #effcff;
+}
+
+.agent-quick-chat__message--system {
+  border-color: rgba(251, 113, 133, 0.3);
+  color: #fecdd3;
 }
 
 .agent-quick-chat__heading,
@@ -580,6 +618,24 @@ h2 {
 
 .agent-quick-chat .agent-quick-chat__status--error {
   color: #fda4af;
+}
+
+.agent-quick-chat__sources {
+  display: grid;
+  gap: 4px;
+  margin-top: 7px;
+}
+
+.agent-quick-chat__sources a {
+  overflow: hidden;
+  color: var(--cyan);
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-quick-chat__sources a:hover {
+  text-decoration: underline;
 }
 
 noscript {

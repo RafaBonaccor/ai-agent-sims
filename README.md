@@ -18,6 +18,14 @@ OpenAI-compatible, Anthropic Messages API, Google Gemini e Ollama locale. Il
 function calling degli strumenti agentici e attualmente disponibile tramite il
 provider OpenAI-compatible; gli altri adapter eseguono task testuali.
 
+Gli agenti con provider `OpenAI` e toolset `web` possono usare il tool hosted
+`web_search` della Responses API. Fonti e citazioni vengono normalizzate nel
+risultato del task e mostrate come link cliccabili nella chat dell'agente.
+
+La chat rapida e persistente per agente: ogni messaggio viene salvato come task con
+canale `chat`, mentre risposte, errori e fonti sono ricostruiti da SQLite quando il
+popup viene riaperto. Le conversazioni di agenti diversi restano separate.
+
 ## Run
 
 Su macOS fai doppio clic su:

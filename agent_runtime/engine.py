@@ -11,6 +11,7 @@ from uuid import uuid4
 from .execution import ModelExecutor
 from .models import (
     AgentDefinition,
+    AgentChatMessage,
     AgentSnapshot,
     AgentState,
     MessageEnvelope,
@@ -89,6 +90,51 @@ class AgentRuntime:
 
     def list_tasks(self) -> list[TaskRecord]:
         return sorted(self.tasks.values(), key=lambda task: task.updated_at, reverse=True)
+
+    def get_agent_chat(self, agent_id: str) -> list[AgentChatMessage]:
+        if agent_id not in self.agents:
+            raise KeyError(agent_id)
+        messages: list[AgentChatMessage] = []
+        for task in sorted(self.tasks.values(), key=lambda item: item.created_at):
+            legacy_chat = (
+                task.channel == "task"
+                and task.requested_agent_id == agent_id
+                and task.capability is None
+                and task.title == task.description
+            )
+            if task.requested_agent_id != agent_id or (task.channel != "chat" and not legacy_chat):
+                continue
+            messages.append(
+                AgentChatMessage(
+                    id=f"{task.id}-user",
+                    task_id=task.id,
+                    role="user",
+                    content=task.description or task.title,
+                    created_at=task.created_at,
+                )
+            )
+            if task.result:
+                messages.append(
+                    AgentChatMessage(
+                        id=f"{task.id}-assistant",
+                        task_id=task.id,
+                        role="assistant",
+                        content=str(task.result.get("summary", "Task completato.")),
+                        sources=task.result.get("sources", []),
+                        created_at=task.updated_at,
+                    )
+                )
+            elif task.error:
+                messages.append(
+                    AgentChatMessage(
+                        id=f"{task.id}-error",
+                        task_id=task.id,
+                        role="system",
+                        content=task.error,
+                        created_at=task.updated_at,
+                    )
+                )
+        return messages
 
     async def add_agent(self, definition: AgentDefinition) -> AgentSnapshot:
         if definition.id in self.agents:

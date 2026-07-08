@@ -94,6 +94,10 @@ export class RuntimeClient {
     });
   }
 
+  getAgentChat(agentId) {
+    return this.request(`/api/agents/${encodeURIComponent(agentId)}/chat`);
+  }
+
   getSecretStatus(agentId) {
     return this.request(`/api/secrets/status?agent_id=${encodeURIComponent(agentId)}`);
   }

@@ -64,6 +64,23 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         loaded = self.runtime.store.load_agents()
         self.assertEqual({"supervisor", "analyst"}, {agent.id for agent in loaded})
 
+    async def test_chat_history_is_scoped_to_requested_agent(self):
+        task = await self.runtime.create_task(
+            TaskCreate(
+                title="Explain the result",
+                description="Explain the result",
+                requested_agent_id="analyst",
+                channel="chat",
+            )
+        )
+        await asyncio.gather(*tuple(self.runtime.running_jobs))
+
+        history = self.runtime.get_agent_chat("analyst")
+        self.assertEqual(["user", "assistant"], [message.role for message in history])
+        self.assertEqual(task.id, history[0].task_id)
+        self.assertEqual("Explain the result", history[0].content)
+        self.assertEqual([], self.runtime.get_agent_chat("supervisor"))
+
     async def test_agent_settings_and_private_memory_are_editable(self):
         analyst = self.runtime.agents["analyst"]
         definition = AgentDefinition(

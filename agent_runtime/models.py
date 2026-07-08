@@ -95,6 +95,7 @@ class TaskCreate(BaseModel):
     capability: Optional[str] = Field(default=None, max_length=64)
     priority: int = Field(default=2, ge=1, le=5)
     requested_agent_id: Optional[str] = None
+    channel: str = Field(default="task", pattern=r"^(task|chat)$")
 
 
 class TaskRecord(TaskCreate):
@@ -105,6 +106,15 @@ class TaskRecord(TaskCreate):
     error: Optional[str] = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class AgentChatMessage(BaseModel):
+    id: str
+    task_id: str
+    role: str = Field(pattern=r"^(user|assistant|system)$")
+    content: str
+    sources: list[dict[str, str]] = Field(default_factory=list)
+    created_at: datetime
 
 
 class ProjectJobPresetCreate(BaseModel):

@@ -40,6 +40,7 @@ const quickChat = document.querySelector("#agent-quick-chat");
 const quickChatAgent = document.querySelector("#quick-chat-agent");
 const quickChatInput = document.querySelector("#quick-chat-input");
 const quickChatStatus = document.querySelector("#quick-chat-status");
+const quickChatHistory = document.querySelector("#quick-chat-history");
 const projectKeyStatus = document.querySelector("#project-key-status");
 const agentKeyStatus = document.querySelector("#agent-key-status");
 const agentActionDialog = document.querySelector("#agent-action-dialog");
@@ -64,6 +65,7 @@ const agentWorld = new AgentWorld(network);
 const runtimeClient = new RuntimeClient();
 const runtimeSnapshots = new Map();
 const agentReplies = new Map();
+const chatMessageIds = new Set();
 let availableProjects = [];
 let availableProjectPresets = [];
 
@@ -962,6 +964,44 @@ function updateHud() {
     .join("");
 }
 
+function appendChatMessage(message) {
+  if (message.id && chatMessageIds.has(message.id)) {
+    return;
+  }
+  if (message.id) {
+    chatMessageIds.add(message.id);
+  }
+  const item = document.createElement("li");
+  item.className = `agent-quick-chat__message agent-quick-chat__message--${message.role}`;
+  item.append(document.createTextNode(String(message.content)));
+  const validSources = (message.sources ?? [])
+    .map((source) => ({ ...source, safeUrl: safeWebUrl(source.url) }))
+    .filter((source) => source.safeUrl);
+  if (validSources.length) {
+    const list = document.createElement("span");
+    list.className = "agent-quick-chat__sources";
+    for (const [index, source] of validSources.entries()) {
+      const link = document.createElement("a");
+      link.href = source.safeUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = `[${index + 1}] ${source.title || source.safeUrl}`;
+      list.append(link);
+    }
+    item.append(list);
+  }
+  quickChatHistory.append(item);
+  quickChatHistory.scrollTop = quickChatHistory.scrollHeight;
+}
+
+function renderChatHistory(messages) {
+  quickChatHistory.replaceChildren();
+  chatMessageIds.clear();
+  for (const message of messages) {
+    appendChatMessage(message);
+  }
+}
+
 function openQuickChat(agentId) {
   const agent = network.getAgent(agentId);
   if (!agent) {
@@ -972,9 +1012,22 @@ function openQuickChat(agentId) {
   quickChatStatus.textContent = "";
   quickChatStatus.classList.remove("agent-quick-chat__status--error");
   quickChat.hidden = false;
+  quickChatHistory.innerHTML = '<li class="agent-quick-chat__message">Caricamento...</li>';
+  chatMessageIds.clear();
   updateQuickChatPosition();
   window.clearTimeout(quickChatFocusTimer);
   quickChatFocusTimer = window.setTimeout(() => quickChatInput.focus(), 220);
+  runtimeClient.getAgentChat(agentId)
+    .then((messages) => {
+      if (quickChatAgentId === agentId) {
+        renderChatHistory(messages);
+      }
+    })
+    .catch((error) => {
+      if (quickChatAgentId === agentId) {
+        renderChatHistory([{ role: "system", content: error.message }]);
+      }
+    });
 }
 
 function closeQuickChat() {
@@ -982,6 +1035,8 @@ function closeQuickChat() {
   quickChatAgentId = null;
   quickChat.hidden = true;
   quickChatInput.value = "";
+  quickChatHistory.replaceChildren();
+  chatMessageIds.clear();
   quickChatStatus.textContent = "";
   quickChatStatus.classList.remove("agent-quick-chat__status--error");
 }
@@ -997,9 +1052,10 @@ function updateQuickChatPosition() {
   if (!visible) {
     return;
   }
-  const margin = Math.min(165, window.innerWidth / 2);
+  const margin = Math.min((quickChat.offsetWidth || 360) / 2 + 12, window.innerWidth / 2);
   const x = Math.max(margin, Math.min(window.innerWidth - margin, (quickChatPosition.x + 1) * 0.5 * window.innerWidth));
-  const y = Math.max(120, Math.min(window.innerHeight - 20, (1 - quickChatPosition.y) * 0.5 * window.innerHeight));
+  const minimumY = Math.min(window.innerHeight - 20, (quickChat.offsetHeight || 220) + 20);
+  const y = Math.max(minimumY, Math.min(window.innerHeight - 20, (1 - quickChatPosition.y) * 0.5 * window.innerHeight));
   quickChat.style.left = `${x}px`;
   quickChat.style.top = `${y}px`;
 }
@@ -1201,7 +1257,27 @@ function renderRuntimeMessage(event) {
   });
 }
 
-function showAgentReply(agentId, text, isError = false) {
+function safeWebUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return ["http:", "https:"].includes(parsed.protocol) ? parsed.href : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function renderQuickChatReply(text, sources = [], isError = false, taskId = "") {
+  appendChatMessage({
+    id: taskId ? `${taskId}-${isError ? "error" : "assistant"}` : "",
+    role: isError ? "system" : "assistant",
+    content: String(text),
+    sources,
+  });
+  quickChatStatus.textContent = isError ? "Task fallito." : "Risposta ricevuta.";
+  quickChatStatus.classList.toggle("agent-quick-chat__status--error", isError);
+}
+
+function showAgentReply(agentId, text, isError = false, sources = [], taskId = "") {
   if (!agentId || !text) {
     return;
   }
@@ -1211,8 +1287,7 @@ function showAgentReply(agentId, text, isError = false) {
     expiresAt: performance.now() + 12000,
   });
   if (quickChatAgentId === agentId && !quickChat.hidden) {
-    quickChatStatus.textContent = String(text);
-    quickChatStatus.classList.toggle("agent-quick-chat__status--error", isError);
+    renderQuickChatReply(text, sources, isError, taskId);
   }
 }
 
@@ -1236,11 +1311,17 @@ function handleRuntimeEvent(event) {
     renderRuntimeMessage(event);
     const message = event.data?.message;
     if (message?.type === "task.result") {
-      showAgentReply(message.sender, message.payload?.summary ?? "Task completato.");
+      showAgentReply(
+        message.sender,
+        message.payload?.summary ?? "Task completato.",
+        false,
+        message.payload?.sources ?? [],
+        message.task_id ?? ""
+      );
     }
   } else if (event.type === "task.state.changed" && event.data?.to === "failed") {
     const task = event.data?.task;
-    showAgentReply(task?.assigned_agent_id, task?.error ?? "Task fallito.", true);
+    showAgentReply(task?.assigned_agent_id, task?.error ?? "Task fallito.", true, [], task?.id ?? "");
   } else if (event.type?.startsWith("project.job.")) {
     const job = event.data?.job;
     const agent = job?.agent_id ? network.getAgent(job.agent_id) : null;
@@ -1674,6 +1755,13 @@ quickChat.addEventListener("submit", async (event) => {
       description: message,
       priority: 3,
       requested_agent_id: agentId,
+      channel: "chat",
+    });
+    appendChatMessage({
+      id: `${task.id}-user`,
+      role: "user",
+      content: message,
+      sources: [],
     });
     const state = agentWorld.getAgentState(agentId);
     if (state) {

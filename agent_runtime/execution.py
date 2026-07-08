@@ -276,8 +276,16 @@ class ModelExecutor:
         if provider == "openai":
             endpoint = self._provider_endpoint(agent.model.base_url, "https://api.openai.com/v1/responses", "/responses")
             payload = {"model": agent.model.model, "instructions": system, "input": user}
+            web_enabled = "web" in agent.toolsets
+            if web_enabled:
+                payload.update(
+                    tools=[{"type": "web_search", "search_context_size": "medium"}],
+                    tool_choice="auto",
+                    include=["web_search_call.action.sources"],
+                )
             response = self._post_json(endpoint, payload, api_key)
             summary = self._openai_response_text(response)
+            sources = self._openai_response_sources(response)
         elif provider == "anthropic":
             endpoint = self._provider_endpoint(agent.model.base_url, "https://api.anthropic.com/v1/messages", "/v1/messages")
             payload = {
@@ -325,7 +333,8 @@ class ModelExecutor:
             "summary": summary.strip(),
             "provider": provider,
             "model": agent.model.model,
-            "tool_calls": 0,
+            "tool_calls": sum(1 for item in response.get("output", []) if item.get("type", "").endswith("_call")),
+            "sources": sources if provider == "openai" else [],
         }
 
     @staticmethod
@@ -347,6 +356,26 @@ class ModelExecutor:
                 if content.get("type") == "output_text":
                     chunks.append(content.get("text", ""))
         return "\n".join(chunks)
+
+    @staticmethod
+    def _openai_response_sources(response: dict[str, Any]) -> list[dict[str, str]]:
+        sources: dict[str, dict[str, str]] = {}
+        for item in response.get("output", []):
+            if item.get("type") == "web_search_call":
+                for source in item.get("action", {}).get("sources", []) or []:
+                    url = str(source.get("url", "")).strip()
+                    if url:
+                        sources[url] = {"url": url, "title": str(source.get("title") or url)}
+            if item.get("type") != "message":
+                continue
+            for content in item.get("content", []):
+                for annotation in content.get("annotations", []) or []:
+                    if annotation.get("type") != "url_citation":
+                        continue
+                    url = str(annotation.get("url", "")).strip()
+                    if url:
+                        sources[url] = {"url": url, "title": str(annotation.get("title") or url)}
+        return list(sources.values())
 
     @staticmethod
     def _chat_endpoint(base_url: str) -> str:

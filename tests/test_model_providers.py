@@ -19,7 +19,7 @@ class ModelProviderTests(unittest.TestCase):
         self.store.close()
         self.temporary_directory.cleanup()
 
-    def run_provider(self, provider, response, model="test-model", base_url=""):
+    def run_provider(self, provider, response, model="test-model", base_url="", toolsets=None):
         captured = {}
 
         def fake_post(endpoint, payload, api_key, extra_headers=None):
@@ -36,6 +36,7 @@ class ModelProviderTests(unittest.TestCase):
             id="analyst",
             name="Analyst",
             role="analyst",
+            toolsets=toolsets or [],
             model=ModelSettings(provider=provider, model=model, base_url=base_url),
         )
         result = self.executor._run_native_provider(agent, self.task)
@@ -46,6 +47,45 @@ class ModelProviderTests(unittest.TestCase):
         result, request = self.run_provider("openai", response)
         self.assertEqual("https://api.openai.com/v1/responses", request["endpoint"])
         self.assertEqual("Done", result["summary"])
+        self.assertNotIn("tools", request["payload"])
+
+    def test_openai_web_search_is_enabled_by_agent_toolset(self):
+        response = {
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "action": {
+                        "sources": [
+                            {"url": "https://example.com/news", "title": "Example News"}
+                        ]
+                    },
+                },
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Current answer [1]",
+                            "annotations": [
+                                {
+                                    "type": "url_citation",
+                                    "url": "https://example.com/news",
+                                    "title": "Example News",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ]
+        }
+        result, request = self.run_provider("openai", response, toolsets=["web"])
+        self.assertEqual("web_search", request["payload"]["tools"][0]["type"])
+        self.assertEqual(["web_search_call.action.sources"], request["payload"]["include"])
+        self.assertEqual(1, result["tool_calls"])
+        self.assertEqual(
+            [{"url": "https://example.com/news", "title": "Example News"}],
+            result["sources"],
+        )
 
     def test_anthropic_messages_adapter(self):
         result, request = self.run_provider("anthropic", {"content": [{"type": "text", "text": "Done"}]})
