@@ -23,6 +23,8 @@ from .models import (
     ProjectJobPresetCreate,
     TaskCreate,
     TaskRecord,
+    WikiRecord,
+    WikiUpdate,
 )
 from .protocols import PROTOCOLS
 from .project_gateway import ProjectGateway, ProjectJob, ProjectJobCreate
@@ -193,6 +195,22 @@ async def get_agent_memory(agent_id: str) -> MemoryRecord:
 async def update_agent_memory(agent_id: str, update: MemoryUpdate) -> MemoryRecord:
     try:
         return await runtime().update_memory(agent_id, update)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Agent not found") from error
+
+
+@app.get("/api/agents/{agent_id}/wiki", response_model=WikiRecord)
+async def get_agent_wiki(agent_id: str) -> WikiRecord:
+    try:
+        return runtime().get_wiki(agent_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Agent not found") from error
+
+
+@app.put("/api/agents/{agent_id}/wiki", response_model=WikiRecord)
+async def update_agent_wiki(agent_id: str, update: WikiUpdate) -> WikiRecord:
+    try:
+        return await runtime().update_wiki(agent_id, update)
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Agent not found") from error
 

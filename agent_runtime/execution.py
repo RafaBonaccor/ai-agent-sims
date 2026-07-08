@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from .models import AgentSnapshot, MemoryRecord, RuntimeEvent, TaskRecord
+from .models import AgentChatMessage, AgentSnapshot, MemoryRecord, RuntimeEvent, TaskRecord
 from .storage import RuntimeStore
 from .secrets import SecretStore
 
@@ -74,6 +74,25 @@ class ToolRegistry:
                 "additionalProperties": False,
             },
         ),
+        "wiki_read": ToolDefinition(
+            name="wiki_read",
+            description="Read this agent's persistent conversation wiki.",
+            toolset="wiki",
+            risk="read",
+            parameters={"type": "object", "properties": {}, "additionalProperties": False},
+        ),
+        "wiki_append": ToolDefinition(
+            name="wiki_append",
+            description="Append a concise durable fact to this agent's persistent wiki.",
+            toolset="wiki",
+            risk="memory-write",
+            parameters={
+                "type": "object",
+                "properties": {"content": {"type": "string", "maxLength": 1000}},
+                "required": ["content"],
+                "additionalProperties": False,
+            },
+        ),
     }
 
     def __init__(self, store: RuntimeStore):
@@ -105,6 +124,16 @@ class ToolRegistry:
             memory.content = (memory.content.rstrip() + "\n" + addition).strip()[-8_000:]
             self.store.save_memory(memory)
             return {"saved": True, "characters": len(memory.content)}
+        if name == "wiki_read":
+            return self.store.get_wiki(agent.id).model_dump(mode="json")
+        if name == "wiki_append":
+            addition = str(arguments.get("content", "")).strip()
+            if not addition:
+                raise ValueError("wiki_append requires non-empty content")
+            wiki = self.store.get_wiki(agent.id)
+            wiki.content = (wiki.content.rstrip() + "\n" + addition).strip()[-8_000:]
+            self.store.save_wiki(wiki)
+            return {"saved": True, "characters": len(wiki.content)}
         raise ValueError(f"Tool has no executor: {name}")
 
 
@@ -146,6 +175,8 @@ class ModelExecutor:
             result = await asyncio.to_thread(self._run_native_provider, agent, task)
         else:
             raise ValueError(f"Unsupported provider: {agent.model.provider}")
+        if task.channel == "chat":
+            self._update_chat_wiki(agent, task, result)
         await emit(
             RuntimeEvent(
                 type="model.completed",
@@ -165,26 +196,38 @@ class ModelExecutor:
         )
         return result
 
+    def _update_chat_wiki(self, agent: AgentSnapshot, task: TaskRecord, result: dict[str, Any]) -> None:
+        user_text = self._task_message_text(task)
+        assistant_text = str(result.get("summary", "") or "").strip()
+        if not user_text and not assistant_text:
+            return
+        lines = [
+            f"- {task.created_at.isoformat(timespec='seconds')} | user: {self._truncate(user_text, 260)}",
+            f"  assistant: {self._truncate(assistant_text, 420)}",
+        ]
+        sources = result.get("sources") or []
+        if sources:
+            source_urls = ", ".join(
+                str(item.get("url", "") or "").strip()
+                for item in sources
+                if isinstance(item, dict) and str(item.get("url", "") or "").strip()
+            )
+            if source_urls:
+                lines.append(f"  sources: {self._truncate(source_urls, 420)}")
+        wiki = self.store.get_wiki(agent.id)
+        wiki.content = (wiki.content.rstrip() + "\n" + "\n".join(lines)).strip()[-8_000:]
+        self.store.save_wiki(wiki)
+
     async def _run_openai_compatible(
         self, agent: AgentSnapshot, task: TaskRecord, emit: EventSink
     ) -> dict[str, Any]:
         endpoint = self._chat_endpoint(agent.model.base_url)
         api_key = self._resolve_api_key(agent)
-
-        memory = self.store.get_memory(agent.id).content
-        system_parts = [
-            f"You are {agent.name}, role: {agent.role}.",
-            agent.instructions or "Complete assigned tasks carefully and return verifiable results.",
-        ]
-        if memory:
-            system_parts.append(f"Private durable memory:\n{memory}")
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": "\n\n".join(system_parts)},
-            {
-                "role": "user",
-                "content": f"Task: {task.title}\n\n{task.description}\n\nReturn a concise result.",
-            },
-        ]
+        system_prompt = self._build_system_prompt(agent, include_chat_history=False)
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        if task.channel == "chat":
+            messages.extend(self._build_chat_messages(agent.id, task.id))
+        messages.append({"role": "user", "content": self._build_user_prompt(task)})
         available_tools = self.tools.available(agent)
         tool_call_count = 0
 
@@ -267,11 +310,12 @@ class ModelExecutor:
     def _run_native_provider(self, agent: AgentSnapshot, task: TaskRecord) -> dict[str, Any]:
         provider = agent.model.provider
         api_key = self._resolve_api_key(agent)
-        memory = self.store.get_memory(agent.id).content
-        system = f"You are {agent.name}, role: {agent.role}.\n{agent.instructions}".strip()
-        if memory:
-            system += f"\n\nPrivate durable memory:\n{memory}"
-        user = f"Task: {task.title}\n\n{task.description}\n\nReturn a concise result."
+        system = self._build_system_prompt(
+            agent,
+            include_chat_history=task.channel == "chat",
+            current_task_id=task.id,
+        )
+        user = self._build_user_prompt(task)
 
         if provider == "openai":
             endpoint = self._provider_endpoint(agent.model.base_url, "https://api.openai.com/v1/responses", "/responses")
@@ -336,6 +380,85 @@ class ModelExecutor:
             "tool_calls": sum(1 for item in response.get("output", []) if item.get("type", "").endswith("_call")),
             "sources": sources if provider == "openai" else [],
         }
+
+    def _build_system_prompt(
+        self,
+        agent: AgentSnapshot,
+        include_chat_history: bool = False,
+        current_task_id: str = "",
+    ) -> str:
+        parts = [
+            f"You are {agent.name}, role: {agent.role}.",
+            agent.instructions or "Complete assigned tasks carefully and return verifiable results.",
+        ]
+        memory = self.store.get_memory(agent.id).content.strip()
+        if memory:
+            parts.append(f"Private durable memory:\n{memory}")
+        wiki = self.store.get_wiki(agent.id).content.strip()
+        if wiki:
+            parts.append(f"Persistent conversation wiki:\n{wiki}")
+        if include_chat_history:
+            chat_history = self._build_chat_context_text(agent.id, current_task_id)
+            if chat_history:
+                parts.append(f"Recent chat history:\n{chat_history}")
+            parts.append(
+                "This is a persistent chat session. Use prior chat history and the wiki to answer with continuity."
+            )
+            LOGGER.info(
+                "memory_context agent=%s task=%s wiki_chars=%s chat_chars=%s",
+                agent.id,
+                current_task_id or "-",
+                len(wiki),
+                len(chat_history),
+            )
+        return "\n\n".join(parts).strip()
+
+    @staticmethod
+    def _build_user_prompt(task: TaskRecord) -> str:
+        description = task.description.strip() or task.title.strip()
+        if task.channel == "chat":
+            return description
+        return f"Task: {task.title}\n\n{description}\n\nReturn a concise result."
+
+    def _build_chat_messages(self, agent_id: str, current_task_id: str) -> list[dict[str, Any]]:
+        history = self.store.load_agent_chat_messages(agent_id, limit_turns=8, exclude_task_id=current_task_id)
+        LOGGER.info(
+            "memory_context agent=%s task=%s wiki_chars=%s chat_messages=%s",
+            agent_id,
+            current_task_id or "-",
+            len(self.store.get_wiki(agent_id).content.strip()),
+            len(history),
+        )
+        messages: list[dict[str, Any]] = []
+        for message in history:
+            messages.append(
+                {
+                    "role": message.role,
+                    "content": self._truncate(message.content, 1500),
+                }
+            )
+        return messages
+
+    def _build_chat_context_text(self, agent_id: str, current_task_id: str) -> str:
+        history = self.store.load_agent_chat_messages(agent_id, limit_turns=8, exclude_task_id=current_task_id)
+        if not history:
+            return ""
+        lines = []
+        for message in history:
+            label = {"user": "User", "assistant": "Assistant", "system": "System"}.get(message.role, message.role)
+            lines.append(f"{label}: {self._truncate(message.content, 500)}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _task_message_text(task: TaskRecord) -> str:
+        return (task.description or task.title or "").strip()
+
+    @staticmethod
+    def _truncate(value: str, max_length: int) -> str:
+        text = str(value or "")
+        if len(text) <= max_length:
+            return text
+        return text[: max_length - 1].rstrip() + "…"
 
     @staticmethod
     def _provider_endpoint(base_url: str, default: str, suffix: str) -> str:

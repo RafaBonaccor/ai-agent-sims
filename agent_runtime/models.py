@@ -162,3 +162,12 @@ class MemoryUpdate(BaseModel):
 class MemoryRecord(MemoryUpdate):
     agent_id: str
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class WikiUpdate(BaseModel):
+    content: str = Field(default="", max_length=8_000)
+
+
+class WikiRecord(WikiUpdate):
+    agent_id: str
+    updated_at: datetime = Field(default_factory=utc_now)

@@ -89,6 +89,8 @@
 
     <p class="boot-message" id="boot-message" role="status"></p>
 
+    <section class="job-toast-stack" id="job-toast-stack" aria-live="polite" aria-relevant="additions text"></section>
+
     <form class="agent-quick-chat" id="agent-quick-chat" hidden>
       <div class="agent-quick-chat__heading">
         <strong id="quick-chat-agent">Agente</strong>
@@ -237,6 +239,14 @@
             <small>Injected into this agent's model context; maximum 8,000 characters.</small>
           </div>
           <label><textarea name="memory" rows="7" maxlength="8000" placeholder="Durable facts, preferences, and project context"></textarea></label>
+        </section>
+
+        <section class="settings-section">
+          <div class="settings-section__heading">
+            <strong>Conversation wiki</strong>
+            <small>Persistent chat notes and summaries loaded automatically into chat prompts.</small>
+          </div>
+          <label><textarea name="wiki" rows="7" maxlength="8000" placeholder="Conversation summary, recurring topics, decisions, and stable facts"></textarea></label>
         </section>
 
         <p class="form-error" id="agent-settings-error" role="alert"></p>

@@ -488,6 +488,136 @@ h2 {
   display: none;
 }
 
+.job-toast-stack {
+  position: fixed;
+  top: 18px;
+  right: 374px;
+  z-index: 4;
+  width: clamp(250px, calc(100vw - 392px), 360px);
+  max-height: calc(100vh - 36px);
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  pointer-events: none;
+}
+
+.job-toast {
+  pointer-events: auto;
+  display: grid;
+  gap: 10px;
+  padding: 12px 13px;
+  border: 1px solid rgba(94, 231, 242, 0.24);
+  border-radius: 14px;
+  background: rgba(9, 15, 27, 0.96);
+  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.48);
+  overflow: hidden;
+}
+
+.job-toast--success {
+  border-color: rgba(52, 211, 153, 0.35);
+}
+
+.job-toast--danger {
+  border-color: rgba(251, 113, 133, 0.4);
+}
+
+.job-toast__header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.job-toast__title {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.job-toast__title strong {
+  font-size: 0.82rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.job-toast__title span {
+  color: var(--muted);
+  font-size: 0.64rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.job-toast__meta {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.job-toast__status {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.job-toast__status[data-tone="active"] {
+  background: rgba(94, 231, 242, 0.12);
+  color: #9ef0f8;
+}
+
+.job-toast__status[data-tone="success"] {
+  background: rgba(52, 211, 153, 0.14);
+  color: #86efac;
+}
+
+.job-toast__status[data-tone="danger"] {
+  background: rgba(251, 113, 133, 0.14);
+  color: #fda4af;
+}
+
+.job-toast__meta button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.job-toast__summary {
+  margin: 0;
+  color: #dbe5f2;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.job-toast__output {
+  margin: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(7, 12, 20, 0.92);
+  color: #dbe5f2;
+  font-size: 0.68rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.job-toast--active .job-toast__output {
+  color: #b9c8db;
+}
+
 .agent-quick-chat {
   position: fixed;
   z-index: 4;
@@ -965,6 +1095,12 @@ noscript {
     bottom: 12px;
     min-height: 142px;
   }
+
+  .job-toast-stack {
+    right: 12px;
+    left: auto;
+    width: min(360px, calc(100vw - 24px));
+  }
 }
 
 @media (max-width: 620px) {
@@ -1010,6 +1146,12 @@ noscript {
   .form-grid,
   .form-grid--three {
     grid-template-columns: 1fr;
+  }
+
+  .job-toast-stack {
+    top: 12px;
+    right: 12px;
+    width: min(360px, calc(100vw - 24px));
   }
 }
 

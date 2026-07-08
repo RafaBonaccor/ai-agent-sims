@@ -81,6 +81,61 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("Explain the result", history[0].content)
         self.assertEqual([], self.runtime.get_agent_chat("supervisor"))
 
+    async def test_chat_prompts_include_persistent_wiki_and_previous_messages(self):
+        first = await self.runtime.create_task(
+            TaskCreate(
+                title="Remember the project name",
+                description="Remember the project name",
+                requested_agent_id="analyst",
+                channel="chat",
+            )
+        )
+        await asyncio.gather(*tuple(self.runtime.running_jobs))
+
+        wiki = self.runtime.get_wiki("analyst")
+        self.assertIn("Analyst completed Remember the project name", wiki.content)
+
+        analyst = self.runtime.agents["analyst"]
+        prompt = self.runtime.executor._build_system_prompt(
+            analyst,
+            include_chat_history=True,
+            current_task_id="task-followup",
+        )
+        self.assertIn("Persistent conversation wiki", prompt)
+        self.assertIn("Remember the project name", prompt)
+        self.assertIn("Assistant: Analyst completed Remember the project name", prompt)
+
+    async def test_chat_history_limit_keeps_latest_turns_in_order(self):
+        for index in range(14):
+            self.runtime.store.save_task(
+                TaskRecord(
+                    title=f"message {index}",
+                    description=f"message {index}",
+                    requested_agent_id="analyst",
+                    channel="chat",
+                    result={"summary": f"reply {index}"},
+                )
+            )
+
+        history = self.runtime.store.load_agent_chat_messages("analyst", limit_turns=3)
+        self.assertEqual(
+            ["message 11", "reply 11", "message 12", "reply 12", "message 13", "reply 13"],
+            [message.content for message in history],
+        )
+
+    async def test_wiki_bootstrap_preserves_existing_chat(self):
+        task = TaskRecord(
+            title="Remember blueprints",
+            description="Remember blueprints",
+            requested_agent_id="archival-agent",
+            channel="chat",
+            result={"summary": "I will remember blueprints"},
+        )
+        self.runtime.store.save_task(task)
+        wiki = self.runtime.store.bootstrap_wiki_from_chat("archival-agent")
+        self.assertIn("user: Remember blueprints", wiki.content)
+        self.assertIn("assistant: I will remember blueprints", wiki.content)
+
     async def test_agent_settings_and_private_memory_are_editable(self):
         analyst = self.runtime.agents["analyst"]
         definition = AgentDefinition(

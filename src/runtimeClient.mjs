@@ -87,6 +87,17 @@ export class RuntimeClient {
     });
   }
 
+  getAgentWiki(agentId) {
+    return this.request(`/api/agents/${encodeURIComponent(agentId)}/wiki`);
+  }
+
+  updateAgentWiki(agentId, content) {
+    return this.request(`/api/agents/${encodeURIComponent(agentId)}/wiki`, {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    });
+  }
+
   createTask(task) {
     return this.request("/api/tasks", {
       method: "POST",
@@ -133,6 +144,10 @@ export class RuntimeClient {
       method: "POST",
       body: JSON.stringify(job),
     });
+  }
+
+  listProjectJobs() {
+    return this.request("/api/project-jobs");
   }
 
   listProjectPresets(projectId = "") {

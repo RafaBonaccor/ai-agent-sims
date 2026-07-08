@@ -6,7 +6,16 @@ from pathlib import Path
 from threading import RLock
 from typing import Optional
 
-from .models import AgentSnapshot, MemoryRecord, ProjectJobPreset, RuntimeEvent, TaskRecord, utc_now
+from .models import (
+    AgentChatMessage,
+    AgentSnapshot,
+    MemoryRecord,
+    ProjectJobPreset,
+    RuntimeEvent,
+    TaskRecord,
+    WikiRecord,
+    utc_now,
+)
 
 
 class RuntimeStore:
@@ -40,6 +49,11 @@ class RuntimeStore:
                     created_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS memories (
+                    agent_id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS wikis (
                     agent_id TEXT PRIMARY KEY,
                     content TEXT NOT NULL DEFAULT '',
                     updated_at TEXT NOT NULL
@@ -110,6 +124,50 @@ class RuntimeStore:
                 (memory.agent_id, memory.content, memory.updated_at.isoformat()),
             )
 
+    def get_wiki(self, agent_id: str) -> WikiRecord:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT content, updated_at FROM wikis WHERE agent_id = ?", (agent_id,)
+            ).fetchone()
+        if row is None:
+            return WikiRecord(agent_id=agent_id, content="")
+        return WikiRecord(agent_id=agent_id, content=row["content"], updated_at=row["updated_at"])
+
+    def save_wiki(self, wiki: WikiRecord) -> None:
+        wiki.updated_at = utc_now()
+        with self.lock, self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO wikis(agent_id, content, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(agent_id) DO UPDATE SET
+                    content=excluded.content,
+                    updated_at=excluded.updated_at
+                """,
+                (wiki.agent_id, wiki.content, wiki.updated_at.isoformat()),
+            )
+
+    def bootstrap_wiki_from_chat(self, agent_id: str, limit_turns: int = 40) -> WikiRecord:
+        with self.lock:
+            existing = self.connection.execute(
+                "SELECT content, updated_at FROM wikis WHERE agent_id = ?", (agent_id,)
+            ).fetchone()
+        if existing is not None:
+            return WikiRecord(
+                agent_id=agent_id,
+                content=existing["content"],
+                updated_at=existing["updated_at"],
+            )
+
+        history = self.load_agent_chat_messages(agent_id, limit_turns=limit_turns)
+        lines = []
+        for message in history:
+            label = "user" if message.role == "user" else message.role
+            content = " ".join(message.content.split())
+            lines.append(f"- {message.created_at.isoformat(timespec='seconds')} | {label}: {content[:500]}")
+        wiki = WikiRecord(agent_id=agent_id, content="\n".join(lines)[-8_000:])
+        self.save_wiki(wiki)
+        return wiki
+
     def append_event(self, event: RuntimeEvent) -> None:
         with self.lock, self.connection:
             self.connection.execute(
@@ -159,6 +217,62 @@ class RuntimeStore:
                 "SELECT document FROM events ORDER BY sequence DESC LIMIT ?", (limit,)
             ).fetchall()
         return [RuntimeEvent.model_validate_json(row["document"]) for row in reversed(rows)]
+
+    def load_agent_chat_messages(
+        self, agent_id: str, limit_turns: int = 12, exclude_task_id: str = ""
+    ) -> list[AgentChatMessage]:
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT document FROM tasks ORDER BY updated_at DESC, rowid DESC"
+            ).fetchall()
+        turns: list[list[AgentChatMessage]] = []
+        for row in rows:
+            task = TaskRecord.model_validate_json(row["document"])
+            legacy_chat = (
+                task.channel == "task"
+                and task.requested_agent_id == agent_id
+                and task.capability is None
+                and task.title == task.description
+            )
+            if task.id == exclude_task_id or (
+                task.requested_agent_id != agent_id or (task.channel != "chat" and not legacy_chat)
+            ):
+                continue
+            turn = [
+                AgentChatMessage(
+                    id=f"{task.id}-user",
+                    task_id=task.id,
+                    role="user",
+                    content=task.description or task.title,
+                    created_at=task.created_at,
+                )
+            ]
+            if task.result:
+                turn.append(
+                    AgentChatMessage(
+                        id=f"{task.id}-assistant",
+                        task_id=task.id,
+                        role="assistant",
+                        content=str(task.result.get("summary", "Task completato.")),
+                        sources=task.result.get("sources", []),
+                        created_at=task.updated_at,
+                    )
+                )
+            elif task.error:
+                turn.append(
+                    AgentChatMessage(
+                        id=f"{task.id}-error",
+                        task_id=task.id,
+                        role="system",
+                        content=task.error,
+                        created_at=task.updated_at,
+                    )
+                )
+            turns.append(turn)
+            if len(turns) >= limit_turns:
+                break
+        # Select the newest turns first, then expose them chronologically.
+        return [message for turn in reversed(turns) for message in turn]
 
     def close(self) -> None:
         with self.lock:

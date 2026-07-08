@@ -21,6 +21,8 @@ from .models import (
     TaskCreate,
     TaskRecord,
     TaskState,
+    WikiRecord,
+    WikiUpdate,
     utc_now,
 )
 from .protocols import validate_message, validate_task_transition
@@ -49,6 +51,8 @@ class AgentRuntime:
         self.executor = ModelExecutor(self.store, secrets)
         if not self.agents:
             self._seed_agents()
+        for agent_id in self.agents:
+            self.store.bootstrap_wiki_from_chat(agent_id)
         self._recover_interrupted_state()
 
     def _seed_agents(self) -> None:
@@ -94,47 +98,7 @@ class AgentRuntime:
     def get_agent_chat(self, agent_id: str) -> list[AgentChatMessage]:
         if agent_id not in self.agents:
             raise KeyError(agent_id)
-        messages: list[AgentChatMessage] = []
-        for task in sorted(self.tasks.values(), key=lambda item: item.created_at):
-            legacy_chat = (
-                task.channel == "task"
-                and task.requested_agent_id == agent_id
-                and task.capability is None
-                and task.title == task.description
-            )
-            if task.requested_agent_id != agent_id or (task.channel != "chat" and not legacy_chat):
-                continue
-            messages.append(
-                AgentChatMessage(
-                    id=f"{task.id}-user",
-                    task_id=task.id,
-                    role="user",
-                    content=task.description or task.title,
-                    created_at=task.created_at,
-                )
-            )
-            if task.result:
-                messages.append(
-                    AgentChatMessage(
-                        id=f"{task.id}-assistant",
-                        task_id=task.id,
-                        role="assistant",
-                        content=str(task.result.get("summary", "Task completato.")),
-                        sources=task.result.get("sources", []),
-                        created_at=task.updated_at,
-                    )
-                )
-            elif task.error:
-                messages.append(
-                    AgentChatMessage(
-                        id=f"{task.id}-error",
-                        task_id=task.id,
-                        role="system",
-                        content=task.error,
-                        created_at=task.updated_at,
-                    )
-                )
-        return messages
+        return self.store.load_agent_chat_messages(agent_id)
 
     async def add_agent(self, definition: AgentDefinition) -> AgentSnapshot:
         if definition.id in self.agents:
@@ -199,6 +163,27 @@ class AgentRuntime:
             )
         )
         return memory
+
+    def get_wiki(self, agent_id: str) -> WikiRecord:
+        if agent_id not in self.agents:
+            raise KeyError(agent_id)
+        return self.store.get_wiki(agent_id)
+
+    async def update_wiki(self, agent_id: str, update: WikiUpdate) -> WikiRecord:
+        if agent_id not in self.agents:
+            raise KeyError(agent_id)
+        wiki = WikiRecord(agent_id=agent_id, content=update.content)
+        self.store.save_wiki(wiki)
+        await self.publish(
+            RuntimeEvent(
+                type="wiki.updated",
+                entity_id=agent_id,
+                agent_id=agent_id,
+                summary=f"Updated wiki for {self.agents[agent_id].name}.",
+                data={"characters": len(wiki.content)},
+            )
+        )
+        return wiki
 
     async def create_task(self, task_input: TaskCreate) -> TaskRecord:
         task = TaskRecord(**task_input.model_dump())

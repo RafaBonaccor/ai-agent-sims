@@ -59,6 +59,7 @@ const projectResult = document.querySelector("#project-result");
 const projectError = document.querySelector("#project-error");
 const projectPresetSelect = document.querySelector("#project-preset");
 const projectPresetName = document.querySelector("#project-preset-name");
+const jobToastStack = document.querySelector("#job-toast-stack");
 
 const network = new AgentNetwork(defaultScenario);
 const agentWorld = new AgentWorld(network);
@@ -66,6 +67,7 @@ const runtimeClient = new RuntimeClient();
 const runtimeSnapshots = new Map();
 const agentReplies = new Map();
 const chatMessageIds = new Set();
+const projectJobToasts = new Map();
 let availableProjects = [];
 let availableProjectPresets = [];
 
@@ -1330,6 +1332,7 @@ function handleRuntimeEvent(event) {
       agent.runtime.status = active ? "executing" : event.type.endsWith("failed") ? "failed" : "idle";
       agent.runtime.load = active ? 0.82 : 0.08;
     }
+    syncProjectJobToast(job, event.type);
     if (job && projectDialog.open) {
       projectResult.textContent = job.error
         ? `Errore\n${job.error}`
@@ -1438,6 +1441,164 @@ async function openProjectGateway() {
   }
 }
 
+function projectNameFor(job) {
+  return availableProjects.find((project) => project.id === job.project_id)?.name ?? job.project_id ?? "Project";
+}
+
+function projectActionLabelFor(job) {
+  const project = availableProjects.find((item) => item.id === job.project_id);
+  return project?.actions?.find((action) => action.id === job.action)?.label ?? job.action ?? "job";
+}
+
+function projectAgentLabelFor(job) {
+  if (!job.agent_id) {
+    return "unassigned";
+  }
+  return network.getAgent(job.agent_id)?.label ?? job.agent_id;
+}
+
+function clampText(value, maxLength = 1400) {
+  const text = String(value ?? "");
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength).trimEnd()}\n…`;
+}
+
+function formatProjectJobOutput(job) {
+  if (!job) {
+    return "";
+  }
+  if (job.state === "failed") {
+    return `Errore\n${clampText(job.error || "Job fallito.")}`;
+  }
+  if (job.state === "queued" || job.state === "running") {
+    return "Job in corso...";
+  }
+  const result = job.result ?? {};
+  const compact = {};
+  if (result.message) compact.message = result.message;
+  if (result.command) compact.command = result.command;
+  if (result.source) compact.source = result.source;
+  if (typeof result.row_count === "number") compact.row_count = result.row_count;
+  if (Array.isArray(result.files) && result.files.length) compact.files = result.files;
+  if (result.normalized?.meta_summary) compact.meta_summary = result.normalized.meta_summary;
+  if (result.normalized?.exported_files) compact.exported_files = result.normalized.exported_files;
+  if (!Object.keys(compact).length) {
+    return clampText(JSON.stringify(result, null, 2));
+  }
+  return clampText(JSON.stringify(compact, null, 2));
+}
+
+function jobToastStatus(job) {
+  if (!job) {
+    return "";
+  }
+  if (job.state === "queued") return "In coda";
+  if (job.state === "running") return "In corso";
+  if (job.state === "completed") return "Completato";
+  if (job.state === "failed") return "Fallito";
+  return String(job.state || "");
+}
+
+function jobToastTone(job) {
+  if (!job) {
+    return "neutral";
+  }
+  if (job.state === "completed") return "success";
+  if (job.state === "failed") return "danger";
+  if (job.state === "running" || job.state === "queued") return "active";
+  return "neutral";
+}
+
+function ensureProjectJobToast(job) {
+  if (!job || !job.id) {
+    return null;
+  }
+  let toast = projectJobToasts.get(job.id);
+  if (toast) {
+    return toast;
+  }
+
+  const card = document.createElement("article");
+  card.className = "job-toast";
+  card.dataset.jobId = job.id;
+  card.innerHTML = `
+    <div class="job-toast__header">
+      <div class="job-toast__title">
+        <strong></strong>
+        <span></span>
+      </div>
+      <div class="job-toast__meta">
+        <span class="job-toast__status"></span>
+        <button type="button" aria-label="Chiudi job">x</button>
+      </div>
+    </div>
+    <p class="job-toast__summary"></p>
+    <pre class="job-toast__output"></pre>
+  `;
+  const dismissButton = card.querySelector("button");
+  const summary = card.querySelector(".job-toast__summary");
+  const output = card.querySelector(".job-toast__output");
+  const title = card.querySelector(".job-toast__title strong");
+  const subtitle = card.querySelector(".job-toast__title span");
+  const status = card.querySelector(".job-toast__status");
+  dismissButton.addEventListener("click", () => {
+    card.remove();
+    projectJobToasts.delete(job.id);
+  });
+
+  toast = { card, summary, output, title, subtitle, status };
+  projectJobToasts.set(job.id, toast);
+  jobToastStack.prepend(card);
+  return toast;
+}
+
+function syncProjectJobToast(job, phase = "") {
+  if (!job || !job.id) {
+    return;
+  }
+  const toast = ensureProjectJobToast(job);
+  if (!toast) {
+    return;
+  }
+  const titleText = `${projectNameFor(job)} · ${projectActionLabelFor(job)}`;
+  const subtitleText = `Agente: ${projectAgentLabelFor(job)} · ID: ${job.id}`;
+  const summaryText = phase === "project.job.queued"
+    ? "Job ricevuto e messo in coda."
+    : phase === "project.job.started"
+      ? "Job avviato."
+      : job.state === "completed"
+        ? "Output finale."
+        : job.state === "failed"
+          ? "Esecuzione fallita."
+          : "Job aggiornato.";
+
+  toast.card.classList.toggle("job-toast--active", job.state === "queued" || job.state === "running");
+  toast.card.classList.toggle("job-toast--success", job.state === "completed");
+  toast.card.classList.toggle("job-toast--danger", job.state === "failed");
+  toast.title.textContent = titleText;
+  toast.subtitle.textContent = subtitleText;
+  toast.status.textContent = jobToastStatus(job);
+  toast.status.dataset.tone = jobToastTone(job);
+  toast.summary.textContent = summaryText;
+  toast.output.textContent = formatProjectJobOutput(job);
+}
+
+async function refreshProjectJobToasts() {
+  if (!runtimeClient.connected) {
+    return;
+  }
+  try {
+    const jobs = await runtimeClient.listProjectJobs();
+    for (const job of jobs.filter((item) => ["queued", "running"].includes(item.state))) {
+      syncProjectJobToast(job);
+    }
+  } catch (error) {
+    runtimeClient.logClient("error", error.message, { operation: "refreshProjectJobToasts" });
+  }
+}
+
 function openAgentActions(agentId) {
   const agent = network.getAgent(agentId);
   if (!agent) {
@@ -1464,6 +1625,7 @@ async function connectRuntime() {
     await runtimeClient.connect();
     network.autopilotClock = Number.POSITIVE_INFINITY;
     setRuntimeConnection(true);
+    await refreshProjectJobToasts();
   } catch (error) {
     setRuntimeConnection(false);
     setBootMessage(error.message);
@@ -1542,16 +1704,20 @@ async function openAgentSettings() {
   settingsField("max_parallel_tasks").value = snapshot.limits.max_parallel_tasks;
   settingsField("approvals").value = snapshot.approvals.required_for.join(", ");
   settingsField("memory").value = "Loading memory…";
+  settingsField("wiki").value = "Loading wiki…";
   agentSettingsDialog.showModal();
   try {
-    const [memory, secretStatus] = await Promise.all([
+    const [memory, wiki, secretStatus] = await Promise.all([
       runtimeClient.getAgentMemory(snapshot.id),
+      runtimeClient.getAgentWiki(snapshot.id),
       runtimeClient.getSecretStatus(snapshot.id),
     ]);
     settingsField("memory").value = memory.content;
+    settingsField("wiki").value = wiki.content;
     renderSecretStatus(secretStatus);
   } catch (error) {
     settingsField("memory").value = "";
+    settingsField("wiki").value = "";
     agentSettingsError.textContent = error.message;
   }
 }
@@ -1870,6 +2036,7 @@ projectForm.addEventListener("submit", async (event) => {
       approved: projectForm.elements.namedItem("approved").checked,
     });
     projectResult.textContent = JSON.stringify({ state: job.state, job: job.id }, null, 2);
+    syncProjectJobToast(job, "project.job.queued");
   } catch (error) {
     runtimeClient.logClient("error", error.message, {
       operation: "createProjectJob",
@@ -1971,6 +2138,7 @@ agentSettingsForm.addEventListener("submit", async (event) => {
       settingsField("api_key").value = "";
     }
     await runtimeClient.updateAgentMemory(snapshot.id, value("memory"));
+    await runtimeClient.updateAgentWiki(snapshot.id, value("wiki"));
     agentSettingsDialog.close();
   } catch (error) {
     agentSettingsError.textContent = error.message;
