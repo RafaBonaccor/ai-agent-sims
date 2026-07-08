@@ -89,6 +89,18 @@
 
     <p class="boot-message" id="boot-message" role="status"></p>
 
+    <form class="agent-quick-chat" id="agent-quick-chat" hidden>
+      <div class="agent-quick-chat__heading">
+        <strong id="quick-chat-agent">Agente</strong>
+        <button id="close-quick-chat" type="button" aria-label="Chiudi">x</button>
+      </div>
+      <div class="agent-quick-chat__composer">
+        <input id="quick-chat-input" required minlength="3" maxlength="1000" autocomplete="off" placeholder="Scrivi un lavoro..." />
+        <button type="submit">Invia</button>
+      </div>
+      <small id="quick-chat-status"></small>
+    </form>
+
     <dialog class="agent-dialog" id="agent-dialog" aria-labelledby="agent-dialog-title">
       <form class="agent-form" id="agent-form" method="dialog">
         <div class="dialog-heading">
@@ -170,19 +182,36 @@
         <section class="settings-section">
           <div class="settings-section__heading">
             <strong>Model provider</strong>
-            <small>API keys are read from environment variables and never stored here.</small>
+            <small>API keys are encrypted locally and are never returned to the browser.</small>
           </div>
           <div class="form-grid">
             <label>
               <span>Provider</span>
               <select name="provider">
                 <option value="simulated">Native simulator</option>
-                <option value="openai-compatible">OpenAI compatible</option>
+                <option value="openai">OpenAI</option>
+                <option value="openai-compatible">OpenAI-compatible</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="gemini">Google Gemini</option>
+                <option value="ollama">Ollama locale</option>
               </select>
             </label>
             <label><span>Model</span><input name="model" required /></label>
             <label class="form-grid__wide"><span>Base URL</span><input name="base_url" placeholder="https://api.example.com/v1" /></label>
-            <label><span>API key environment</span><input name="api_key_env" placeholder="MODEL_API_KEY" /></label>
+            <label>
+              <span>API key assignment</span>
+              <select name="api_key_scope">
+                <option value="project">Tutto il progetto</option>
+                <option value="agent">Solo questo agente</option>
+              </select>
+            </label>
+            <label><span>API key</span><input name="api_key" type="password" autocomplete="new-password" placeholder="Lascia vuoto per non modificarla" /></label>
+            <div class="secret-status form-grid__wide">
+              <span id="project-key-status">Progetto: non configurata</span>
+              <span id="agent-key-status">Agente: non configurata</span>
+              <button class="button button--compact" id="delete-api-key" type="button">Rimuovi chiave selezionata</button>
+            </div>
+            <label><span>Environment fallback</span><input name="api_key_env" placeholder="OPENAI_API_KEY" /></label>
             <label><span>Temperature</span><input name="temperature" type="number" min="0" max="2" step="0.1" /></label>
           </div>
         </section>
@@ -261,6 +290,14 @@
           <label><span>Progetto</span><select name="project_id" id="project-select"></select></label>
           <label><span>Azione</span><select name="action" id="project-action"></select></label>
         </div>
+
+        <section class="project-presets">
+          <label><span>Preset job</span><select id="project-preset"><option value="">Nessun preset</option></select></label>
+          <button class="button" id="load-project-preset" type="button">Carica</button>
+          <button class="button" id="delete-project-preset" type="button">Elimina</button>
+          <label class="project-presets__name"><span>Nome nuovo preset</span><input id="project-preset-name" maxlength="100" placeholder="Es. Vinted MacBook giornaliero" /></label>
+          <button class="button button--primary" id="save-project-preset" type="button">Salva preset</button>
+        </section>
 
         <section class="settings-section">
           <div class="settings-section__heading">

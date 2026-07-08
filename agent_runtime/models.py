@@ -47,10 +47,14 @@ class ApprovalPolicy(BaseModel):
 
 
 class ModelSettings(BaseModel):
-    provider: str = Field(default="simulated", pattern=r"^(simulated|openai-compatible)$")
+    provider: str = Field(
+        default="simulated",
+        pattern=r"^(simulated|openai|openai-compatible|anthropic|gemini|ollama)$",
+    )
     model: str = Field(default="native-simulator", min_length=1, max_length=160)
     base_url: str = Field(default="", max_length=500)
     api_key_env: str = Field(default="", pattern=r"^$|^[A-Z][A-Z0-9_]{1,79}$")
+    api_key_scope: str = Field(default="project", pattern=r"^(project|agent)$")
     temperature: float = Field(default=0.2, ge=0, le=2)
 
 
@@ -101,6 +105,20 @@ class TaskRecord(TaskCreate):
     error: Optional[str] = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ProjectJobPresetCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=2, max_length=100)
+    project_id: str = Field(min_length=1, max_length=80)
+    action: str = Field(min_length=1, max_length=100)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectJobPreset(ProjectJobPresetCreate):
+    id: str = Field(default_factory=lambda: f"preset-{uuid4().hex[:12]}")
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class MessageEnvelope(BaseModel):

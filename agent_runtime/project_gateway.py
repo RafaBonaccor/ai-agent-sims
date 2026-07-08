@@ -10,7 +10,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .models import RuntimeEvent, utc_now
+from .models import ProjectJobPreset, ProjectJobPresetCreate, RuntimeEvent, utc_now
+from .storage import RuntimeStore
 
 
 EventSink = Callable[[RuntimeEvent], Awaitable[None]]
@@ -40,7 +41,7 @@ class ProjectJob(BaseModel):
 
 
 class ProjectGateway:
-    def __init__(self, root: Path, emit: EventSink):
+    def __init__(self, root: Path, emit: EventSink, store: Optional[RuntimeStore] = None):
         self.root = root.resolve()
         self.emit = emit
         self.registry = self._read_json(self.root / "config" / "projects.json")
@@ -50,6 +51,7 @@ class ProjectGateway:
         self.running: set[asyncio.Task[None]] = set()
         self.semaphores: dict[str, asyncio.Semaphore] = {}
         self.logger = logging.getLogger("agent_lab.gateway")
+        self.store = store
 
     @staticmethod
     def _read_json(path: Path) -> dict[str, Any]:
@@ -83,6 +85,30 @@ class ProjectGateway:
     def list_jobs(self) -> list[ProjectJob]:
         return sorted(self.jobs.values(), key=lambda job: job.created_at, reverse=True)
 
+    def list_presets(self, project_id: Optional[str] = None) -> list[ProjectJobPreset]:
+        return self.store.load_project_job_presets(project_id) if self.store else []
+
+    def create_preset(self, request: ProjectJobPresetCreate) -> ProjectJobPreset:
+        self._validate_action_parameters(request.project_id, request.action, request.parameters)
+        if not self.store:
+            raise RuntimeError("Preset storage is not available")
+        preset = ProjectJobPreset(**request.model_dump())
+        self.store.save_project_job_preset(preset)
+        self.logger.info(
+            "preset_created id=%s project=%s action=%s parameters=%s",
+            preset.id,
+            preset.project_id,
+            preset.action,
+            sorted(preset.parameters),
+        )
+        return preset
+
+    def delete_preset(self, preset_id: str) -> bool:
+        deleted = self.store.delete_project_job_preset(preset_id) if self.store else False
+        if deleted:
+            self.logger.info("preset_deleted id=%s", preset_id)
+        return deleted
+
     async def create_job(self, request: ProjectJobCreate) -> ProjectJob:
         entry = self._project_entry(request.project_id)
         if not entry.get("enabled", True):
@@ -93,10 +119,7 @@ class ProjectGateway:
             raise ValueError(f"Action is not registered: {request.action}")
         if action.get("requiresApproval") and not request.approved:
             raise PermissionError(f"Action requires explicit approval: {request.action}")
-        allowed = set(action.get("parameters", []))
-        unknown = sorted(set(request.parameters) - allowed)
-        if unknown:
-            raise ValueError(f"Unsupported parameters: {', '.join(unknown)}")
+        self._validate_parameters(action, request.parameters)
 
         job = ProjectJob(**request.model_dump(exclude={"approved"}))
         self.jobs[job.id] = job
@@ -113,6 +136,22 @@ class ProjectGateway:
         self.running.add(task)
         task.add_done_callback(self.running.discard)
         return job
+
+    def _validate_action_parameters(
+        self, project_id: str, action_id: str, parameters: dict[str, Any]
+    ) -> None:
+        entry = self._project_entry(project_id)
+        action = self._manifest(entry).get("actions", {}).get(action_id)
+        if action is None:
+            raise ValueError(f"Action is not registered: {action_id}")
+        self._validate_parameters(action, parameters)
+
+    @staticmethod
+    def _validate_parameters(action: dict[str, Any], parameters: dict[str, Any]) -> None:
+        allowed = set(action.get("parameters", []))
+        unknown = sorted(set(parameters) - allowed)
+        if unknown:
+            raise ValueError(f"Unsupported parameters: {', '.join(unknown)}")
 
     async def _run(
         self,

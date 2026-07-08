@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -23,11 +24,19 @@ from .models import (
 )
 from .protocols import validate_message, validate_task_transition
 from .storage import RuntimeStore
+from .secrets import SecretStore
+
+
+LOGGER = logging.getLogger("agent_lab.runtime")
 
 
 class AgentRuntime:
     def __init__(
-        self, database_path: Path, seed_path: Optional[Path] = None, simulation_delay: float = 1.0
+        self,
+        database_path: Path,
+        seed_path: Optional[Path] = None,
+        simulation_delay: float = 1.0,
+        secrets: Optional[SecretStore] = None,
     ):
         self.store = RuntimeStore(database_path)
         self.seed_path = seed_path
@@ -36,7 +45,7 @@ class AgentRuntime:
         self.tasks: dict[str, TaskRecord] = {task.id: task for task in self.store.load_tasks()}
         self.subscribers: set[asyncio.Queue[RuntimeEvent]] = set()
         self.running_jobs: set[asyncio.Task[None]] = set()
-        self.executor = ModelExecutor(self.store)
+        self.executor = ModelExecutor(self.store, secrets)
         if not self.agents:
             self._seed_agents()
         self._recover_interrupted_state()
@@ -147,6 +156,12 @@ class AgentRuntime:
 
     async def create_task(self, task_input: TaskCreate) -> TaskRecord:
         task = TaskRecord(**task_input.model_dump())
+        LOGGER.info(
+            "task_created id=%s requested_agent=%s capability=%s",
+            task.id,
+            task.requested_agent_id or "auto",
+            task.capability or "-",
+        )
         self.tasks[task.id] = task
         self.store.save_task(task)
         await self.publish(
@@ -270,6 +285,7 @@ class AgentRuntime:
         except asyncio.CancelledError:
             raise
         except Exception as error:
+            LOGGER.exception("task_failed id=%s error=%s", task.id, error)
             task.error = str(error)
             if task.state not in {TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED}:
                 await self._transition_task(task, TaskState.FAILED)
@@ -283,6 +299,13 @@ class AgentRuntime:
     ) -> None:
         previous = task.state
         validate_task_transition(previous, target)
+        LOGGER.info(
+            "task_transition id=%s from=%s to=%s agent=%s",
+            task.id,
+            previous.value,
+            target.value,
+            agent.id if agent else task.assigned_agent_id or "-",
+        )
         task.state = target
         task.updated_at = utc_now()
         self.store.save_task(task)

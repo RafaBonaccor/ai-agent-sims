@@ -3,7 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from agent_runtime.models import ProjectJobPresetCreate
 from agent_runtime.project_gateway import ProjectGateway, ProjectJobCreate
+from agent_runtime.storage import RuntimeStore
 
 
 class ProjectGatewayTests(unittest.IsolatedAsyncioTestCase):
@@ -48,10 +50,12 @@ class ProjectGatewayTests(unittest.IsolatedAsyncioTestCase):
         async def emit(_event):
             return None
 
-        self.gateway = ProjectGateway(root, emit)
+        self.store = RuntimeStore(root / "runtime.db")
+        self.gateway = ProjectGateway(root, emit, self.store)
 
     async def asyncTearDown(self):
         await self.gateway.shutdown()
+        self.store.close()
         self.temporary_directory.cleanup()
 
     async def test_rejects_parameters_outside_action_allowlist(self):
@@ -67,6 +71,32 @@ class ProjectGatewayTests(unittest.IsolatedAsyncioTestCase):
     async def test_requires_explicit_approval_for_external_action(self):
         with self.assertRaisesRegex(PermissionError, "requires explicit approval"):
             await self.gateway.create_job(ProjectJobCreate(project_id="demo", action="write"))
+
+    async def test_saves_lists_and_deletes_job_presets(self):
+        preset = self.gateway.create_preset(
+            ProjectJobPresetCreate(
+                name="Daily query",
+                project_id="demo",
+                action="read",
+                parameters={"query": "example"},
+            )
+        )
+        loaded = self.gateway.list_presets("demo")
+        self.assertEqual([preset.id], [item.id for item in loaded])
+        self.assertEqual("example", loaded[0].parameters["query"])
+        self.assertTrue(self.gateway.delete_preset(preset.id))
+        self.assertEqual([], self.gateway.list_presets("demo"))
+
+    async def test_preset_uses_action_parameter_allowlist(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported parameters"):
+            self.gateway.create_preset(
+                ProjectJobPresetCreate(
+                    name="Unsafe preset",
+                    project_id="demo",
+                    action="read",
+                    parameters={"shell": "whoami"},
+                )
+            )
 
 
 if __name__ == "__main__":

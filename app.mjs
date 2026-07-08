@@ -36,6 +36,12 @@ const configureAgentButton = document.querySelector("#configure-agent");
 const agentSettingsDialog = document.querySelector("#agent-settings-dialog");
 const agentSettingsForm = document.querySelector("#agent-settings-form");
 const agentSettingsError = document.querySelector("#agent-settings-error");
+const quickChat = document.querySelector("#agent-quick-chat");
+const quickChatAgent = document.querySelector("#quick-chat-agent");
+const quickChatInput = document.querySelector("#quick-chat-input");
+const quickChatStatus = document.querySelector("#quick-chat-status");
+const projectKeyStatus = document.querySelector("#project-key-status");
+const agentKeyStatus = document.querySelector("#agent-key-status");
 const agentActionDialog = document.querySelector("#agent-action-dialog");
 const agentActionTitle = document.querySelector("#agent-action-title");
 const agentActionRole = document.querySelector("#agent-action-role");
@@ -50,12 +56,25 @@ const projectApprovalRow = document.querySelector("#project-approval-row");
 const projectRisk = document.querySelector("#project-risk");
 const projectResult = document.querySelector("#project-result");
 const projectError = document.querySelector("#project-error");
+const projectPresetSelect = document.querySelector("#project-preset");
+const projectPresetName = document.querySelector("#project-preset-name");
 
 const network = new AgentNetwork(defaultScenario);
 const agentWorld = new AgentWorld(network);
 const runtimeClient = new RuntimeClient();
 const runtimeSnapshots = new Map();
+const agentReplies = new Map();
 let availableProjects = [];
+let availableProjectPresets = [];
+
+const providerDefaults = {
+  simulated: { model: "native-simulator", baseUrl: "" },
+  openai: { model: "gpt-5.4", baseUrl: "https://api.openai.com/v1" },
+  "openai-compatible": { model: "", baseUrl: "" },
+  anthropic: { model: "", baseUrl: "https://api.anthropic.com" },
+  gemini: { model: "", baseUrl: "https://generativelanguage.googleapis.com/v1beta" },
+  ollama: { model: "llama3.2", baseUrl: "http://127.0.0.1:11434" },
+};
 
 const PERFORMANCE = {
   maxFps: 45,
@@ -108,6 +127,8 @@ let selectedStationId = null;
 let nextUiRefresh = 0;
 let nextRelationRefresh = 0;
 let lastFrameAt = 0;
+let quickChatAgentId = null;
+let quickChatFocusTimer = null;
 
 const selectableObjects = [];
 const agentVisuals = new Map();
@@ -139,6 +160,7 @@ const sharedMaterials = {
 const scratchStart = new THREE.Vector3();
 const scratchMid = new THREE.Vector3();
 const scratchEnd = new THREE.Vector3();
+const quickChatPosition = new THREE.Vector3();
 const scratchCurve = new THREE.QuadraticBezierCurve3(
   new THREE.Vector3(),
   new THREE.Vector3(),
@@ -817,12 +839,19 @@ function updateAgents(elapsed) {
     visual.selectionRing.visible = selected;
     visual.selectionRing.material.opacity = 0.64 + Math.sin(elapsed * 3) * 0.14;
 
-    const bubbleText = state.bubble || agent.runtime.status;
-    visual.bubble.visible = Boolean(bubbleText) && selectedAgentId === agent.id;
+    const reply = agentReplies.get(agent.id);
+    if (reply && reply.expiresAt <= performance.now()) {
+      agentReplies.delete(agent.id);
+    }
+    const activeReply = agentReplies.get(agent.id);
+    const bubbleText = activeReply?.text.slice(0, 52) || state.bubble || agent.runtime.status;
+    visual.bubble.visible = Boolean(bubbleText)
+      && (Boolean(activeReply) || selectedAgentId === agent.id)
+      && quickChatAgentId !== agent.id;
     if (visual.bubble.visible) {
       replaceSpriteText(visual.bubble, bubbleText, {
         background: "rgba(8, 14, 25, 0.95)",
-        color: "#f3f8ff",
+        color: activeReply?.isError ? "#fecdd3" : "#f3f8ff",
         border: selected ? agent.color : "rgba(167, 196, 226, 0.24)",
       });
     }
@@ -933,6 +962,48 @@ function updateHud() {
     .join("");
 }
 
+function openQuickChat(agentId) {
+  const agent = network.getAgent(agentId);
+  if (!agent) {
+    return;
+  }
+  quickChatAgentId = agentId;
+  quickChatAgent.textContent = agent.label;
+  quickChatStatus.textContent = "";
+  quickChatStatus.classList.remove("agent-quick-chat__status--error");
+  quickChat.hidden = false;
+  updateQuickChatPosition();
+  window.clearTimeout(quickChatFocusTimer);
+  quickChatFocusTimer = window.setTimeout(() => quickChatInput.focus(), 220);
+}
+
+function closeQuickChat() {
+  window.clearTimeout(quickChatFocusTimer);
+  quickChatAgentId = null;
+  quickChat.hidden = true;
+  quickChatInput.value = "";
+  quickChatStatus.textContent = "";
+  quickChatStatus.classList.remove("agent-quick-chat__status--error");
+}
+
+function updateQuickChatPosition() {
+  if (!quickChatAgentId || quickChat.hidden) {
+    return;
+  }
+  const position = agentWorld.getAgentPosition(quickChatAgentId);
+  quickChatPosition.set(position.x, 3.25, position.z).project(camera);
+  const visible = quickChatPosition.z > -1 && quickChatPosition.z < 1;
+  quickChat.style.visibility = visible ? "visible" : "hidden";
+  if (!visible) {
+    return;
+  }
+  const margin = Math.min(165, window.innerWidth / 2);
+  const x = Math.max(margin, Math.min(window.innerWidth - margin, (quickChatPosition.x + 1) * 0.5 * window.innerWidth));
+  const y = Math.max(120, Math.min(window.innerHeight - 20, (1 - quickChatPosition.y) * 0.5 * window.innerHeight));
+  quickChat.style.left = `${x}px`;
+  quickChat.style.top = `${y}px`;
+}
+
 function animate(now = 0) {
   requestAnimationFrame(animate);
   const frameInterval = 1000 / PERFORMANCE.maxFps;
@@ -957,6 +1028,7 @@ function animate(now = 0) {
     nextRelationRefresh = now + PERFORMANCE.relationRefreshMs;
   }
   updateMessageVisuals();
+  updateQuickChatPosition();
   renderer.render(scene, camera);
 
   if (now >= nextUiRefresh) {
@@ -1129,6 +1201,21 @@ function renderRuntimeMessage(event) {
   });
 }
 
+function showAgentReply(agentId, text, isError = false) {
+  if (!agentId || !text) {
+    return;
+  }
+  agentReplies.set(agentId, {
+    text: String(text),
+    isError,
+    expiresAt: performance.now() + 12000,
+  });
+  if (quickChatAgentId === agentId && !quickChat.hidden) {
+    quickChatStatus.textContent = String(text);
+    quickChatStatus.classList.toggle("agent-quick-chat__status--error", isError);
+  }
+}
+
 function handleRuntimeEvent(event) {
   if (event.type === "runtime.snapshot") {
     for (const agent of event.agents ?? []) {
@@ -1147,6 +1234,13 @@ function handleRuntimeEvent(event) {
     }
   } else if (event.type === "protocol.message") {
     renderRuntimeMessage(event);
+    const message = event.data?.message;
+    if (message?.type === "task.result") {
+      showAgentReply(message.sender, message.payload?.summary ?? "Task completato.");
+    }
+  } else if (event.type === "task.state.changed" && event.data?.to === "failed") {
+    const task = event.data?.task;
+    showAgentReply(task?.assigned_agent_id, task?.error ?? "Task fallito.", true);
   } else if (event.type?.startsWith("project.job.")) {
     const job = event.data?.job;
     const agent = job?.agent_id ? network.getAgent(job.agent_id) : null;
@@ -1204,6 +1298,45 @@ function renderProjectParameters() {
   projectForm.elements.namedItem("approved").checked = false;
 }
 
+function readProjectParameters() {
+  const parameters = {};
+  for (const input of projectParameters.querySelectorAll("[data-project-parameter]")) {
+    const value = input.type === "checkbox" ? input.checked : input.value.trim();
+    if (value !== "" && value !== false) {
+      parameters[input.dataset.projectParameter] = input.type === "number" ? Number(value) : value;
+    }
+  }
+  return parameters;
+}
+
+async function refreshProjectPresets(selectedId = "") {
+  availableProjectPresets = await runtimeClient.listProjectPresets(projectSelect.value);
+  projectPresetSelect.replaceChildren(
+    new Option("Nessun preset", ""),
+    ...availableProjectPresets.map((preset) => new Option(preset.name, preset.id))
+  );
+  projectPresetSelect.value = selectedId;
+}
+
+function loadSelectedProjectPreset() {
+  const preset = availableProjectPresets.find((item) => item.id === projectPresetSelect.value);
+  if (!preset) {
+    return;
+  }
+  projectAction.value = preset.action;
+  renderProjectParameters();
+  for (const input of projectParameters.querySelectorAll("[data-project-parameter]")) {
+    const value = preset.parameters[input.dataset.projectParameter];
+    if (input.type === "checkbox") {
+      input.checked = Boolean(value);
+    } else if (value !== undefined && value !== null) {
+      input.value = String(value);
+    }
+  }
+  projectPresetName.value = preset.name;
+  projectResult.textContent = `Preset caricato: ${preset.name}`;
+}
+
 async function openProjectGateway() {
   projectError.textContent = "";
   projectResult.textContent = "Caricamento progetti...";
@@ -1215,6 +1348,7 @@ async function openProjectGateway() {
       throw new Error("Nessun progetto configurato e disponibile.");
     }
     renderProjectActions();
+    await refreshProjectPresets();
     projectResult.textContent = "Seleziona un'azione da eseguire con l'agente corrente.";
     projectDialog.showModal();
   } catch (error) {
@@ -1275,6 +1409,25 @@ function settingsField(name) {
   return agentSettingsForm.elements.namedItem(name);
 }
 
+function renderSecretStatus(status) {
+  projectKeyStatus.textContent = `Progetto: ${status.project_configured ? "configurata" : "non configurata"}`;
+  agentKeyStatus.textContent = `Agente: ${status.agent_configured ? "configurata" : "non configurata"}`;
+  projectKeyStatus.classList.toggle("secret-status--configured", status.project_configured);
+  agentKeyStatus.classList.toggle("secret-status--configured", status.agent_configured);
+}
+
+function updateProviderControls(resetDefaults = false) {
+  const provider = settingsField("provider").value;
+  const defaults = providerDefaults[provider];
+  if (resetDefaults && defaults) {
+    settingsField("model").value = defaults.model;
+    settingsField("base_url").value = defaults.baseUrl;
+  }
+  const usesLocalRuntime = provider === "ollama";
+  settingsField("api_key").disabled = usesLocalRuntime;
+  settingsField("api_key_scope").disabled = usesLocalRuntime;
+}
+
 async function openAgentSettings() {
   if (!runtimeClient.connected) {
     setBootMessage("Start the project with run.command to edit persistent agent settings.");
@@ -1298,6 +1451,9 @@ async function openAgentSettings() {
   settingsField("model").value = snapshot.model.model;
   settingsField("base_url").value = snapshot.model.base_url;
   settingsField("api_key_env").value = snapshot.model.api_key_env;
+  settingsField("api_key_scope").value = snapshot.model.api_key_scope ?? "project";
+  settingsField("api_key").value = "";
+  updateProviderControls(false);
   settingsField("temperature").value = snapshot.model.temperature;
   settingsField("toolsets").value = snapshot.toolsets.join(", ");
   settingsField("max_iterations").value = snapshot.limits.max_iterations;
@@ -1307,8 +1463,12 @@ async function openAgentSettings() {
   settingsField("memory").value = "Loading memory…";
   agentSettingsDialog.showModal();
   try {
-    const memory = await runtimeClient.getAgentMemory(snapshot.id);
+    const [memory, secretStatus] = await Promise.all([
+      runtimeClient.getAgentMemory(snapshot.id),
+      runtimeClient.getSecretStatus(snapshot.id),
+    ]);
     settingsField("memory").value = memory.content;
+    renderSecretStatus(secretStatus);
   } catch (error) {
     settingsField("memory").value = "";
     agentSettingsError.textContent = error.message;
@@ -1334,6 +1494,7 @@ function selectFromPointer(event) {
   const hit = objectFromPointer(event);
   if (!hit) {
     selectedStationId = null;
+    closeQuickChat();
     updateHud();
     return;
   }
@@ -1343,10 +1504,13 @@ function selectFromPointer(event) {
   if (agentId) {
     selectedAgentId = agentId;
     selectedStationId = null;
+    openQuickChat(agentId);
   } else if (stationId) {
     selectedStationId = stationId;
+    closeQuickChat();
   } else if (hit.object.userData.tile) {
     selectedStationId = null;
+    closeQuickChat();
     const moved = agentWorld.commandMoveAgent(selectedAgentId, hit.object.userData.tile, "manual move");
     if (moved) {
       setAutoAgents(false);
@@ -1408,7 +1572,13 @@ canvas.addEventListener("wheel", (event) => {
 }, { passive: false });
 
 window.addEventListener("keydown", (event) => {
-  if (event.code === "Space") {
+  const editing = event.target instanceof HTMLElement && event.target.matches("input, textarea, select");
+  if (editing && event.code !== "Escape") {
+    return;
+  }
+  if (event.code === "Escape" && quickChatAgentId) {
+    closeQuickChat();
+  } else if (event.code === "Space") {
     event.preventDefault();
     setRunning(!running);
   } else if (event.code === "KeyQ") {
@@ -1476,8 +1646,49 @@ canvas.addEventListener("dblclick", (event) => {
   }
   selectedAgentId = agentId;
   selectedStationId = null;
+  closeQuickChat();
   updateHud();
   openAgentActions(agentId);
+});
+
+document.querySelector("#close-quick-chat").addEventListener("click", closeQuickChat);
+
+quickChat.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const message = quickChatInput.value.trim();
+  const agentId = quickChatAgentId;
+  if (!message || !agentId) {
+    return;
+  }
+  if (!runtimeClient.connected) {
+    quickChatStatus.textContent = "Runtime offline.";
+    return;
+  }
+  const submitButton = quickChat.querySelector('[type="submit"]');
+  submitButton.disabled = true;
+  quickChatStatus.textContent = "Assegnazione...";
+  quickChatStatus.classList.remove("agent-quick-chat__status--error");
+  try {
+    const task = await runtimeClient.createTask({
+      title: message.slice(0, 160),
+      description: message,
+      priority: 3,
+      requested_agent_id: agentId,
+    });
+    const state = agentWorld.getAgentState(agentId);
+    if (state) {
+      state.bubble = message.slice(0, 34);
+    }
+    quickChatInput.value = "";
+    quickChatStatus.textContent = `Assegnato: ${task.id}`;
+  } catch (error) {
+    quickChatStatus.textContent = error.message;
+    quickChatStatus.classList.add("agent-quick-chat__status--error");
+    runtimeClient.logClient("error", error.message, { operation: "quickChat", agentId });
+  } finally {
+    submitButton.disabled = false;
+    quickChatInput.focus();
+  }
 });
 
 agentActionDialog.querySelectorAll("[data-agent-action-close]").forEach((button) => {
@@ -1498,8 +1709,55 @@ document.querySelector("#work-internal-task").addEventListener("click", () => {
   agentActionDialog.close();
   triggerIntent("task");
 });
-projectSelect.addEventListener("change", renderProjectActions);
+projectSelect.addEventListener("change", async () => {
+  renderProjectActions();
+  projectPresetName.value = "";
+  try {
+    await refreshProjectPresets();
+  } catch (error) {
+    projectError.textContent = error.message;
+  }
+});
 projectAction.addEventListener("change", renderProjectParameters);
+document.querySelector("#load-project-preset").addEventListener("click", loadSelectedProjectPreset);
+projectPresetSelect.addEventListener("change", loadSelectedProjectPreset);
+
+document.querySelector("#save-project-preset").addEventListener("click", async () => {
+  const name = projectPresetName.value.trim();
+  projectError.textContent = "";
+  if (name.length < 2) {
+    projectError.textContent = "Inserisci un nome per il preset.";
+    return;
+  }
+  try {
+    const preset = await runtimeClient.createProjectPreset({
+      name,
+      project_id: projectSelect.value,
+      action: projectAction.value,
+      parameters: readProjectParameters(),
+    });
+    await refreshProjectPresets(preset.id);
+    projectResult.textContent = `Preset salvato: ${preset.name}`;
+  } catch (error) {
+    projectError.textContent = error.message;
+  }
+});
+
+document.querySelector("#delete-project-preset").addEventListener("click", async () => {
+  const preset = availableProjectPresets.find((item) => item.id === projectPresetSelect.value);
+  if (!preset || !window.confirm(`Eliminare il preset "${preset.name}"?`)) {
+    return;
+  }
+  projectError.textContent = "";
+  try {
+    await runtimeClient.deleteProjectPreset(preset.id);
+    await refreshProjectPresets();
+    projectPresetName.value = "";
+    projectResult.textContent = `Preset eliminato: ${preset.name}`;
+  } catch (error) {
+    projectError.textContent = error.message;
+  }
+});
 projectDialog.querySelectorAll("[data-project-close]").forEach((button) => {
   button.addEventListener("click", () => projectDialog.close());
 });
@@ -1510,13 +1768,7 @@ projectForm.addEventListener("submit", async (event) => {
   if (!action) {
     return;
   }
-  const parameters = {};
-  for (const input of projectParameters.querySelectorAll("[data-project-parameter]")) {
-    const value = input.type === "checkbox" ? input.checked : input.value.trim();
-    if (value !== "" && value !== false) {
-      parameters[input.dataset.projectParameter] = input.type === "number" ? Number(value) : value;
-    }
-  }
+  const parameters = readProjectParameters();
   const runButton = document.querySelector("#run-project-action");
   runButton.disabled = true;
   projectError.textContent = "";
@@ -1608,6 +1860,7 @@ agentSettingsForm.addEventListener("submit", async (event) => {
         model: value("model"),
         base_url: value("base_url"),
         api_key_env: value("api_key_env").toUpperCase(),
+        api_key_scope: value("api_key_scope"),
         temperature: Number(value("temperature")),
       },
       memory_scope: snapshot.memory_scope,
@@ -1620,12 +1873,43 @@ agentSettingsForm.addEventListener("submit", async (event) => {
         required_for: splitValues(value("approvals")),
       },
     });
+    const apiKey = value("api_key");
+    if (apiKey) {
+      if (value("api_key_scope") === "agent") {
+        await runtimeClient.setAgentSecret(snapshot.id, apiKey);
+      } else {
+        await runtimeClient.setProjectSecret(apiKey);
+      }
+      settingsField("api_key").value = "";
+    }
     await runtimeClient.updateAgentMemory(snapshot.id, value("memory"));
     agentSettingsDialog.close();
   } catch (error) {
     agentSettingsError.textContent = error.message;
   } finally {
     saveButton.disabled = false;
+  }
+});
+
+settingsField("provider").addEventListener("change", () => {
+  updateProviderControls(true);
+});
+
+document.querySelector("#delete-api-key").addEventListener("click", async () => {
+  const snapshot = runtimeSnapshots.get(selectedAgentId);
+  if (!snapshot) {
+    return;
+  }
+  const scope = String(settingsField("api_key_scope").value);
+  agentSettingsError.textContent = "";
+  try {
+    const status = scope === "agent"
+      ? await runtimeClient.deleteAgentSecret(snapshot.id)
+      : await runtimeClient.deleteProjectSecret();
+    settingsField("api_key").value = "";
+    renderSecretStatus(status);
+  } catch (error) {
+    agentSettingsError.textContent = error.message;
   }
 });
 

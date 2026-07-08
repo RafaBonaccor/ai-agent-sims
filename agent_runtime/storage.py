@@ -4,8 +4,9 @@ import json
 import sqlite3
 from pathlib import Path
 from threading import RLock
+from typing import Optional
 
-from .models import AgentSnapshot, MemoryRecord, RuntimeEvent, TaskRecord, utc_now
+from .models import AgentSnapshot, MemoryRecord, ProjectJobPreset, RuntimeEvent, TaskRecord, utc_now
 
 
 class RuntimeStore:
@@ -43,7 +44,15 @@ class RuntimeStore:
                     content TEXT NOT NULL DEFAULT '',
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS project_job_presets (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    document TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS events_created_at_idx ON events(created_at DESC);
+                CREATE INDEX IF NOT EXISTS project_job_presets_project_idx
+                    ON project_job_presets(project_id, created_at DESC);
                 """
             )
 
@@ -116,6 +125,33 @@ class RuntimeStore:
                     event.created_at.isoformat(),
                 ),
             )
+
+    def save_project_job_preset(self, preset: ProjectJobPreset) -> None:
+        with self.lock, self.connection:
+            self.connection.execute(
+                "INSERT INTO project_job_presets(id, project_id, document, created_at) VALUES (?, ?, ?, ?)",
+                (preset.id, preset.project_id, preset.model_dump_json(), preset.created_at.isoformat()),
+            )
+
+    def load_project_job_presets(self, project_id: Optional[str] = None) -> list[ProjectJobPreset]:
+        with self.lock:
+            if project_id:
+                rows = self.connection.execute(
+                    "SELECT document FROM project_job_presets WHERE project_id = ? ORDER BY created_at DESC",
+                    (project_id,),
+                ).fetchall()
+            else:
+                rows = self.connection.execute(
+                    "SELECT document FROM project_job_presets ORDER BY created_at DESC"
+                ).fetchall()
+        return [ProjectJobPreset.model_validate_json(row["document"]) for row in rows]
+
+    def delete_project_job_preset(self, preset_id: str) -> bool:
+        with self.lock, self.connection:
+            cursor = self.connection.execute(
+                "DELETE FROM project_job_presets WHERE id = ?", (preset_id,)
+            )
+        return cursor.rowcount > 0
 
     def recent_events(self, limit: int = 100) -> list[RuntimeEvent]:
         with self.lock:

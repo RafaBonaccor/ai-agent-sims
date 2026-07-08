@@ -9,6 +9,7 @@ java/out/
 java/save/*.properties
 data/*.db
 data/*.db-*
+data/secrets.json
 runtime/
 
 *.log

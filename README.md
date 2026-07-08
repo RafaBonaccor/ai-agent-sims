@@ -9,6 +9,15 @@ eventi live e persistenza SQLite. Ogni agente puo usare il simulatore locale opp
 un endpoint OpenAI-compatible e dispone di configurazione, toolset, budget, policy
 e memoria privata modificabili dall'interfaccia.
 
+Le API key dei provider possono essere configurate per tutto il progetto oppure
+solo per un agente. Sono cifrate con Windows DPAPI in `data/secrets.json`, file
+escluso da Git; il browser riceve solamente lo stato configurata/non configurata.
+
+Provider disponibili: simulatore nativo, OpenAI Responses API, endpoint
+OpenAI-compatible, Anthropic Messages API, Google Gemini e Ollama locale. Il
+function calling degli strumenti agentici e attualmente disponibile tramite il
+provider OpenAI-compatible; gli altri adapter eseguono task testuali.
+
 ## Run
 
 Su macOS fai doppio clic su:
@@ -78,6 +87,10 @@ dello scraper e compilane i parametri.
 Il runtime avvia la CLI in background e mostra risultato o errore nel dialogo; lo
 stato dell'agente selezionato passa a `executing` durante il job. Le azioni di
 contatto richiedono una conferma esplicita prima dell'avvio.
+
+Le configurazioni ricorrenti possono essere salvate come preset dal Project Gateway.
+Un preset conserva progetto, azione e parametri in SQLite; le approvazioni delle
+azioni rischiose non vengono memorizzate e devono essere confermate a ogni avvio.
 
 Le richieste HTTP, gli errori frontend e il ciclo dei job vengono salvati in
 `runtime/agent-lab.log`, con rotazione automatica. Gli ultimi eventi sono disponibili

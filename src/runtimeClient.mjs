@@ -94,6 +94,32 @@ export class RuntimeClient {
     });
   }
 
+  getSecretStatus(agentId) {
+    return this.request(`/api/secrets/status?agent_id=${encodeURIComponent(agentId)}`);
+  }
+
+  setProjectSecret(apiKey) {
+    return this.request("/api/secrets/project", {
+      method: "PUT",
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+  }
+
+  deleteProjectSecret() {
+    return this.request("/api/secrets/project", { method: "DELETE" });
+  }
+
+  setAgentSecret(agentId, apiKey) {
+    return this.request(`/api/agents/${encodeURIComponent(agentId)}/secret`, {
+      method: "PUT",
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+  }
+
+  deleteAgentSecret(agentId) {
+    return this.request(`/api/agents/${encodeURIComponent(agentId)}/secret`, { method: "DELETE" });
+  }
+
   listProjects() {
     return this.request("/api/projects");
   }
@@ -102,6 +128,24 @@ export class RuntimeClient {
     return this.request("/api/project-jobs", {
       method: "POST",
       body: JSON.stringify(job),
+    });
+  }
+
+  listProjectPresets(projectId = "") {
+    const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+    return this.request(`/api/project-presets${query}`);
+  }
+
+  createProjectPreset(preset) {
+    return this.request("/api/project-presets", {
+      method: "POST",
+      body: JSON.stringify(preset),
+    });
+  }
+
+  deleteProjectPreset(presetId) {
+    return this.request(`/api/project-presets/${encodeURIComponent(presetId)}`, {
+      method: "DELETE",
     });
   }
 

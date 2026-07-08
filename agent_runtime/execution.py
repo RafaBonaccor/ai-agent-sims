@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 from urllib.parse import urlparse
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from .models import AgentSnapshot, MemoryRecord, RuntimeEvent, TaskRecord
 from .storage import RuntimeStore
+from .secrets import SecretStore
 
 
 EventSink = Callable[[RuntimeEvent], Awaitable[None]]
+LOGGER = logging.getLogger("agent_lab.models")
 
 
 @dataclass(frozen=True)
@@ -105,11 +109,19 @@ class ToolRegistry:
 
 
 class ModelExecutor:
-    def __init__(self, store: RuntimeStore):
+    def __init__(self, store: RuntimeStore, secrets: Optional[SecretStore] = None):
         self.store = store
+        self.secrets = secrets
         self.tools = ToolRegistry(store)
 
     async def run(self, agent: AgentSnapshot, task: TaskRecord, emit: EventSink) -> dict[str, Any]:
+        LOGGER.info(
+            "model_started task=%s agent=%s provider=%s model=%s",
+            task.id,
+            agent.id,
+            agent.model.provider,
+            agent.model.model,
+        )
         await emit(
             RuntimeEvent(
                 type="model.started",
@@ -130,6 +142,8 @@ class ModelExecutor:
             }
         elif agent.model.provider == "openai-compatible":
             result = await self._run_openai_compatible(agent, task, emit)
+        elif agent.model.provider in {"openai", "anthropic", "gemini", "ollama"}:
+            result = await asyncio.to_thread(self._run_native_provider, agent, task)
         else:
             raise ValueError(f"Unsupported provider: {agent.model.provider}")
         await emit(
@@ -142,15 +156,20 @@ class ModelExecutor:
                 data={"provider": result["provider"], "model": result["model"]},
             )
         )
+        LOGGER.info(
+            "model_completed task=%s agent=%s provider=%s model=%s",
+            task.id,
+            agent.id,
+            result["provider"],
+            result["model"],
+        )
         return result
 
     async def _run_openai_compatible(
         self, agent: AgentSnapshot, task: TaskRecord, emit: EventSink
     ) -> dict[str, Any]:
         endpoint = self._chat_endpoint(agent.model.base_url)
-        api_key = os.environ.get(agent.model.api_key_env) if agent.model.api_key_env else None
-        if agent.model.api_key_env and not api_key:
-            raise RuntimeError(f"Missing API key environment variable: {agent.model.api_key_env}")
+        api_key = self._resolve_api_key(agent)
 
         memory = self.store.get_memory(agent.id).content
         system_parts = [
@@ -229,6 +248,106 @@ class ModelExecutor:
                 )
         raise RuntimeError("Model exceeded its tool iteration budget")
 
+    def _resolve_api_key(self, agent: AgentSnapshot) -> Optional[str]:
+        if agent.model.provider == "ollama":
+            return None
+        api_key = None
+        if self.secrets:
+            if agent.model.api_key_scope == "agent":
+                api_key = self.secrets.get_agent(agent.id)
+            else:
+                api_key = self.secrets.get_project()
+        if not api_key and agent.model.api_key_env:
+            api_key = os.environ.get(agent.model.api_key_env)
+        if not api_key:
+            target = "agent" if agent.model.api_key_scope == "agent" else "project"
+            raise RuntimeError(f"No API key configured for {target} scope")
+        return api_key
+
+    def _run_native_provider(self, agent: AgentSnapshot, task: TaskRecord) -> dict[str, Any]:
+        provider = agent.model.provider
+        api_key = self._resolve_api_key(agent)
+        memory = self.store.get_memory(agent.id).content
+        system = f"You are {agent.name}, role: {agent.role}.\n{agent.instructions}".strip()
+        if memory:
+            system += f"\n\nPrivate durable memory:\n{memory}"
+        user = f"Task: {task.title}\n\n{task.description}\n\nReturn a concise result."
+
+        if provider == "openai":
+            endpoint = self._provider_endpoint(agent.model.base_url, "https://api.openai.com/v1/responses", "/responses")
+            payload = {"model": agent.model.model, "instructions": system, "input": user}
+            response = self._post_json(endpoint, payload, api_key)
+            summary = self._openai_response_text(response)
+        elif provider == "anthropic":
+            endpoint = self._provider_endpoint(agent.model.base_url, "https://api.anthropic.com/v1/messages", "/v1/messages")
+            payload = {
+                "model": agent.model.model,
+                "max_tokens": 2048,
+                "system": system,
+                "messages": [{"role": "user", "content": user}],
+            }
+            response = self._post_json(
+                endpoint,
+                payload,
+                None,
+                {"x-api-key": api_key or "", "anthropic-version": "2023-06-01"},
+            )
+            summary = "\n".join(
+                item.get("text", "") for item in response.get("content", []) if item.get("type") == "text"
+            )
+        elif provider == "gemini":
+            base = agent.model.base_url.strip().rstrip("/") or "https://generativelanguage.googleapis.com/v1beta"
+            endpoint = f"{base}/models/{quote(agent.model.model, safe='')}:generateContent"
+            payload = {
+                "systemInstruction": {"parts": [{"text": system}]},
+                "contents": [{"role": "user", "parts": [{"text": user}]}],
+            }
+            response = self._post_json(endpoint, payload, None, {"x-goog-api-key": api_key or ""})
+            candidates = response.get("candidates", [])
+            parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
+            summary = "\n".join(part.get("text", "") for part in parts)
+        else:
+            endpoint = self._provider_endpoint(agent.model.base_url, "http://127.0.0.1:11434/api/chat", "/api/chat")
+            payload = {
+                "model": agent.model.model,
+                "stream": False,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            }
+            response = self._post_json(endpoint, payload, None)
+            summary = response.get("message", {}).get("content", "")
+
+        if not summary.strip():
+            raise RuntimeError(f"{provider} returned an empty response")
+        return {
+            "summary": summary.strip(),
+            "provider": provider,
+            "model": agent.model.model,
+            "tool_calls": 0,
+        }
+
+    @staticmethod
+    def _provider_endpoint(base_url: str, default: str, suffix: str) -> str:
+        value = base_url.strip().rstrip("/")
+        if not value:
+            return default
+        if value.endswith(suffix):
+            return value
+        return f"{value}{suffix}"
+
+    @staticmethod
+    def _openai_response_text(response: dict[str, Any]) -> str:
+        chunks = []
+        for item in response.get("output", []):
+            if item.get("type") != "message":
+                continue
+            for content in item.get("content", []):
+                if content.get("type") == "output_text":
+                    chunks.append(content.get("text", ""))
+        return "\n".join(chunks)
+
     @staticmethod
     def _chat_endpoint(base_url: str) -> str:
         base_url = base_url.strip().rstrip("/")
@@ -241,11 +360,16 @@ class ModelExecutor:
 
     @staticmethod
     def _post_json(
-        endpoint: str, payload: dict[str, Any], api_key: Optional[str]
+        endpoint: str,
+        payload: dict[str, Any],
+        api_key: Optional[str],
+        extra_headers: Optional[dict[str, str]] = None,
     ) -> dict[str, Any]:
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        if extra_headers:
+            headers.update(extra_headers)
         request = Request(endpoint, data=json.dumps(payload).encode("utf-8"), headers=headers)
         with urlopen(request, timeout=90) as response:
             return json.loads(response.read().decode("utf-8"))
