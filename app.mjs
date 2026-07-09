@@ -54,12 +54,31 @@ const projectSelect = document.querySelector("#project-select");
 const projectAction = document.querySelector("#project-action");
 const projectParameters = document.querySelector("#project-parameters");
 const projectApprovalRow = document.querySelector("#project-approval-row");
+const projectScheduleSection = document.querySelector("#project-schedule-section");
+const projectScheduleMode = document.querySelector("#project-schedule-mode");
+const projectScheduleDate = document.querySelector("#project-schedule-date");
+const projectScheduleTime = document.querySelector("#project-schedule-time");
+const projectScheduleRepeat = document.querySelector("#project-schedule-repeat");
+const projectScheduleCron = document.querySelector("#project-schedule-cron");
+const projectScheduleNow = document.querySelector("#project-schedule-now");
+const projectScheduleHint = document.querySelector("#project-schedule-hint");
+const projectWeekdayPicker = document.querySelector("#project-weekday-picker");
 const projectRisk = document.querySelector("#project-risk");
 const projectResult = document.querySelector("#project-result");
 const projectError = document.querySelector("#project-error");
 const projectPresetSelect = document.querySelector("#project-preset");
 const projectPresetName = document.querySelector("#project-preset-name");
 const jobToastStack = document.querySelector("#job-toast-stack");
+const jobNotificationsButton = document.querySelector("#job-notifications");
+const jobNotificationCount = document.querySelector("#job-notification-count");
+const projectJobList = document.querySelector("#project-job-list");
+const projectPanelTabs = Array.from(document.querySelectorAll("[data-panel-tab]"));
+const projectPanels = Array.from(document.querySelectorAll("[data-project-panel]"));
+const projectOutputSummary = document.querySelector("#project-output-summary");
+const projectOutputView = document.querySelector("#project-output-view");
+const projectOutputMeta = document.querySelector("#project-output-meta");
+const projectOutputHead = document.querySelector("#project-output-head");
+const projectOutputRows = document.querySelector("#project-output-rows");
 
 const network = new AgentNetwork(defaultScenario);
 const agentWorld = new AgentWorld(network);
@@ -68,17 +87,53 @@ const runtimeSnapshots = new Map();
 const agentReplies = new Map();
 const chatMessageIds = new Set();
 const projectJobToasts = new Map();
+const projectJobsCache = new Map();
+const seenCompletedProjectJobs = new Set();
 let availableProjects = [];
 let availableProjectPresets = [];
+let projectPanel = "output";
+let unreadCompletedProjectJobs = 0;
 
 const providerDefaults = {
   simulated: { model: "native-simulator", baseUrl: "" },
-  openai: { model: "gpt-5.4", baseUrl: "https://api.openai.com/v1" },
+  openai: { model: "gpt-5.5", baseUrl: "https://api.openai.com/v1" },
   "openai-compatible": { model: "", baseUrl: "" },
   anthropic: { model: "", baseUrl: "https://api.anthropic.com" },
   gemini: { model: "", baseUrl: "https://generativelanguage.googleapis.com/v1beta" },
   ollama: { model: "llama3.2", baseUrl: "http://127.0.0.1:11434" },
 };
+
+const MODEL_CATALOGS = {
+  simulated: [
+    { label: "Native simulator", value: "native-simulator" },
+  ],
+  openai: [
+    { group: "Recommended", options: [
+      { label: "GPT-5.5", value: "gpt-5.5" },
+      { label: "GPT-5.5 Pro", value: "gpt-5.5-pro" },
+      { label: "GPT-5.4", value: "gpt-5.4" },
+      { label: "GPT-5.4 Mini", value: "gpt-5.4-mini" },
+      { label: "GPT-5.4 Nano", value: "gpt-5.4-nano" },
+    ] },
+    { group: "Reasoning", options: [
+      { label: "o3", value: "o3" },
+      { label: "o4 Mini", value: "o4-mini" },
+    ] },
+    { group: "Compatibility", options: [
+      { label: "GPT-4.1", value: "gpt-4.1" },
+      { label: "GPT-4.1 Mini", value: "gpt-4.1-mini" },
+      { label: "GPT-4.1 Nano", value: "gpt-4.1-nano" },
+      { label: "GPT-4o", value: "gpt-4o" },
+      { label: "GPT-4o Mini", value: "gpt-4o-mini" },
+    ] },
+  ],
+  "openai-compatible": [],
+  anthropic: [],
+  gemini: [],
+  ollama: [],
+};
+
+const MODEL_PICKER_CUSTOM = "__custom__";
 
 const PERFORMANCE = {
   maxFps: 45,
@@ -1333,10 +1388,16 @@ function handleRuntimeEvent(event) {
       agent.runtime.load = active ? 0.82 : 0.08;
     }
     syncProjectJobToast(job, event.type);
+    if (job?.state === "completed" || job?.state === "failed") {
+      markCompletedJobUnread(job.id);
+      if (projectDialog.open) {
+        refreshProjectJobHistory(projectPanel === "finished");
+      }
+    }
     if (job && projectDialog.open) {
-      projectResult.textContent = job.error
-        ? `Errore\n${job.error}`
-        : JSON.stringify(job.result ?? { state: job.state, job: job.id }, null, 2);
+      if (projectPanel === "output") {
+        renderProjectJobDetail(job);
+      }
     }
   } else if (event.type === "runtime.disconnected") {
     setRuntimeConnection(false);
@@ -1433,8 +1494,11 @@ async function openProjectGateway() {
     }
     renderProjectActions();
     await refreshProjectPresets();
+    refreshProjectScheduleDefaults();
+    setProjectPanel("output");
     projectResult.textContent = "Seleziona un'azione da eseguire con l'agente corrente.";
     projectDialog.showModal();
+    await refreshProjectJobHistory(true);
   } catch (error) {
     runtimeClient.logClient("error", error.message, { operation: "openProjectGateway", agentId: selectedAgentId });
     setBootMessage(error.message);
@@ -1457,6 +1521,124 @@ function projectAgentLabelFor(job) {
   return network.getAgent(job.agent_id)?.label ?? job.agent_id;
 }
 
+function localDateParts(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return {
+    date: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+    time: `${pad(date.getHours())}:${pad(date.getMinutes())}`,
+  };
+}
+
+function formatLocalDateTime(date = new Date()) {
+  try {
+    return new Intl.DateTimeFormat("it-IT", {
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(date);
+  } catch (_error) {
+    return date.toLocaleString();
+  }
+}
+
+function updateProjectScheduleHint() {
+  if (!projectScheduleHint) {
+    return;
+  }
+  projectScheduleHint.textContent = `Ora locale corrente: ${formatLocalDateTime(new Date())}`;
+}
+
+function setProjectScheduleNow() {
+  const parts = localDateParts(new Date());
+  projectScheduleDate.value = parts.date;
+  projectScheduleTime.value = parts.time;
+}
+
+function updateProjectScheduleVisibility() {
+  const mode = projectScheduleMode.value;
+  const atMode = mode === "at";
+  const cronMode = mode === "cron";
+  projectScheduleDate.hidden = !atMode;
+  projectScheduleTime.hidden = !atMode;
+  projectScheduleRepeat.hidden = !atMode;
+  projectScheduleCron.hidden = !cronMode;
+  projectWeekdayPicker.hidden = !(atMode && projectScheduleRepeat.value === "weekdays");
+  if (projectScheduleSection) {
+    projectScheduleSection.dataset.mode = mode;
+  }
+  if (projectScheduleNow) {
+    projectScheduleNow.textContent = "Usa ora corrente";
+  }
+}
+
+function refreshProjectScheduleDefaults() {
+  updateProjectScheduleHint();
+  setProjectScheduleNow();
+  projectScheduleMode.value = "immediate";
+  projectScheduleRepeat.value = "once";
+  projectScheduleCron.value = "";
+  clearProjectWeekdays();
+  updateProjectScheduleVisibility();
+}
+
+function clearProjectWeekdays() {
+  projectWeekdayPicker?.querySelectorAll("[data-weekday]").forEach((input) => {
+    input.checked = false;
+  });
+}
+
+function selectedProjectWeekdays() {
+  return Array.from(projectWeekdayPicker?.querySelectorAll("[data-weekday]") ?? [])
+    .filter((input) => input.checked)
+    .map((input) => Number(input.dataset.weekday))
+    .filter((value) => Number.isInteger(value));
+}
+
+function buildProjectSchedulePayload() {
+  const mode = projectScheduleMode.value;
+  if (mode === "at") {
+    const dateValue = projectScheduleDate.value;
+    const timeValue = projectScheduleTime.value;
+    if (!dateValue || !timeValue) {
+      throw new Error("Inserisci data e ora per la pianificazione.");
+    }
+    const scheduledDate = new Date(`${dateValue}T${timeValue}:00`);
+    if (Number.isNaN(scheduledDate.getTime())) {
+      throw new Error("Data o ora non valida.");
+    }
+    const repeatMode = projectScheduleRepeat.value;
+    if (repeatMode === "weekdays" && selectedProjectWeekdays().length === 0) {
+      throw new Error("Seleziona almeno un giorno della settimana.");
+    }
+    return {
+      schedule_mode: "at",
+      scheduled_for: scheduledDate.toISOString(),
+      cron_expression: "",
+      repeat_mode: repeatMode,
+      weekdays: selectedProjectWeekdays(),
+    };
+  }
+  if (mode === "cron") {
+    const expression = projectScheduleCron.value.trim().replace(/\s+/g, " ");
+    if (!expression) {
+      throw new Error("Inserisci un'espressione cron valida.");
+    }
+    return {
+      schedule_mode: "cron",
+      scheduled_for: null,
+      cron_expression: expression,
+      repeat_mode: "once",
+      weekdays: [],
+    };
+  }
+  return {
+    schedule_mode: "immediate",
+    scheduled_for: null,
+    cron_expression: "",
+    repeat_mode: "once",
+    weekdays: [],
+  };
+}
+
 function clampText(value, maxLength = 1400) {
   const text = String(value ?? "");
   if (text.length <= maxLength) {
@@ -1472,6 +1654,17 @@ function formatProjectJobOutput(job) {
   if (job.state === "failed") {
     return `Errore\n${clampText(job.error || "Job fallito.")}`;
   }
+  if (job.state === "scheduled") {
+    const planned = {
+      state: job.state,
+      schedule_mode: job.schedule_mode,
+      scheduled_for: job.scheduled_for,
+      cron_expression: job.cron_expression,
+      repeat_mode: job.repeat_mode,
+      weekdays: job.weekdays,
+    };
+    return clampText(JSON.stringify(planned, null, 2));
+  }
   if (job.state === "queued" || job.state === "running") {
     return "Job in corso...";
   }
@@ -1481,13 +1674,299 @@ function formatProjectJobOutput(job) {
   if (result.command) compact.command = result.command;
   if (result.source) compact.source = result.source;
   if (typeof result.row_count === "number") compact.row_count = result.row_count;
-  if (Array.isArray(result.files) && result.files.length) compact.files = result.files;
+  if (Array.isArray(result.files)) compact.files = result.files;
   if (result.normalized?.meta_summary) compact.meta_summary = result.normalized.meta_summary;
-  if (result.normalized?.exported_files) compact.exported_files = result.normalized.exported_files;
+  if (result.normalized?.exported_files) {
+    compact.exported_files = result.normalized.exported_files;
+    if (Array.isArray(result.normalized.exported_files) && result.normalized.exported_files.length === 0) {
+      compact.output_note = "Nessun file esportato";
+    }
+  }
+  if (job.schedule_mode && job.schedule_mode !== "immediate") compact.schedule_mode = job.schedule_mode;
+  if (job.scheduled_for) compact.scheduled_for = job.scheduled_for;
+  if (job.cron_expression) compact.cron_expression = job.cron_expression;
+  if (job.repeat_mode && job.repeat_mode !== "once") compact.repeat_mode = job.repeat_mode;
+  if (Array.isArray(job.weekdays) && job.weekdays.length) compact.weekdays = job.weekdays;
   if (!Object.keys(compact).length) {
     return clampText(JSON.stringify(result, null, 2));
   }
   return clampText(JSON.stringify(compact, null, 2));
+}
+
+function formatProjectJobSummary(job) {
+  if (!job) {
+    return "";
+  }
+  const parts = [];
+  const result = job.result ?? {};
+  const normalized = result.normalized ?? {};
+  const meta = normalized.meta_summary ?? result.meta_summary ?? {};
+  const source = result.source ?? job.project_id;
+  const command = result.command ?? job.action;
+  const rowCount = result.row_count ?? normalized.row_count ?? meta.row_count;
+  const exported = normalized.exported_files ?? result.exported_files ?? result.files ?? [];
+  const searchTerm = meta.search_term ?? normalized.search_term;
+  if (source) parts.push(`source=${source}`);
+  if (command) parts.push(`command=${command}`);
+  if (searchTerm) parts.push(`search=${searchTerm}`);
+  if (typeof rowCount === "number") parts.push(`rows=${rowCount}`);
+  if (job.repeat_mode && job.repeat_mode !== "once") parts.push(`repeat=${job.repeat_mode}`);
+  if (Array.isArray(job.weekdays) && job.weekdays.length) parts.push(`days=${job.weekdays.join(",")}`);
+  if (Array.isArray(exported) && exported.length) parts.push(`files=${exported.length}`);
+  return parts.join(" · ");
+}
+
+function formatProjectJobTime(job) {
+  const value = job?.updated_at || job?.created_at;
+  if (!value) {
+    return "";
+  }
+  try {
+    return new Intl.DateTimeFormat("it-IT", {
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(new Date(value));
+  } catch (_error) {
+    return String(value);
+  }
+}
+
+function projectJobSource(job) {
+  const result = job?.result ?? {};
+  return String(result.source ?? job?.project_id ?? "").toLowerCase();
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderProjectOutputSummary(job) {
+  if (!projectOutputSummary) {
+    return;
+  }
+  if (!job) {
+    projectOutputSummary.textContent = "";
+    return;
+  }
+  const parts = [];
+  const result = job.result ?? {};
+  const normalized = result.normalized ?? {};
+  const meta = normalized.meta_summary ?? result.meta_summary ?? {};
+  const source = projectJobSource(job);
+  const rowCount = result.row_count ?? normalized.row_count ?? meta.row_count;
+  const searchTerm = meta.search_term ?? normalized.search_term ?? result.search_term;
+  if (source) parts.push(`source=${source}`);
+  if (searchTerm) parts.push(`search=${searchTerm}`);
+  if (typeof rowCount === "number") parts.push(`rows=${rowCount}`);
+  if (job.state === "scheduled") {
+    parts.push(`repeat=${job.repeat_mode ?? "once"}`);
+    if (Array.isArray(job.weekdays) && job.weekdays.length) {
+      parts.push(`days=${job.weekdays.join(",")}`);
+    }
+  }
+  if (job.schedule_mode && job.schedule_mode !== "immediate") {
+    parts.push(`schedule=${job.schedule_mode}`);
+  }
+  if (job.scheduled_for) {
+    parts.push(`run_at=${formatProjectJobTime({ created_at: job.scheduled_for })}`);
+  }
+  projectOutputSummary.textContent = parts.join(" · ");
+}
+
+function clearProjectOutputView() {
+  if (projectOutputView) {
+    projectOutputView.hidden = true;
+  }
+  if (projectOutputMeta) {
+    projectOutputMeta.textContent = "";
+  }
+  if (projectOutputHead) {
+    projectOutputHead.innerHTML = "";
+  }
+  if (projectOutputRows) {
+    projectOutputRows.innerHTML = "";
+  }
+}
+
+function isRenderableObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function projectPreviewValueText(value) {
+  if (value == null || value === "") {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch (_error) {
+    return String(value);
+  }
+}
+
+function projectPreviewLabel(column) {
+  return String(column ?? "").replaceAll("_", " ");
+}
+
+function projectPreviewColumnsFromRows(rows) {
+  const preferredColumns = ["title", "name", "search_term", "price_text", "price", "shipping_text", "shipping_price", "total_text", "total_price", "link"];
+  const extraColumns = [];
+  for (const row of rows) {
+    if (!isRenderableObject(row)) {
+      continue;
+    }
+    for (const key of Object.keys(row)) {
+      if (!preferredColumns.includes(key) && !extraColumns.includes(key)) {
+        extraColumns.push(key);
+      }
+    }
+  }
+  return preferredColumns.filter((column) => rows.some((row) => isRenderableObject(row) && row[column] !== undefined)).concat(extraColumns.slice(0, 6));
+}
+
+function projectPreviewColumnsFromObject(value) {
+  if (!isRenderableObject(value)) {
+    return [];
+  }
+  const preferredColumns = ["key", "name", "title", "value", "description", "path", "link", "url", "type"];
+  const columns = [];
+  for (const key of preferredColumns) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      columns.push(key);
+    }
+  }
+  for (const key of Object.keys(value)) {
+    if (!columns.includes(key)) {
+      columns.push(key);
+    }
+  }
+  return columns.slice(0, 12);
+}
+
+function renderProjectStructuredOutput(job) {
+  if (!projectOutputView || !projectOutputRows || !projectOutputMeta || !projectOutputHead) {
+    return false;
+  }
+  const result = job?.result ?? {};
+  const normalized = result.normalized ?? {};
+  const rowsCandidate = Array.isArray(normalized.rows) ? normalized.rows : Array.isArray(result.rows) ? result.rows : null;
+  const filesCandidate = Array.isArray(normalized.exported_files) ? normalized.exported_files : Array.isArray(result.exported_files) ? result.exported_files : Array.isArray(result.files) ? result.files : null;
+  const summaryCandidate = normalized.summary ?? result.summary ?? normalized.meta_summary ?? result.meta_summary ?? null;
+
+  let preview = null;
+  if (Array.isArray(rowsCandidate) && rowsCandidate.length > 0) {
+    preview = { kind: "rows", label: "Risultati", value: rowsCandidate.slice(0, 40), total: rowsCandidate.length };
+  } else if (Array.isArray(filesCandidate) && filesCandidate.length) {
+    preview = { kind: "list", label: "File", value: filesCandidate.slice(0, 40), total: filesCandidate.length };
+  } else if (Array.isArray(rowsCandidate)) {
+    preview = { kind: "rows", label: "Risultati", value: rowsCandidate.slice(0, 40), total: rowsCandidate.length };
+  } else if (summaryCandidate != null) {
+    preview = { kind: "summary", label: "Dettaglio", value: summaryCandidate };
+  }
+
+  if (!preview) {
+    clearProjectOutputView();
+    return false;
+  }
+
+  if (preview.kind === "rows") {
+    const columns = projectPreviewColumnsFromRows(preview.value);
+    if (!columns.length) {
+      clearProjectOutputView();
+      return false;
+    }
+    projectOutputHead.innerHTML = columns.map((column) => `<th>${escapeHtml(projectPreviewLabel(column))}</th>`).join("");
+    projectOutputMeta.textContent = `Righe mostrate: ${preview.value.length}${preview.total > preview.value.length ? ` di ${preview.total}` : ""}`;
+    projectOutputRows.innerHTML = preview.value.length
+      ? preview.value.map((row) => {
+        if (!isRenderableObject(row)) {
+          return `<tr><td colspan="${columns.length}" class="project-output-cell--muted">${escapeHtml(projectPreviewValueText(row))}</td></tr>`;
+        }
+        const cells = columns.map((column) => {
+          const value = row[column];
+          if (value == null || value === "") {
+            return "<td><span class='project-output-cell--muted'>-</span></td>";
+          }
+          if (column === "link" || /_link$|url$/i.test(column)) {
+            const href = String(value).trim();
+            if (!href) {
+              return "<td><span class='project-output-cell--muted'>-</span></td>";
+            }
+            return `<td><a class="project-output-link" href="${escapeHtml(href)}" target="_blank" rel="noreferrer">Apri</a></td>`;
+          }
+          return `<td>${escapeHtml(projectPreviewValueText(value))}</td>`;
+        }).join("");
+        return `<tr>${cells}</tr>`;
+      }).join("")
+      : `<tr><td colspan="${Math.max(columns.length, 1)}" class="project-output-cell--muted">Nessun risultato disponibile.</td></tr>`;
+    projectOutputView.hidden = false;
+    return true;
+  }
+
+  if (preview.kind === "list") {
+    projectOutputHead.innerHTML = "<th>#</th><th>Valore</th>";
+    projectOutputMeta.textContent = `Elementi mostrati: ${preview.value.length}${preview.total > preview.value.length ? ` di ${preview.total}` : ""}`;
+    projectOutputRows.innerHTML = preview.value.length
+      ? preview.value.map((item, index) => {
+        if (isRenderableObject(item)) {
+          const columns = projectPreviewColumnsFromObject(item);
+          const value = columns.map((column) => {
+            const cellValue = item[column];
+            if (cellValue == null || cellValue === "") {
+              return `${escapeHtml(projectPreviewLabel(column))}: -`;
+            }
+            if (column === "link" || /_link$|url$/i.test(column)) {
+              const href = String(cellValue).trim();
+              return href
+                ? `${escapeHtml(projectPreviewLabel(column))}: <a class="project-output-link" href="${escapeHtml(href)}" target="_blank" rel="noreferrer">Apri</a>`
+                : `${escapeHtml(projectPreviewLabel(column))}: -`;
+            }
+            return `${escapeHtml(projectPreviewLabel(column))}: ${escapeHtml(projectPreviewValueText(cellValue))}`;
+          }).join("<br>");
+          return `<tr><td>${index + 1}</td><td>${value}</td></tr>`;
+        }
+        return `<tr><td>${index + 1}</td><td>${escapeHtml(projectPreviewValueText(item))}</td></tr>`;
+      }).join("")
+      : '<tr><td colspan="2" class="project-output-cell--muted">Nessun elemento disponibile.</td></tr>';
+    projectOutputView.hidden = false;
+    return true;
+  }
+
+  projectOutputHead.innerHTML = "<th>Campo</th><th>Valore</th>";
+  projectOutputMeta.textContent = "Dettaglio output";
+  const entries = isRenderableObject(preview.value) ? Object.entries(preview.value).slice(0, 40) : [["value", preview.value]];
+  projectOutputRows.innerHTML = entries.length
+    ? entries.map(([key, value]) => {
+      const renderedValue = Array.isArray(value)
+        ? value.map((item) => projectPreviewValueText(item)).join(", ")
+        : projectPreviewValueText(value);
+      return `<tr><td>${escapeHtml(projectPreviewLabel(key))}</td><td>${escapeHtml(renderedValue)}</td></tr>`;
+    }).join("")
+    : '<tr><td colspan="2" class="project-output-cell--muted">Nessun dettaglio disponibile.</td></tr>';
+  projectOutputView.hidden = false;
+  return true;
+}
+
+function renderProjectJobDetail(job) {
+  renderProjectOutputSummary(job);
+  if (renderProjectStructuredOutput(job)) {
+    projectResult.hidden = true;
+    projectResult.textContent = formatProjectJobOutput(job);
+    return;
+  }
+  clearProjectOutputView();
+  projectResult.hidden = false;
+  projectResult.textContent = formatProjectJobOutput(job);
 }
 
 function jobToastStatus(job) {
@@ -1496,6 +1975,7 @@ function jobToastStatus(job) {
   }
   if (job.state === "queued") return "In coda";
   if (job.state === "running") return "In corso";
+  if (job.state === "scheduled") return "Pianificato";
   if (job.state === "completed") return "Completato";
   if (job.state === "failed") return "Fallito";
   return String(job.state || "");
@@ -1507,7 +1987,7 @@ function jobToastTone(job) {
   }
   if (job.state === "completed") return "success";
   if (job.state === "failed") return "danger";
-  if (job.state === "running" || job.state === "queued") return "active";
+  if (job.state === "running" || job.state === "queued" || job.state === "scheduled") return "active";
   return "neutral";
 }
 
@@ -1566,15 +2046,19 @@ function syncProjectJobToast(job, phase = "") {
   const subtitleText = `Agente: ${projectAgentLabelFor(job)} · ID: ${job.id}`;
   const summaryText = phase === "project.job.queued"
     ? "Job ricevuto e messo in coda."
+    : phase === "project.job.scheduled"
+      ? "Job pianificato per l'orario scelto."
     : phase === "project.job.started"
       ? "Job avviato."
+      : job.state === "scheduled"
+        ? "In attesa dell'orario scelto."
       : job.state === "completed"
         ? "Output finale."
         : job.state === "failed"
           ? "Esecuzione fallita."
           : "Job aggiornato.";
 
-  toast.card.classList.toggle("job-toast--active", job.state === "queued" || job.state === "running");
+  toast.card.classList.toggle("job-toast--active", job.state === "queued" || job.state === "running" || job.state === "scheduled");
   toast.card.classList.toggle("job-toast--success", job.state === "completed");
   toast.card.classList.toggle("job-toast--danger", job.state === "failed");
   toast.title.textContent = titleText;
@@ -1591,12 +2075,132 @@ async function refreshProjectJobToasts() {
   }
   try {
     const jobs = await runtimeClient.listProjectJobs();
-    for (const job of jobs.filter((item) => ["queued", "running"].includes(item.state))) {
+    for (const job of jobs.filter((item) => ["scheduled", "queued", "running"].includes(item.state))) {
       syncProjectJobToast(job);
     }
   } catch (error) {
     runtimeClient.logClient("error", error.message, { operation: "refreshProjectJobToasts" });
   }
+}
+
+function setProjectPanel(panel) {
+  projectPanel = panel === "finished" ? "finished" : "output";
+  for (const tab of projectPanelTabs) {
+    const active = tab.dataset.panelTab === projectPanel;
+    tab.classList.toggle("project-panel-tab--active", active);
+    tab.setAttribute("aria-selected", String(active));
+  }
+  for (const pane of projectPanels) {
+    pane.hidden = pane.dataset.projectPanel !== projectPanel;
+  }
+  if (projectPanel === "finished") {
+    unreadCompletedProjectJobs = 0;
+    renderJobNotificationBadge();
+    refreshProjectJobHistory(true);
+  }
+}
+
+function renderJobNotificationBadge() {
+  if (!jobNotificationCount) {
+    return;
+  }
+  if (unreadCompletedProjectJobs > 0) {
+    jobNotificationCount.hidden = false;
+    jobNotificationCount.textContent = unreadCompletedProjectJobs > 99 ? "99+" : String(unreadCompletedProjectJobs);
+    jobNotificationsButton?.classList.add("is-pulse");
+    window.setTimeout(() => jobNotificationsButton?.classList.remove("is-pulse"), 900);
+    return;
+  }
+  jobNotificationCount.hidden = true;
+  jobNotificationCount.textContent = "0";
+}
+
+function acknowledgeCompletedJobs(jobIds = []) {
+  for (const jobId of jobIds) {
+    seenCompletedProjectJobs.add(jobId);
+  }
+  unreadCompletedProjectJobs = 0;
+  renderJobNotificationBadge();
+}
+
+function markCompletedJobUnread(jobId) {
+  if (!jobId || seenCompletedProjectJobs.has(jobId)) {
+    return;
+  }
+  seenCompletedProjectJobs.add(jobId);
+  unreadCompletedProjectJobs += 1;
+  renderJobNotificationBadge();
+}
+
+function projectJobsForHistory(jobs) {
+  const currentProjectId = projectSelect.value;
+  return jobs
+    .filter((job) => job.state === "completed" || job.state === "failed")
+    .filter((job) => !currentProjectId || job.project_id === currentProjectId)
+    .sort((left, right) => String(right.updated_at ?? right.created_at).localeCompare(String(left.updated_at ?? left.created_at)));
+}
+
+function renderProjectJobHistory(jobs) {
+  if (!projectJobList) {
+    return;
+  }
+  projectJobsCache.clear();
+  for (const job of jobs) {
+    projectJobsCache.set(job.id, job);
+  }
+  if (!jobs.length) {
+    projectJobList.innerHTML = '<p class="project-job-empty">Nessun job finito per questo progetto.</p>';
+    return;
+  }
+  projectJobList.innerHTML = jobs
+    .map((job) => {
+      const tone = job.state === "failed" ? "project-job-item--failed" : "project-job-item--completed";
+      const summary = formatProjectJobSummary(job);
+      const time = formatProjectJobTime(job);
+      return `
+        <button class="project-job-item ${tone}" type="button" data-job-id="${job.id}">
+          <strong>${projectNameFor(job)} · ${projectActionLabelFor(job)}</strong>
+          <small>${projectAgentLabelFor(job)} · ${jobToastStatus(job)}${time ? ` · ${time}` : ""}</small>
+          <small>${summary || job.id}</small>
+        </button>
+      `;
+    })
+    .join("");
+  projectJobList.querySelectorAll("[data-job-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const job = projectJobsCache.get(button.dataset.jobId);
+      if (job) {
+        openJobOutput(job);
+      }
+    });
+  });
+}
+
+async function refreshProjectJobHistory(markSeen = false) {
+  if (!runtimeClient.connected) {
+    return;
+  }
+  try {
+    const jobs = await runtimeClient.listProjectJobs();
+    const filtered = projectJobsForHistory(jobs);
+    renderProjectJobHistory(filtered);
+    if (markSeen) {
+      acknowledgeCompletedJobs(filtered.map((job) => job.id));
+    }
+  } catch (error) {
+    runtimeClient.logClient("error", error.message, { operation: "refreshProjectJobHistory" });
+  }
+}
+
+function openJobOutput(job) {
+  if (!job) {
+    return;
+  }
+  setProjectPanel("output");
+  if (!projectDialog.open) {
+    projectDialog.showModal();
+  }
+  renderProjectJobDetail(job);
 }
 
 function openAgentActions(agentId) {
@@ -1626,6 +2230,7 @@ async function connectRuntime() {
     network.autopilotClock = Number.POSITIVE_INFINITY;
     setRuntimeConnection(true);
     await refreshProjectJobToasts();
+    await refreshProjectJobHistory(true);
   } catch (error) {
     setRuntimeConnection(false);
     setBootMessage(error.message);
@@ -1652,6 +2257,14 @@ function settingsField(name) {
   return agentSettingsForm.elements.namedItem(name);
 }
 
+function modelPickerField() {
+  return settingsField("model_picker");
+}
+
+function modelInputField() {
+  return settingsField("model");
+}
+
 function renderSecretStatus(status) {
   projectKeyStatus.textContent = `Progetto: ${status.project_configured ? "configurata" : "non configurata"}`;
   agentKeyStatus.textContent = `Agente: ${status.agent_configured ? "configurata" : "non configurata"}`;
@@ -1659,13 +2272,93 @@ function renderSecretStatus(status) {
   agentKeyStatus.classList.toggle("secret-status--configured", status.agent_configured);
 }
 
+function renderModelPicker(provider, selectedModel = "") {
+  const picker = modelPickerField();
+  const modelInput = modelInputField();
+  const help = document.querySelector("#model-help");
+  const catalog = MODEL_CATALOGS[provider] ?? [];
+  picker.innerHTML = "";
+
+  if (!catalog.length) {
+    picker.disabled = true;
+    picker.hidden = true;
+    modelInput.hidden = false;
+    modelInput.placeholder = provider === "ollama" ? "llama3.2" : "model-id";
+    help.textContent = provider === "openai-compatible"
+      ? "Enter the exact model ID exposed by your compatible endpoint."
+      : "Enter the exact model ID for this provider.";
+    modelInput.value = selectedModel;
+    return;
+  }
+
+  picker.disabled = false;
+  picker.hidden = false;
+  modelInput.placeholder = "Custom model ID";
+
+  for (const entry of catalog) {
+    if (entry.group) {
+      const group = document.createElement("optgroup");
+      group.label = entry.group;
+      for (const optionData of entry.options) {
+        const option = document.createElement("option");
+        option.value = optionData.value;
+        option.textContent = optionData.label;
+        group.append(option);
+      }
+      picker.append(group);
+      continue;
+    }
+    const option = document.createElement("option");
+    option.value = entry.value;
+    option.textContent = entry.label;
+    picker.append(option);
+  }
+
+  const customOption = document.createElement("option");
+  customOption.value = MODEL_PICKER_CUSTOM;
+  customOption.textContent = "Custom model ID";
+  picker.append(customOption);
+
+  const knownModels = new Set(
+    catalog.flatMap((entry) => entry.group ? entry.options.map((option) => option.value) : [entry.value])
+  );
+  const usingCustom = !selectedModel || !knownModels.has(selectedModel);
+  picker.value = usingCustom ? MODEL_PICKER_CUSTOM : selectedModel;
+  modelInput.hidden = !usingCustom;
+  modelInput.value = usingCustom ? selectedModel : picker.value;
+  help.textContent = provider === "openai"
+    ? "Official OpenAI models as of July 8, 2026, plus custom ID support."
+    : "Select a built-in model or switch to a custom model ID.";
+}
+
+function syncModelFieldFromPicker() {
+  const picker = modelPickerField();
+  const modelInput = modelInputField();
+  if (picker.hidden) {
+    return;
+  }
+  if (picker.value === MODEL_PICKER_CUSTOM) {
+    modelInput.hidden = false;
+    if (!modelInput.value) {
+      modelInput.value = "";
+    }
+    modelInput.focus();
+    return;
+  }
+  modelInput.hidden = true;
+  modelInput.value = picker.value;
+}
+
 function updateProviderControls(resetDefaults = false) {
   const provider = settingsField("provider").value;
   const defaults = providerDefaults[provider];
+  const currentModel = modelInputField().value;
   if (resetDefaults && defaults) {
-    settingsField("model").value = defaults.model;
+    modelInputField().value = defaults.model;
     settingsField("base_url").value = defaults.baseUrl;
   }
+  renderModelPicker(provider, resetDefaults && defaults ? defaults.model : currentModel);
+  syncModelFieldFromPicker();
   const usesLocalRuntime = provider === "ollama";
   settingsField("api_key").disabled = usesLocalRuntime;
   settingsField("api_key_scope").disabled = usesLocalRuntime;
@@ -1968,6 +2661,7 @@ projectSelect.addEventListener("change", async () => {
   projectPresetName.value = "";
   try {
     await refreshProjectPresets();
+    await refreshProjectJobHistory(true);
   } catch (error) {
     projectError.textContent = error.message;
   }
@@ -1975,6 +2669,38 @@ projectSelect.addEventListener("change", async () => {
 projectAction.addEventListener("change", renderProjectParameters);
 document.querySelector("#load-project-preset").addEventListener("click", loadSelectedProjectPreset);
 projectPresetSelect.addEventListener("change", loadSelectedProjectPreset);
+projectScheduleMode.addEventListener("change", () => {
+  updateProjectScheduleVisibility();
+  updateProjectScheduleHint();
+});
+projectScheduleRepeat.addEventListener("change", () => {
+  updateProjectScheduleVisibility();
+});
+projectScheduleNow.addEventListener("click", () => {
+  projectScheduleMode.value = "at";
+  setProjectScheduleNow();
+  updateProjectScheduleVisibility();
+  updateProjectScheduleHint();
+});
+projectWeekdayPicker?.querySelectorAll("[data-weekday]").forEach((input) => {
+  input.addEventListener("change", () => {
+    if (projectScheduleRepeat.value === "weekdays" && !selectedProjectWeekdays().length) {
+      input.checked = true;
+    }
+  });
+});
+projectPanelTabs.forEach((button) => {
+  button.addEventListener("click", () => setProjectPanel(button.dataset.panelTab));
+});
+jobNotificationsButton?.addEventListener("click", async () => {
+  if (!projectDialog.open) {
+    await openProjectGateway();
+    if (!projectDialog.open) {
+      return;
+    }
+  }
+  setProjectPanel("finished");
+});
 
 document.querySelector("#save-project-preset").addEventListener("click", async () => {
   const name = projectPresetName.value.trim();
@@ -2028,15 +2754,20 @@ projectForm.addEventListener("submit", async (event) => {
   projectError.textContent = "";
   projectResult.textContent = "Avvio in corso...";
   try {
+    const schedule = buildProjectSchedulePayload();
     const job = await runtimeClient.createProjectJob({
       project_id: projectSelect.value,
       action: action.id,
       parameters,
       agent_id: selectedAgentId,
       approved: projectForm.elements.namedItem("approved").checked,
+      ...schedule,
     });
-    projectResult.textContent = JSON.stringify({ state: job.state, job: job.id }, null, 2);
-    syncProjectJobToast(job, "project.job.queued");
+    renderProjectJobDetail(job);
+    syncProjectJobToast(job, job.state === "scheduled" ? "project.job.scheduled" : "project.job.queued");
+    if (job.state === "scheduled") {
+      setProjectPanel("output");
+    }
   } catch (error) {
     runtimeClient.logClient("error", error.message, {
       operation: "createProjectJob",
@@ -2091,6 +2822,7 @@ agentSettingsDialog.querySelectorAll("[data-settings-close]").forEach((button) =
 
 agentSettingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  syncModelFieldFromPicker();
   const snapshot = runtimeSnapshots.get(selectedAgentId);
   if (!snapshot) {
     agentSettingsError.textContent = "Selected agent is not available.";
@@ -2149,6 +2881,10 @@ agentSettingsForm.addEventListener("submit", async (event) => {
 
 settingsField("provider").addEventListener("change", () => {
   updateProviderControls(true);
+});
+
+modelPickerField().addEventListener("change", () => {
+  syncModelFieldFromPicker();
 });
 
 document.querySelector("#delete-api-key").addEventListener("click", async () => {

@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 from agent_runtime.models import ProjectJobPresetCreate
 from agent_runtime.project_gateway import ProjectGateway, ProjectJobCreate
@@ -97,6 +98,73 @@ class ProjectGatewayTests(unittest.IsolatedAsyncioTestCase):
                     parameters={"shell": "whoami"},
                 )
             )
+
+    async def test_can_schedule_a_job_for_a_specific_time(self):
+        scheduled_for = datetime.now(timezone.utc) + timedelta(minutes=5)
+        job = await self.gateway.create_job(
+            ProjectJobCreate(
+                project_id="demo",
+                action="read",
+                parameters={"query": "example"},
+                schedule_mode="at",
+                scheduled_for=scheduled_for,
+            )
+        )
+        self.assertEqual("scheduled", job.state)
+        self.assertIsNotNone(job.scheduled_for)
+        self.assertGreater(job.scheduled_for, datetime.now(timezone.utc))
+
+    async def test_can_schedule_a_job_with_cron_expression(self):
+        job = await self.gateway.create_job(
+            ProjectJobCreate(
+                project_id="demo",
+                action="read",
+                parameters={"query": "example"},
+                schedule_mode="cron",
+                cron_expression="* * * * *",
+            )
+        )
+        self.assertEqual("scheduled", job.state)
+        self.assertIsNotNone(job.scheduled_for)
+        self.assertEqual("cron", job.schedule_mode.value)
+
+    async def test_weekday_recurring_schedule_finds_next_occurrence(self):
+        base = datetime(2026, 7, 9, 9, 30, tzinfo=timezone.utc)
+        next_run = self.gateway._next_weekday_occurrence(base, [0, 2, 4])
+        self.assertIsNotNone(next_run)
+        self.assertEqual(4, next_run.weekday())
+        self.assertGreater(next_run, base)
+
+    async def test_daily_recurring_schedule_moves_forward_one_day(self):
+        scheduled_for = datetime.now(timezone.utc) + timedelta(minutes=5)
+        job = await self.gateway.create_job(
+            ProjectJobCreate(
+                project_id="demo",
+                action="read",
+                parameters={"query": "example"},
+                schedule_mode="at",
+                scheduled_for=scheduled_for,
+                repeat_mode="daily",
+            )
+        )
+        self.assertEqual("daily", job.repeat_mode.value)
+        self.assertEqual("scheduled", job.state)
+
+    async def test_weekday_repeat_mode_persists_selected_days(self):
+        scheduled_for = datetime.now(timezone.utc) + timedelta(minutes=5)
+        job = await self.gateway.create_job(
+            ProjectJobCreate(
+                project_id="demo",
+                action="read",
+                parameters={"query": "example"},
+                schedule_mode="at",
+                scheduled_for=scheduled_for,
+                repeat_mode="weekdays",
+                weekdays=[0, 2, 4],
+            )
+        )
+        self.assertEqual("weekdays", job.repeat_mode.value)
+        self.assertEqual([0, 2, 4], job.weekdays)
 
 
 if __name__ == "__main__":

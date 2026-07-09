@@ -37,6 +37,12 @@
         </div>
         <button id="camera-left" class="button button--icon" type="button" aria-label="Ruota camera a sinistra">Q</button>
         <button id="camera-right" class="button button--icon" type="button" aria-label="Ruota camera a destra">E</button>
+        <button id="job-notifications" class="button button--icon button--notify" type="button" aria-label="Notifiche job">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 3.5a4.5 4.5 0 0 0-4.5 4.5v2.2c0 .9-.2 1.8-.6 2.6L6 15.1V17h12v-1.9l-.9-2.3c-.3-.8-.6-1.7-.6-2.6V8a4.5 4.5 0 0 0-4.5-4.5ZM9.7 17.8a2.3 2.3 0 0 0 4.6 0H9.7Z" />
+          </svg>
+          <span class="notification-badge" id="job-notification-count" hidden>0</span>
+        </button>
       </div>
     </header>
 
@@ -199,7 +205,14 @@
                 <option value="ollama">Ollama locale</option>
               </select>
             </label>
-            <label><span>Model</span><input name="model" required /></label>
+            <label class="form-grid__wide">
+              <span>Model</span>
+              <div class="model-picker">
+                <select name="model_picker"></select>
+                <input name="model" required placeholder="gpt-5.5" />
+              </div>
+              <small id="model-help">Pick a recommended model or enter a custom model ID.</small>
+            </label>
             <label class="form-grid__wide"><span>Base URL</span><input name="base_url" placeholder="https://api.example.com/v1" /></label>
             <label>
               <span>API key assignment</span>
@@ -323,7 +336,81 @@
           <span>Confermo l'esecuzione dell'azione esterna</span>
         </label>
 
-        <pre class="project-result" id="project-result">Nessuna esecuzione avviata.</pre>
+        <section class="settings-section" id="project-schedule-section">
+          <div class="settings-section__heading">
+            <strong>Pianificazione</strong>
+            <small id="project-schedule-hint">Ora locale corrente: -</small>
+          </div>
+          <div class="form-grid">
+            <label>
+              <span>Modalita</span>
+              <select id="project-schedule-mode" name="schedule_mode">
+                <option value="immediate">Subito</option>
+                <option value="at">A orario</option>
+                <option value="cron">Cron</option>
+              </select>
+            </label>
+            <label>
+              <span>Data</span>
+              <input id="project-schedule-date" type="date" />
+            </label>
+            <label>
+              <span>Ora</span>
+              <input id="project-schedule-time" type="time" step="60" />
+            </label>
+            <label>
+              <span>Ripetizione</span>
+              <select id="project-schedule-repeat" name="repeat_mode">
+                <option value="once">Una volta</option>
+                <option value="daily">Tutti i giorni</option>
+                <option value="weekdays">Giorni specifici</option>
+              </select>
+            </label>
+            <label class="form-grid__wide">
+              <span>Espressione cron</span>
+              <input id="project-schedule-cron" placeholder="0 9 * * 1-5" />
+              <small>Formato cron standard in 5 campi: minuto ora giorno mese giorno-settimana.</small>
+            </label>
+            <div class="weekday-picker form-grid__wide" id="project-weekday-picker">
+              <label><input type="checkbox" data-weekday="0" /> <span>Lun</span></label>
+              <label><input type="checkbox" data-weekday="1" /> <span>Mar</span></label>
+              <label><input type="checkbox" data-weekday="2" /> <span>Mer</span></label>
+              <label><input type="checkbox" data-weekday="3" /> <span>Gio</span></label>
+              <label><input type="checkbox" data-weekday="4" /> <span>Ven</span></label>
+              <label><input type="checkbox" data-weekday="5" /> <span>Sab</span></label>
+              <label><input type="checkbox" data-weekday="6" /> <span>Dom</span></label>
+            </div>
+          </div>
+          <div class="schedule-actions">
+            <button class="button" id="project-schedule-now" type="button">Usa ora corrente</button>
+          </div>
+        </section>
+
+        <div class="project-panel-tabs" role="tablist" aria-label="Project output views">
+          <button class="project-panel-tab project-panel-tab--active" id="project-tab-output" type="button" data-panel-tab="output" aria-selected="true">Output</button>
+          <button class="project-panel-tab" id="project-tab-finished" type="button" data-panel-tab="finished" aria-selected="false">Job finiti</button>
+        </div>
+        <div class="project-panel" data-project-panel="output">
+          <div class="project-output-summary" id="project-output-summary"></div>
+          <pre class="project-result" id="project-result">Nessuna esecuzione avviata.</pre>
+          <div class="project-output-view" id="project-output-view" hidden>
+            <div class="project-output-view__heading">
+              <strong>Output strutturato</strong>
+              <small id="project-output-meta"></small>
+            </div>
+            <div class="project-output-table-wrap">
+              <table class="project-output-table">
+                <thead>
+                  <tr id="project-output-head"></tr>
+                </thead>
+                <tbody id="project-output-rows"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="project-panel" data-project-panel="finished" hidden>
+          <div class="project-job-list" id="project-job-list"></div>
+        </div>
         <p class="form-error" id="project-error" role="alert"></p>
         <div class="dialog-actions">
           <button class="button" data-project-close type="button">Chiudi</button>

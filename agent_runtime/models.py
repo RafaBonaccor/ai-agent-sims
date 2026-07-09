@@ -131,6 +131,18 @@ class ProjectJobPreset(ProjectJobPresetCreate):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class ProjectScheduleMode(str, Enum):
+    IMMEDIATE = "immediate"
+    AT = "at"
+    CRON = "cron"
+
+
+class ProjectRepeatMode(str, Enum):
+    ONCE = "once"
+    DAILY = "daily"
+    WEEKDAYS = "weekdays"
+
+
 class MessageEnvelope(BaseModel):
     id: str = Field(default_factory=lambda: f"msg-{uuid4().hex[:12]}")
     type: str
