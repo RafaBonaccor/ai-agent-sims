@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .engine import AgentRuntime
+from .browser_control import BrowserControlError
 from .models import (
     AgentDefinition,
     AgentChatMessage,
@@ -64,6 +66,23 @@ class SecretValue(BaseModel):
     api_key: str = Field(min_length=8, max_length=4096)
 
 
+class BrowserSessionCreate(BaseModel):
+    project_id: str = Field(default="main-scraper", max_length=80)
+    backend: str = Field(default="botasaurus", pattern=r"^(botasaurus|mock|auto)$")
+    url: str = Field(default="", max_length=2000)
+    browser_mode: str = Field(default="sessione_persistente", max_length=80)
+    browser_user_data_dir: str = Field(default="", max_length=1000)
+    browser_profile_directory: str = Field(default="Default", max_length=120)
+    refresh_browser_profile: bool = False
+    page_text: str = Field(default="", max_length=4000)
+    title: str = Field(default="", max_length=200)
+
+
+class BrowserCommandRequest(BaseModel):
+    command: str = Field(min_length=1, max_length=80)
+    parameters: dict[str, object] = Field(default_factory=dict)
+
+
 @app.middleware("http")
 async def log_http_request(request: Request, call_next):
     started = time.perf_counter()
@@ -103,9 +122,10 @@ async def health() -> dict[str, object]:
         "status": "ok",
         "runtime": "native",
         "version": "0.2.0",
-        "features": {"projectGateway": True, "persistentLogs": True},
+        "features": {"projectGateway": True, "persistentLogs": True, "browserControl": True},
         "agents": len(runtime().agents),
         "activeTasks": len(runtime().running_jobs),
+        "browserSessions": len(runtime().browser_control.list_sessions()),
     }
 
 
@@ -129,35 +149,41 @@ async def list_agents() -> list[AgentSnapshot]:
 
 
 @app.get("/api/secrets/status")
-async def secret_status(agent_id: str = Query(default="", max_length=80)) -> dict[str, bool]:
+async def secret_status(agent_id: str = Query(default="", max_length=80)) -> dict[str, object]:
     return secrets().status(agent_id or None)
 
 
 @app.put("/api/secrets/project")
-async def set_project_secret(value: SecretValue) -> dict[str, bool]:
-    secrets().set_project(value.api_key)
-    LOGGER.info("secret_updated scope=project")
-    return secrets().status()
+async def set_project_secret(value: SecretValue) -> dict[str, object]:
+    try:
+        secrets().set_project(value.api_key)
+        LOGGER.info("secret_updated scope=project")
+        return secrets().status()
+    except (RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.delete("/api/secrets/project")
-async def delete_project_secret() -> dict[str, bool]:
+async def delete_project_secret() -> dict[str, object]:
     secrets().delete_project()
     LOGGER.info("secret_deleted scope=project")
     return secrets().status()
 
 
 @app.put("/api/agents/{agent_id}/secret")
-async def set_agent_secret(agent_id: str, value: SecretValue) -> dict[str, bool]:
+async def set_agent_secret(agent_id: str, value: SecretValue) -> dict[str, object]:
     if agent_id not in runtime().agents:
         raise HTTPException(status_code=404, detail="Agent not found")
-    secrets().set_agent(agent_id, value.api_key)
-    LOGGER.info("secret_updated scope=agent agent=%s", agent_id)
-    return secrets().status(agent_id)
+    try:
+        secrets().set_agent(agent_id, value.api_key)
+        LOGGER.info("secret_updated scope=agent agent=%s", agent_id)
+        return secrets().status(agent_id)
+    except (RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.delete("/api/agents/{agent_id}/secret")
-async def delete_agent_secret(agent_id: str) -> dict[str, bool]:
+async def delete_agent_secret(agent_id: str) -> dict[str, object]:
     if agent_id not in runtime().agents:
         raise HTTPException(status_code=404, detail="Agent not found")
     secrets().delete_agent(agent_id)
@@ -249,6 +275,35 @@ async def list_tools() -> list[dict[str, object]]:
         }
         for tool in runtime().executor.tools.DEFINITIONS.values()
     ]
+
+
+@app.get("/api/browser/sessions")
+async def list_browser_sessions() -> list[dict[str, object]]:
+    return runtime().browser_control.list_sessions()
+
+
+@app.post("/api/browser/sessions", status_code=201)
+async def create_browser_session(request: BrowserSessionCreate) -> dict[str, object]:
+    try:
+        return await runtime().browser_control.open_session(**request.model_dump())
+    except BrowserControlError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/browser/sessions/{session_id}/commands")
+async def run_browser_command(session_id: str, request: BrowserCommandRequest) -> dict[str, object]:
+    try:
+        return await runtime().browser_control.command(session_id, request.command, request.parameters)
+    except BrowserControlError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.delete("/api/browser/sessions/{session_id}")
+async def close_browser_session(session_id: str) -> dict[str, object]:
+    try:
+        return await runtime().browser_control.close_session(session_id)
+    except BrowserControlError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.get("/api/projects")
@@ -347,7 +402,9 @@ app.mount("/src", StaticFiles(directory=PROJECT_ROOT / "src"), name="src")
 
 
 def main() -> None:
-    uvicorn.run("agent_runtime.server:app", host="127.0.0.1", port=8000, reload=False)
+    host = os.environ.get("AGENT_LAB_HOST", "127.0.0.1")
+    port = int(os.environ.get("AGENT_LAB_PORT", "8000"))
+    uvicorn.run("agent_runtime.server:app", host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":

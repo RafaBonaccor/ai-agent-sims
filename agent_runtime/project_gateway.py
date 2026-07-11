@@ -489,9 +489,9 @@ class ProjectGateway:
         local = self.local.get("projects", {}).get(entry["id"], {})
         configured = local.get("pythonExecutable")
         if configured:
-            return Path(configured).expanduser().resolve()
+            return Path(configured).expanduser()
         for candidate in manifest["runtime"].get("venvCandidates", []):
-            path = (project_root / candidate).resolve()
+            path = project_root / candidate
             if path.is_file():
                 return path
         raise FileNotFoundError(f"No Python environment configured for {entry['id']}")

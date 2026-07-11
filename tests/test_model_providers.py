@@ -1,6 +1,9 @@
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
+from urllib.error import HTTPError
 
 from agent_runtime.execution import ModelExecutor
 from agent_runtime.models import AgentSnapshot, ModelSettings, TaskRecord
@@ -106,6 +109,18 @@ class ModelProviderTests(unittest.TestCase):
         self.assertEqual("http://127.0.0.1:11434/api/chat", request["endpoint"])
         self.assertFalse(request["payload"]["stream"])
         self.assertEqual("Done", result["summary"])
+
+    def test_post_json_reports_provider_auth_errors_with_body(self):
+        response = BytesIO(b'{"error":{"message":"Incorrect API key provided."}}')
+        error = HTTPError("https://api.example.test/v1/responses", 401, "Unauthorized", {}, response)
+
+        with patch("agent_runtime.execution.urlopen", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, "Provider authentication failed.*Incorrect API key"):
+                ModelExecutor._post_json(
+                    "https://api.example.test/v1/responses",
+                    {"model": "test-model", "input": "hello"},
+                    "bad-key",
+                )
 
 
 if __name__ == "__main__":

@@ -10,8 +10,13 @@ un endpoint OpenAI-compatible e dispone di configurazione, toolset, budget, poli
 e memoria privata modificabili dall'interfaccia.
 
 Le API key dei provider possono essere configurate per tutto il progetto oppure
-solo per un agente. Sono cifrate con Windows DPAPI in `data/secrets.json`, file
-escluso da Git; il browser riceve solamente lo stato configurata/non configurata.
+solo per un agente. Su macOS vengono salvate in Keychain; su Windows usano DPAPI.
+`data/secrets.json` resta escluso da Git e contiene solo metadati/riferimenti, non
+le chiavi in chiaro; il browser riceve solamente lo stato configurata/non
+configurata. Le chiavi devono avere almeno 8 caratteri; gli errori di validazione
+vengono mostrati nel frontend con campo e messaggio leggibili. Un errore `HTTP
+401` durante la chat indica che il provider ha rifiutato la key configurata:
+controlla scope progetto/agente, provider selezionato e modello.
 
 Provider disponibili: simulatore nativo, OpenAI Responses API, endpoint
 OpenAI-compatible, Anthropic Messages API, Google Gemini e Ollama locale. Il
@@ -25,6 +30,9 @@ risultato del task e mostrate come link cliccabili nella chat dell'agente.
 La chat rapida e persistente per agente: ogni messaggio viene salvato come task con
 canale `chat`, mentre risposte, errori e fonti sono ricostruiti da SQLite quando il
 popup viene riaperto. Le conversazioni di agenti diversi restano separate.
+Se l'agente usa il provider `simulated`, la chat non chiama Codex o API esterne:
+mostra un fallback deterministico che spiega di configurare un provider reale
+quando vuoi risposte generative.
 
 ## Run
 
@@ -40,8 +48,19 @@ Su Windows fai doppio clic su:
 .\run.bat
 ```
 
-Al primo avvio, il launcher crea `.venv`, installa `requirements.txt`, apre il
-browser e avvia il runtime agenti locale con API REST e WebSocket.
+Al primo avvio su macOS, il launcher esegue `scripts/setup_macos.sh`: prepara
+`.venv`, inizializza The Main Scraper, crea `projects/main-scraper/.venv`,
+installa Botasaurus, aggiorna `config/projects.local.json`, apre il browser e
+avvia il runtime agenti locale con API REST e WebSocket.
+
+Opzioni utili da terminale:
+
+```bash
+./run.command --no-browser
+./run.command --skip-install
+./run.command --skip-setup
+AGENT_LAB_PORT=8010 ./run.command --no-browser
+```
 
 Oppure avvia manualmente il runtime dalla root del progetto:
 
@@ -58,6 +77,37 @@ Poi apri:
 http://localhost:8000
 ```
 
+## Setup macOS completo
+
+Per preparare runtime, submodule The Main Scraper, venv dedicato dello scraper e
+`config/projects.local.json` in un solo passaggio:
+
+```bash
+scripts/setup_macos.sh
+```
+
+Prerequisiti macOS consigliati:
+
+```bash
+brew install python@3.12 python-tk@3.12
+```
+
+Lo script crea:
+
+- `.venv` per il runtime principale;
+- `projects/main-scraper/.venv` per Botasaurus e le dipendenze dello scraper;
+- `config/projects.local.json` con `main-scraper.pythonExecutable` puntato al
+  Python dello scraper.
+
+Se vuoi solo creare venv/config senza installare pacchetti via rete:
+
+```bash
+scripts/setup_macos.sh --skip-install
+```
+
+Le dipendenze dello scraper usate dal setup sono in
+`integrations/main-scraper/requirements.txt`.
+
 ## File principali
 
 - `index.html`: UI dell'app.
@@ -70,6 +120,8 @@ http://localhost:8000
 - `config/projects.json`: registro dei progetti esterni disponibili agli agenti.
 - `integrations/`: manifest, permessi e adapter dei progetti esterni.
 - `projects/main-scraper`: The Main Scraper, mantenuto come Git submodule.
+- `agent_runtime/browser_control.py`: manager ibrido per sessioni browser live.
+- `integrations/main-scraper/botasaurus_bridge.py`: bridge JSONL che espone Botasaurus agli agenti.
 - `data/runtime.db`: stato persistente SQLite creato al primo avvio.
 - `AGENT_PROTOCOL.md`: note architetturali ed estensione.
 
@@ -88,7 +140,8 @@ The Main Scraper espone solo le azioni dichiarate in
 contatti richiedono approvazione esplicita.
 
 I percorsi dipendenti dalla macchina, incluso l'interprete Python dello scraper,
-sono configurati in `config/projects.local.json`, escluso da Git.
+sono configurati in `config/projects.local.json`, escluso da Git. Usa
+`config/projects.local.example.json` come template.
 
 Dal gioco clicca un agente, premi `Dai un lavoro`, poi `Progetti`; scegli l'azione
 dello scraper e compilane i parametri.
@@ -106,6 +159,41 @@ anche da `GET /api/diagnostics/logs`; i valori dei parametri non vengono loggati
 
 L'azione predefinita `Apri interfaccia scraper` avvia la GUI desktop come processo
 separato. `Controlla configurazione` esegue invece soltanto il comando CLI `status`.
+
+## Browser ibrido: scraper batch + controllo live
+
+Il sistema ora distingue due superfici:
+
+- **Project Gateway batch**: lancia azioni complete di The Main Scraper, per esempio
+  `google_maps.search`, `vinted.search` o `subito.contact.prepare`, e legge il JSON
+  finale dalla CLI.
+- **Browser Control live**: apre una sessione browser persistente e permette agli
+  agenti con toolset `browser` di eseguire step granulari come `browser_goto`,
+  `browser_click_text`, `browser_type`, `browser_extract`, `browser_snapshot` e
+  `browser_close`.
+
+Il backend reale e `botasaurus`: il runtime avvia
+`integrations/main-scraper/botasaurus_bridge.py` come processo JSONL dentro
+`projects/main-scraper`, riusando la stessa logica profili di The Main Scraper
+(`sessione_persistente`, `chrome_normale`, `profilo_personalizzato`, `isolated`).
+
+Per test automatici esiste anche il backend `mock`, che implementa lo stesso
+contratto senza aprire Chrome. Questo evita test fragili e permette di validare
+end-to-end il loop modello -> tool -> sessione browser.
+
+Endpoint runtime:
+
+- `GET /api/browser/sessions`: sessioni live.
+- `POST /api/browser/sessions`: apre una sessione.
+- `POST /api/browser/sessions/{id}/commands`: invia un comando JSONL.
+- `DELETE /api/browser/sessions/{id}`: chiude una sessione.
+
+Per usare Botasaurus davvero su macOS serve un ambiente Python del submodule con
+`botasaurus` installato e Chrome disponibile. Se l'interprete non e configurato in
+`config/projects.local.json`, il runtime prova i venv del progetto e poi
+l'interprete del runtime corrente. Copia `config/projects.local.example.json` in
+`config/projects.local.json` e aggiorna `pythonExecutable` con il venv dello
+scraper quando vuoi avviare sessioni Botasaurus reali.
 
 ## Controlli
 

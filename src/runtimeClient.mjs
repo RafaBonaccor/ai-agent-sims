@@ -56,7 +56,7 @@ export class RuntimeClient {
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      const detail = body.detail ?? response.statusText ?? "Request failed";
+      const detail = formatErrorDetail(body.detail ?? response.statusText ?? "Request failed");
       throw new Error(`${options.method ?? "GET"} ${path}: ${response.status} ${detail}`);
     }
     return response.json();
@@ -176,4 +176,29 @@ export class RuntimeClient {
       keepalive: true,
     }).catch(() => undefined);
   }
+}
+
+function formatErrorDetail(detail) {
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    return detail.map(formatValidationItem).join("; ");
+  }
+  if (detail && typeof detail === "object") {
+    return detail.message ?? detail.msg ?? JSON.stringify(detail);
+  }
+  return String(detail ?? "Request failed");
+}
+
+function formatValidationItem(item) {
+  if (typeof item === "string") {
+    return item;
+  }
+  if (!item || typeof item !== "object") {
+    return String(item);
+  }
+  const location = Array.isArray(item.loc) ? item.loc.join(".") : "";
+  const message = item.msg ?? item.message ?? JSON.stringify(item);
+  return location ? `${location}: ${message}` : String(message);
 }

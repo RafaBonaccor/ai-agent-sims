@@ -253,7 +253,7 @@ class RuntimeStore:
                         id=f"{task.id}-assistant",
                         task_id=task.id,
                         role="assistant",
-                        content=str(task.result.get("summary", "Task completato.")),
+                        content=self._chat_assistant_content(task),
                         sources=task.result.get("sources", []),
                         created_at=task.updated_at,
                     )
@@ -264,7 +264,7 @@ class RuntimeStore:
                         id=f"{task.id}-error",
                         task_id=task.id,
                         role="system",
-                        content=task.error,
+                        content=self._chat_error_content(task),
                         created_at=task.updated_at,
                     )
                 )
@@ -273,6 +273,36 @@ class RuntimeStore:
                 break
         # Select the newest turns first, then expose them chronologically.
         return [message for turn in reversed(turns) for message in turn]
+
+    @staticmethod
+    def _chat_assistant_content(task: TaskRecord) -> str:
+        if not task.result:
+            return "Task completato."
+        summary = str(task.result.get("summary", "Task completato."))
+        if (
+            task.channel == "chat"
+            and task.result.get("provider") == "simulated"
+            and task.result.get("details") == "Executed by the native deterministic provider."
+            and task.result.get("model") == "native-simulator"
+        ):
+            user_text = " ".join((task.description or task.title or "").split())
+            if len(user_text) > 500:
+                user_text = user_text[:499].rstrip() + "…"
+            return (
+                "Risposta storica simulata locale: questo messaggio non è stato generato da Codex "
+                f"o da una API LLM. Il runtime aveva ricevuto: “{user_text}”."
+            )
+        return summary
+
+    @staticmethod
+    def _chat_error_content(task: TaskRecord) -> str:
+        error = str(task.error or "Task fallito.")
+        if error.startswith("HTTP Error 401") or error.startswith("HTTP Error 403"):
+            return (
+                "Provider authentication failed. Controlla la API key salvata per questo agente/progetto "
+                "e verifica che provider e scope della key siano corretti."
+            )
+        return error
 
     def close(self) -> None:
         with self.lock:

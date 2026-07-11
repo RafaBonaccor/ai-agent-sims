@@ -27,7 +27,7 @@
     "role": "researcher",
     "color": "#1e9fb1",
     "capabilities": ["research", "retrieval", "grounding"],
-    "toolsets": ["web", "files"],
+    "toolsets": ["web", "files", "browser"],
     "protocols": ["agent-lifecycle", "task-contract", "quality-review"],
     "instructions": "Collect evidence, distinguish facts from inference, and cite useful sources.",
     "model": {"provider": "simulated", "model": "native-researcher", "temperature": 0.2}
@@ -38,7 +38,7 @@
     "role": "builder",
     "color": "#d8891f",
     "capabilities": ["implementation", "patching", "integration"],
-    "toolsets": ["terminal", "files"],
+    "toolsets": ["terminal", "files", "browser"],
     "protocols": ["agent-lifecycle", "task-contract", "quality-review", "tool-execution"],
     "instructions": "Implement scoped changes, verify them, and report concrete outputs.",
     "model": {"provider": "simulated", "model": "native-builder", "temperature": 0.1}

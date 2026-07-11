@@ -79,6 +79,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["user", "assistant"], [message.role for message in history])
         self.assertEqual(task.id, history[0].task_id)
         self.assertEqual("Explain the result", history[0].content)
+        self.assertIn("modalità simulata locale", history[1].content)
+        self.assertIn("Explain the result", history[1].content)
         self.assertEqual([], self.runtime.get_agent_chat("supervisor"))
 
     async def test_chat_prompts_include_persistent_wiki_and_previous_messages(self):
@@ -93,7 +95,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(*tuple(self.runtime.running_jobs))
 
         wiki = self.runtime.get_wiki("analyst")
-        self.assertIn("Analyst completed Remember the project name", wiki.content)
+        self.assertIn("modalità simulata locale", wiki.content)
+        self.assertIn("Remember the project name", wiki.content)
 
         analyst = self.runtime.agents["analyst"]
         prompt = self.runtime.executor._build_system_prompt(
@@ -103,7 +106,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("Persistent conversation wiki", prompt)
         self.assertIn("Remember the project name", prompt)
-        self.assertIn("Assistant: Analyst completed Remember the project name", prompt)
+        self.assertIn("Assistant: Analyst è in modalità simulata locale", prompt)
 
     async def test_chat_history_limit_keeps_latest_turns_in_order(self):
         for index in range(14):
@@ -122,6 +125,41 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             ["message 11", "reply 11", "message 12", "reply 12", "message 13", "reply 13"],
             [message.content for message in history],
         )
+
+    async def test_legacy_simulated_chat_history_is_labeled(self):
+        self.runtime.store.save_task(
+            TaskRecord(
+                title="ciao come va",
+                description="ciao come va",
+                requested_agent_id="analyst",
+                channel="chat",
+                result={
+                    "summary": "Analyst completed ciao come va",
+                    "details": "Executed by the native deterministic provider.",
+                    "provider": "simulated",
+                    "model": "native-simulator",
+                },
+            )
+        )
+
+        history = self.runtime.store.load_agent_chat_messages("analyst")
+        self.assertIn("Risposta storica simulata locale", history[1].content)
+        self.assertNotIn("Analyst completed", history[1].content)
+
+    async def test_legacy_provider_auth_error_is_labeled(self):
+        self.runtime.store.save_task(
+            TaskRecord(
+                title="ciao come va",
+                description="ciao come va",
+                requested_agent_id="analyst",
+                channel="chat",
+                error="HTTP Error 401: Unauthorized",
+            )
+        )
+
+        history = self.runtime.store.load_agent_chat_messages("analyst")
+        self.assertIn("Provider authentication failed", history[1].content)
+        self.assertNotIn("HTTP Error 401", history[1].content)
 
     async def test_wiki_bootstrap_preserves_existing_chat(self):
         task = TaskRecord(

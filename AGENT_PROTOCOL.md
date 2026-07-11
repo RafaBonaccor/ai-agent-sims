@@ -14,6 +14,7 @@ Questa applicazione combina un runtime agenti nativo in Python con una visualizz
 - `agent_runtime/models.py`: contratti validati per agenti, task, messaggi ed eventi.
 - `agent_runtime/engine.py`: state machine, routing e ciclo di esecuzione.
 - `agent_runtime/execution.py`: provider model, tool registry e tool loop.
+- `agent_runtime/browser_control.py`: session manager ibrido per browser live.
 - `agent_runtime/protocols.py`: tipi messaggio e transizioni ammesse.
 - `agent_runtime/storage.py`: persistenza SQLite di agenti, task ed event log.
 - `agent_runtime/server.py`: API FastAPI, WebSocket e hosting del frontend.
@@ -49,6 +50,10 @@ Le transizioni non dichiarate vengono rifiutate. Il runtime attuale usa un execu
 - `GET|POST /api/tasks`: elenco e avvio task.
 - `GET /api/events`: event log persistente.
 - `GET /api/tools`: catalogo tool registrati e livello di rischio.
+- `GET /api/browser/sessions`: elenco sessioni browser live.
+- `POST /api/browser/sessions`: apertura sessione via backend `botasaurus` o `mock`.
+- `POST /api/browser/sessions/{id}/commands`: comando live (`goto`, `extract`, `type`, ecc.).
+- `DELETE /api/browser/sessions/{id}`: chiusura sessione.
 - `GET /api/protocols`: protocolli e message type ammessi.
 - `WS /ws/events`: snapshot iniziale ed eventi live.
 
@@ -59,8 +64,10 @@ Ogni agente sceglie un provider indipendente:
 - `simulated`: executor deterministico locale usato per sviluppo e test.
 - `openai-compatible`: endpoint Chat Completions configurabile per agente.
 
-La chiave API non viene salvata nel database: la configurazione memorizza solo il
-nome della variabile d'ambiente, per esempio `MODEL_API_KEY`.
+La chiave API non viene salvata negli agent document o nel database runtime. La
+configurazione puo usare una variabile d'ambiente, per esempio `MODEL_API_KEY`,
+oppure lo secret store locale: macOS Keychain su macOS, Windows DPAPI su Windows.
+`data/secrets.json` contiene solo riferimenti/metadati dello store.
 
 Il tool registry nativo espone inizialmente:
 
@@ -68,11 +75,43 @@ Il tool registry nativo espone inizialmente:
 - `task_context` (`tasks`): lettura task assegnato.
 - `memory_read` (`memory`): lettura memoria privata agente.
 - `memory_append` (`memory`): aggiunta di un fatto durevole.
+- `browser_open` (`browser`): apre una sessione live tramite Botasaurus o mock test.
+- `browser_current_url` (`browser`): legge l'URL corrente.
+- `browser_goto` (`browser`): naviga a un URL.
+- `browser_click_text` / `browser_click_selector` (`browser`): interagiscono con la pagina.
+- `browser_type` (`browser`): compila un campo.
+- `browser_extract` / `browser_snapshot` (`browser`): estraggono contesto dalla pagina.
+- `browser_close` (`browser`): chiude la sessione.
 
 Il provider vede solo tool appartenenti ai toolset abilitati per l'agente. Prima
 dell'esecuzione il runtime controlla anche il risk level contro la approval policy.
-Toolset come `web`, `files` e `terminal` sono gia configurabili ma resteranno non
-eseguibili finche i rispettivi adapter e sandbox non saranno implementati.
+Toolset come `web`, `files` e `terminal` sono configurabili separatamente dai
+tool browser. Il browser live non sostituisce il Project Gateway: per sorgenti
+note conviene usare le azioni batch dello scraper, mentre il browser live serve
+per login, ispezione, recupero contesto e fallback interattivo.
+
+## Browser Control
+
+Il controllo browser e ibrido:
+
+```text
+Agent tool loop
+  -> ToolRegistry (`browser_*`)
+    -> BrowserControl
+      -> backend mock per test
+      -> backend botasaurus via integrations/main-scraper/botasaurus_bridge.py
+```
+
+Il bridge Botasaurus parla JSONL su stdin/stdout. Il runtime mantiene la sessione
+viva finche l'agente non chiama `browser_close` o finche il runtime non termina.
+Questa scelta mantiene indipendente The Main Scraper: il batch scraper resta nel
+submodule, mentre il contratto live vive nell'integrazione.
+
+Rischi:
+
+- `browser-read`: navigazione/lettura pagina.
+- `browser-write`: click, typing e close; puo essere inserito nella approval
+  policy di un agente se vuoi bloccare azioni interattive prima di approvarle.
 
 ## Configurazione oggetti
 

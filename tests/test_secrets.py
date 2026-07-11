@@ -1,5 +1,5 @@
-import tempfile
 import unittest
+import tempfile
 from pathlib import Path
 
 from agent_runtime.execution import ModelExecutor
@@ -8,12 +8,11 @@ from agent_runtime.secrets import SecretStore
 from agent_runtime.storage import RuntimeStore
 
 
-@unittest.skipUnless(__import__("os").name == "nt", "DPAPI is Windows-specific")
 class SecretStoreTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
-        self.secrets = SecretStore(self.root / "secrets.json")
+        self.secrets = SecretStore(self.root / "secrets.json", backend="local-test")
         self.database = RuntimeStore(self.root / "runtime.db")
 
     def tearDown(self):
@@ -29,6 +28,7 @@ class SecretStoreTests(unittest.TestCase):
         stored = (self.root / "secrets.json").read_text(encoding="utf-8")
         self.assertNotIn("project-secret-key", stored)
         self.assertNotIn("agent-secret-key", stored)
+        self.assertIn("local-test", stored)
 
     def test_executor_resolves_selected_key_scope(self):
         self.secrets.set_project("project-secret-key")

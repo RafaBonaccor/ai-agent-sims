@@ -1,0 +1,9 @@
+{
+  "id": "local-model",
+  "label": "Local model server",
+  "api_mode": "chat_completions",
+  "base_url": "http://127.0.0.1:11434/v1",
+  "env_vars": [],
+  "models": ["local-model"],
+  "auth": "none"
+}

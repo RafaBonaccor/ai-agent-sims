@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "main-scraper": {
+      "pythonExecutable": "/absolute/path/to/ai-agent-sims/projects/main-scraper/.venv/bin/python"
+    }
+  }
+}

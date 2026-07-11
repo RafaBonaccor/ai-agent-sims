@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
+from .browser_control import BrowserControl
 from .execution import ModelExecutor
 from .models import (
     AgentDefinition,
@@ -40,6 +41,7 @@ class AgentRuntime:
         seed_path: Optional[Path] = None,
         simulation_delay: float = 1.0,
         secrets: Optional[SecretStore] = None,
+        browser_control: Optional[BrowserControl] = None,
     ):
         self.store = RuntimeStore(database_path)
         self.seed_path = seed_path
@@ -48,7 +50,9 @@ class AgentRuntime:
         self.tasks: dict[str, TaskRecord] = {task.id: task for task in self.store.load_tasks()}
         self.subscribers: set[asyncio.Queue[RuntimeEvent]] = set()
         self.running_jobs: set[asyncio.Task[None]] = set()
-        self.executor = ModelExecutor(self.store, secrets)
+        project_root = (seed_path.parent.parent if seed_path else Path(__file__).resolve().parent.parent).resolve()
+        self.browser_control = browser_control or BrowserControl(project_root)
+        self.executor = ModelExecutor(self.store, secrets, browser_control=self.browser_control)
         if not self.agents:
             self._seed_agents()
         for agent_id in self.agents:
@@ -409,4 +413,5 @@ class AgentRuntime:
             job.cancel()
         if self.running_jobs:
             await asyncio.gather(*self.running_jobs, return_exceptions=True)
+        await self.browser_control.shutdown()
         self.store.close()

@@ -7,10 +7,12 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from .browser_control import BrowserControl, BrowserControlError
 from .models import AgentChatMessage, AgentSnapshot, MemoryRecord, RuntimeEvent, TaskRecord
 from .storage import RuntimeStore
 from .secrets import SecretStore
@@ -93,10 +95,156 @@ class ToolRegistry:
                 "additionalProperties": False,
             },
         ),
+        "browser_open": ToolDefinition(
+            name="browser_open",
+            description=(
+                "Open a live browser session through the hybrid browser bridge. "
+                "Use backend='botasaurus' for The Main Scraper or backend='mock' only in tests."
+            ),
+            toolset="browser",
+            risk="browser-read",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string", "default": "main-scraper"},
+                    "backend": {"type": "string", "enum": ["botasaurus", "mock"], "default": "botasaurus"},
+                    "url": {"type": "string", "maxLength": 2000},
+                    "browser_mode": {
+                        "type": "string",
+                        "enum": ["sessione_persistente", "chrome_normale", "profilo_personalizzato", "isolated"],
+                        "default": "sessione_persistente",
+                    },
+                    "browser_user_data_dir": {"type": "string", "maxLength": 1000},
+                    "browser_profile_directory": {"type": "string", "default": "Default", "maxLength": 120},
+                    "refresh_browser_profile": {"type": "boolean", "default": False},
+                    "page_text": {"type": "string", "maxLength": 4000},
+                    "title": {"type": "string", "maxLength": 200},
+                },
+                "additionalProperties": False,
+            },
+        ),
+        "browser_current_url": ToolDefinition(
+            name="browser_current_url",
+            description="Return the current URL of a live browser session.",
+            toolset="browser",
+            risk="browser-read",
+            parameters={
+                "type": "object",
+                "properties": {"session_id": {"type": "string"}},
+                "required": ["session_id"],
+                "additionalProperties": False,
+            },
+        ),
+        "browser_goto": ToolDefinition(
+            name="browser_goto",
+            description="Navigate a live browser session to a URL.",
+            toolset="browser",
+            risk="browser-read",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "url": {"type": "string", "maxLength": 2000},
+                    "timeout": {"type": "number", "default": 60},
+                },
+                "required": ["session_id", "url"],
+                "additionalProperties": False,
+            },
+        ),
+        "browser_click_text": ToolDefinition(
+            name="browser_click_text",
+            description="Click the first visible button/control containing text in a live browser session.",
+            toolset="browser",
+            risk="browser-write",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "text": {"type": "string", "maxLength": 300},
+                    "contains": {"type": "boolean", "default": True},
+                },
+                "required": ["session_id", "text"],
+                "additionalProperties": False,
+            },
+        ),
+        "browser_click_selector": ToolDefinition(
+            name="browser_click_selector",
+            description="Click a CSS selector in a live browser session.",
+            toolset="browser",
+            risk="browser-write",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "selector": {"type": "string", "maxLength": 500},
+                },
+                "required": ["session_id", "selector"],
+                "additionalProperties": False,
+            },
+        ),
+        "browser_type": ToolDefinition(
+            name="browser_type",
+            description="Type text into a CSS selector in a live browser session.",
+            toolset="browser",
+            risk="browser-write",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "selector": {"type": "string", "maxLength": 500},
+                    "value": {"type": "string", "maxLength": 4000},
+                    "clear": {"type": "boolean", "default": True},
+                },
+                "required": ["session_id", "selector", "value"],
+                "additionalProperties": False,
+            },
+        ),
+        "browser_extract": ToolDefinition(
+            name="browser_extract",
+            description="Extract text, HTML, or an attribute from a CSS selector in a live browser session.",
+            toolset="browser",
+            risk="browser-read",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "selector": {"type": "string", "default": "body", "maxLength": 500},
+                    "mode": {"type": "string", "default": "text", "maxLength": 80},
+                    "all": {"type": "boolean", "default": False},
+                },
+                "required": ["session_id"],
+                "additionalProperties": False,
+            },
+        ),
+        "browser_snapshot": ToolDefinition(
+            name="browser_snapshot",
+            description="Return a compact page snapshot from a live browser session.",
+            toolset="browser",
+            risk="browser-read",
+            parameters={
+                "type": "object",
+                "properties": {"session_id": {"type": "string"}},
+                "required": ["session_id"],
+                "additionalProperties": False,
+            },
+        ),
+        "browser_close": ToolDefinition(
+            name="browser_close",
+            description="Close a live browser session.",
+            toolset="browser",
+            risk="browser-write",
+            parameters={
+                "type": "object",
+                "properties": {"session_id": {"type": "string"}},
+                "required": ["session_id"],
+                "additionalProperties": False,
+            },
+        ),
     }
 
-    def __init__(self, store: RuntimeStore):
+    def __init__(self, store: RuntimeStore, browser_control: Optional[BrowserControl] = None):
         self.store = store
+        self.browser_control = browser_control
 
     def available(self, agent: AgentSnapshot) -> list[ToolDefinition]:
         enabled = set(agent.toolsets) | {"runtime"}
@@ -134,14 +282,57 @@ class ToolRegistry:
             wiki.content = (wiki.content.rstrip() + "\n" + addition).strip()[-8_000:]
             self.store.save_wiki(wiki)
             return {"saved": True, "characters": len(wiki.content)}
+        if name.startswith("browser_"):
+            return await self._execute_browser_tool(name, arguments)
         raise ValueError(f"Tool has no executor: {name}")
+
+    async def _execute_browser_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self.browser_control is None:
+            raise BrowserControlError("Browser control is not configured")
+        if name == "browser_open":
+            return await self.browser_control.open_session(
+                project_id=str(arguments.get("project_id", "") or ""),
+                backend=str(arguments.get("backend", "") or ""),
+                url=str(arguments.get("url", "") or ""),
+                browser_mode=str(arguments.get("browser_mode", "sessione_persistente") or "sessione_persistente"),
+                browser_user_data_dir=str(arguments.get("browser_user_data_dir", "") or ""),
+                browser_profile_directory=str(arguments.get("browser_profile_directory", "Default") or "Default"),
+                refresh_browser_profile=bool(arguments.get("refresh_browser_profile", False)),
+                page_text=str(arguments.get("page_text", "") or ""),
+                title=str(arguments.get("title", "") or ""),
+            )
+
+        session_id = str(arguments.get("session_id", "") or "").strip()
+        if not session_id:
+            raise ValueError(f"{name} requires session_id")
+        command_map = {
+            "browser_current_url": "current_url",
+            "browser_goto": "goto",
+            "browser_click_text": "click_text",
+            "browser_click_selector": "click_selector",
+            "browser_type": "type",
+            "browser_extract": "extract",
+            "browser_snapshot": "snapshot",
+        }
+        if name == "browser_close":
+            return await self.browser_control.close_session(session_id)
+        command = command_map.get(name)
+        if not command:
+            raise ValueError(f"Unsupported browser tool: {name}")
+        payload = {key: value for key, value in arguments.items() if key != "session_id"}
+        return await self.browser_control.command(session_id, command, payload)
 
 
 class ModelExecutor:
-    def __init__(self, store: RuntimeStore, secrets: Optional[SecretStore] = None):
+    def __init__(
+        self,
+        store: RuntimeStore,
+        secrets: Optional[SecretStore] = None,
+        browser_control: Optional[BrowserControl] = None,
+    ):
         self.store = store
         self.secrets = secrets
-        self.tools = ToolRegistry(store)
+        self.tools = ToolRegistry(store, browser_control)
 
     async def run(self, agent: AgentSnapshot, task: TaskRecord, emit: EventSink) -> dict[str, Any]:
         LOGGER.info(
@@ -162,13 +353,7 @@ class ModelExecutor:
             )
         )
         if agent.model.provider == "simulated":
-            result = {
-                "summary": f"{agent.name} completed {task.title}",
-                "details": "Executed by the native deterministic provider.",
-                "provider": "simulated",
-                "model": agent.model.model,
-                "tool_calls": 0,
-            }
+            result = self._run_simulated(agent, task)
         elif agent.model.provider == "openai-compatible":
             result = await self._run_openai_compatible(agent, task, emit)
         elif agent.model.provider in {"openai", "anthropic", "gemini", "ollama"}:
@@ -195,6 +380,32 @@ class ModelExecutor:
             result["model"],
         )
         return result
+
+    def _run_simulated(self, agent: AgentSnapshot, task: TaskRecord) -> dict[str, Any]:
+        if task.channel == "chat":
+            user_text = self._task_message_text(task)
+            summary = (
+                f"{agent.name} è in modalità simulata locale, quindi non sta chiamando Codex "
+                f"né un'API LLM esterna. Ho ricevuto: “{self._truncate(user_text, 500)}”. "
+                "Per avere una risposta generativa reale configura il provider dell'agente "
+                "su OpenAI, OpenAI-compatible, Anthropic, Gemini oppure Ollama e salva la relativa API key."
+            )
+            return {
+                "summary": summary,
+                "details": "Chat fallback from the native deterministic provider.",
+                "provider": "simulated",
+                "model": agent.model.model,
+                "tool_calls": 0,
+                "simulated": True,
+            }
+        return {
+            "summary": f"{agent.name} completed {task.title}",
+            "details": "Executed by the native deterministic provider.",
+            "provider": "simulated",
+            "model": agent.model.model,
+            "tool_calls": 0,
+            "simulated": True,
+        }
 
     def _update_chat_wiki(self, agent: AgentSnapshot, task: TaskRecord, result: dict[str, Any]) -> None:
         user_text = self._task_message_text(task)
@@ -523,5 +734,43 @@ class ModelExecutor:
         if extra_headers:
             headers.update(extra_headers)
         request = Request(endpoint, data=json.dumps(payload).encode("utf-8"), headers=headers)
-        with urlopen(request, timeout=90) as response:
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            with urlopen(request, timeout=90) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as error:
+            body = error.read().decode("utf-8", errors="replace")
+            detail = ModelExecutor._provider_error_detail(body)
+            reason = str(error.reason or error.msg or "").strip() or "HTTP error"
+            if error.code in {401, 403}:
+                message = (
+                    f"Provider authentication failed (HTTP {error.code} {reason}). "
+                    "Check the API key saved for this agent/project and make sure the selected provider matches that key."
+                )
+            else:
+                message = f"Provider request failed (HTTP {error.code} {reason})."
+            if detail:
+                message = f"{message} Provider response: {detail}"
+            raise RuntimeError(message) from error
+        except URLError as error:
+            reason = getattr(error, "reason", error)
+            raise RuntimeError(f"Provider request failed: {reason}") from error
+
+    @staticmethod
+    def _provider_error_detail(body: str) -> str:
+        text = str(body or "").strip()
+        if not text:
+            return ""
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return ModelExecutor._truncate(" ".join(text.split()), 800)
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if isinstance(error, dict):
+                message = error.get("message") or error.get("code") or error.get("type")
+                if message:
+                    return ModelExecutor._truncate(" ".join(str(message).split()), 800)
+            detail = payload.get("detail") or payload.get("message")
+            if detail:
+                return ModelExecutor._truncate(" ".join(str(detail).split()), 800)
+        return ModelExecutor._truncate(" ".join(text.split()), 800)
