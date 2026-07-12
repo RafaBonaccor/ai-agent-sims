@@ -18,6 +18,7 @@ Questa applicazione combina un runtime agenti nativo in Python con una visualizz
 - `agent_runtime/protocols.py`: tipi messaggio e transizioni ammesse.
 - `agent_runtime/storage.py`: persistenza SQLite di agenti, task ed event log.
 - `agent_runtime/server.py`: API FastAPI, WebSocket e hosting del frontend.
+- `agent_runtime/discord_gateway.py`: bot Discord opzionale per creare task chat verso gli agenti.
 - `config/agents.json`: definizioni degli agenti iniziali.
 
 ## Runtime nativo
@@ -27,6 +28,8 @@ Il flusso principale e:
 ```text
 Browser 3D -> REST (comandi) -> AgentRuntime
 Browser 3D <- WebSocket (eventi) <- AgentRuntime
+Discord -> slash command -> DiscordGateway -> AgentRuntime
+Discord <- risposta canale <- DiscordGateway <- RuntimeEvent
 AgentRuntime -> RuntimeStore -> SQLite
 ```
 
@@ -56,6 +59,24 @@ Le transizioni non dichiarate vengono rifiutate. Il runtime attuale usa un execu
 - `DELETE /api/browser/sessions/{id}`: chiusura sessione.
 - `GET /api/protocols`: protocolli e message type ammessi.
 - `WS /ws/events`: snapshot iniziale ed eventi live.
+
+## Gateway Discord
+
+`DiscordGateway` e un adapter opzionale avviato dal lifespan FastAPI solo quando
+`AGENT_LAB_DISCORD_TOKEN` e presente. Il gateway non introduce un secondo runtime:
+crea normali `TaskCreate(channel="chat")` con `requested_agent_id` impostato
+sull'agente scelto e resta in ascolto degli stessi `RuntimeEvent` usati dal
+frontend.
+
+Comandi supportati:
+
+- `/agents`: lista agenti runtime.
+- `/ask agent:<id> prompt:<testo>`: crea un task chat per l'agente.
+- `/use agent:<id>`: imposta un default in memoria per quel canale Discord.
+
+Il supporto ai messaggi prefissati (`!agents`, `!use`, `!ask`) e disabilitato di
+default per evitare di richiedere il Message Content Intent. Si abilita con
+`AGENT_LAB_DISCORD_MESSAGE_CONTENT=1`.
 
 ## Provider e tool
 

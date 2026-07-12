@@ -32,6 +32,7 @@ from .protocols import PROTOCOLS
 from .project_gateway import ProjectGateway, ProjectJob, ProjectJobCreate
 from .logging_config import configure_logging
 from .secrets import SecretStore
+from .discord_gateway import DiscordGateway
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -48,7 +49,10 @@ async def lifespan(app: FastAPI):
     app.state.runtime = runtime
     app.state.secrets = secrets
     app.state.project_gateway = ProjectGateway(PROJECT_ROOT, runtime.publish, runtime.store)
+    app.state.discord_gateway = DiscordGateway(runtime)
+    await app.state.discord_gateway.start()
     yield
+    await app.state.discord_gateway.shutdown()
     await app.state.project_gateway.shutdown()
     await runtime.shutdown()
 
@@ -116,16 +120,27 @@ def secrets() -> SecretStore:
     return app.state.secrets
 
 
+def discord_gateway() -> DiscordGateway | None:
+    return getattr(app.state, "discord_gateway", None)
+
+
 @app.get("/api/health")
 async def health() -> dict[str, object]:
+    discord = discord_gateway()
     return {
         "status": "ok",
         "runtime": "native",
         "version": "0.2.0",
-        "features": {"projectGateway": True, "persistentLogs": True, "browserControl": True},
+        "features": {
+            "projectGateway": True,
+            "persistentLogs": True,
+            "browserControl": True,
+            "discordGateway": bool(discord and discord.enabled),
+        },
         "agents": len(runtime().agents),
         "activeTasks": len(runtime().running_jobs),
         "browserSessions": len(runtime().browser_control.list_sessions()),
+        "discord": discord.status() if discord else {"enabled": False, "connected": False},
     }
 
 

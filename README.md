@@ -34,6 +34,52 @@ Se l'agente usa il provider `simulated`, la chat non chiama Codex o API esterne:
 mostra un fallback deterministico che spiega di configurare un provider reale
 quando vuoi risposte generative.
 
+## Integrazione Discord
+
+Il runtime puo avviare un bot Discord opzionale per parlare con gli agenti dagli
+stessi canali Discord. Se `AGENT_LAB_DISCORD_TOKEN` non e configurato,
+l'integrazione resta spenta e il runtime continua normalmente.
+
+Installa le dipendenze aggiornate:
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Configura il bot:
+
+```bash
+export AGENT_LAB_DISCORD_TOKEN="discord-bot-token"
+export AGENT_LAB_DISCORD_ALLOWED_GUILDS="123456789012345678"
+export AGENT_LAB_DISCORD_DEFAULT_AGENT="researcher"
+./run.command --no-browser
+```
+
+Invita l'app nel server Discord con gli scope `bot` e `applications.commands`;
+assegna al bot permesso di leggere e inviare messaggi nel canale scelto.
+
+Comandi slash disponibili:
+
+- `/agents`: mostra gli agenti disponibili.
+- `/ask agent:<id> prompt:<messaggio>`: invia un messaggio chat a un agente.
+- `/use agent:<id>`: imposta l'agente predefinito del canale.
+
+Il bot pubblica la risposta nello stesso canale quando il task agentico termina.
+La risposta passa dallo stesso runtime della UI: provider, memoria, wiki,
+toolset, API key e errori sono quelli configurati sull'agente selezionato.
+
+Per usare anche messaggi testuali tipo `!agents`, `!use researcher` e
+`!ask researcher ciao`, abilita esplicitamente:
+
+```bash
+export AGENT_LAB_DISCORD_MESSAGE_CONTENT=1
+```
+
+Questo richiede il Message Content Intent nel Developer Portal Discord. Senza
+questa variabile restano attivi gli slash command, che sono il percorso
+consigliato.
+
 ## Run
 
 Su macOS fai doppio clic su:
@@ -194,6 +240,21 @@ Per usare Botasaurus davvero su macOS serve un ambiente Python del submodule con
 l'interprete del runtime corrente. Copia `config/projects.local.example.json` in
 `config/projects.local.json` e aggiorna `pythonExecutable` con il venv dello
 scraper quando vuoi avviare sessioni Botasaurus reali.
+
+Smoke test navigazione:
+
+```bash
+.venv/bin/python scripts/test_browser_navigation.py --backend mock
+.venv/bin/python scripts/test_browser_navigation.py --backend botasaurus
+.venv/bin/python scripts/test_agent_browser_tools.py --backend mock
+.venv/bin/python scripts/test_agent_browser_tools.py --backend botasaurus
+```
+
+Il backend `mock` valida il contratto runtime senza aprire Chrome. Il backend
+`botasaurus` apre una sessione reale e richiede Google Chrome installato sul Mac.
+`test_agent_browser_tools.py` passa dal loop agente -> tool registry -> browser
+control, quindi verifica il percorso che useranno gli agenti con toolset
+`browser`.
 
 ## Controlli
 
