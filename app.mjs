@@ -326,6 +326,7 @@ let nextRelationRefresh = 0;
 let lastFrameAt = 0;
 let quickChatAgentId = null;
 let quickChatFocusTimer = null;
+let quickChatDetached = false;
 let layoutMode = false;
 
 const selectableObjects = [];
@@ -1566,6 +1567,7 @@ function updateCamera() {
 function resize() {
   renderer.setSize(window.innerWidth, window.innerHeight);
   updateCamera();
+  clampOpenPopups();
 }
 
 function updateAgents(elapsed) {
@@ -1804,6 +1806,9 @@ function openQuickChat(agentId) {
   if (!agent) {
     return;
   }
+  quickChatDetached = false;
+  quickChat.classList.remove("agent-quick-chat--detached");
+  quickChat.style.transform = "";
   quickChatAgentId = agentId;
   quickChatAgent.textContent = agent.label;
   quickChatStatus.textContent = "";
@@ -1830,7 +1835,10 @@ function openQuickChat(agentId) {
 function closeQuickChat() {
   window.clearTimeout(quickChatFocusTimer);
   quickChatAgentId = null;
+  quickChatDetached = false;
   quickChat.hidden = true;
+  quickChat.classList.remove("agent-quick-chat--detached");
+  quickChat.style.transform = "";
   quickChatInput.value = "";
   quickChatHistory.replaceChildren();
   chatMessageIds.clear();
@@ -1840,6 +1848,10 @@ function closeQuickChat() {
 
 function updateQuickChatPosition() {
   if (!quickChatAgentId || quickChat.hidden) {
+    return;
+  }
+  if (quickChatDetached) {
+    quickChat.style.visibility = "visible";
     return;
   }
   const position = agentWorld.getAgentPosition(quickChatAgentId);
@@ -1855,6 +1867,122 @@ function updateQuickChatPosition() {
   const y = Math.max(minimumY, Math.min(window.innerHeight - 20, (1 - quickChatPosition.y) * 0.5 * window.innerHeight));
   quickChat.style.left = `${x}px`;
   quickChat.style.top = `${y}px`;
+}
+
+function clampPopupPosition(element, left, top) {
+  const margin = 8;
+  const width = Math.min(element.offsetWidth || 320, Math.max(120, window.innerWidth - margin * 2));
+  const height = Math.min(element.offsetHeight || 180, Math.max(120, window.innerHeight - margin * 2));
+  const maxLeft = Math.max(margin, window.innerWidth - width - margin);
+  const maxTop = Math.max(margin, window.innerHeight - height - margin);
+  return {
+    left: Math.max(margin, Math.min(maxLeft, left)),
+    top: Math.max(margin, Math.min(maxTop, top)),
+  };
+}
+
+function positionPopup(element, left, top) {
+  const next = clampPopupPosition(element, left, top);
+  element.style.position = "fixed";
+  element.style.margin = "0";
+  element.style.right = "auto";
+  element.style.bottom = "auto";
+  element.style.transform = "none";
+  element.style.left = `${next.left}px`;
+  element.style.top = `${next.top}px`;
+}
+
+function isDragBlockedTarget(target) {
+  return Boolean(target.closest("button, input, textarea, select, option, a, label, [role='button']"));
+}
+
+function makePopupDraggable(element, handle, options = {}) {
+  if (!element || !handle) {
+    return;
+  }
+  element.classList.add("draggable-popup");
+  handle.classList.add("draggable-popup__handle");
+
+  let drag = null;
+  const dragThreshold = 4;
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || isDragBlockedTarget(event.target)) {
+      return;
+    }
+    if (element.hidden || (element instanceof HTMLDialogElement && !element.open)) {
+      return;
+    }
+    event.preventDefault();
+    const rect = element.getBoundingClientRect();
+    drag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      rectLeft: rect.left,
+      rectTop: rect.top,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      active: false,
+    };
+    handle.setPointerCapture(event.pointerId);
+  });
+
+  handle.addEventListener("pointermove", (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) {
+      return;
+    }
+    if (!drag.active) {
+      const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+      if (distance < dragThreshold) {
+        return;
+      }
+      drag.active = true;
+      options.onDetach?.();
+      positionPopup(element, drag.rectLeft, drag.rectTop);
+      element.classList.add("draggable-popup--moving");
+    }
+    positionPopup(element, event.clientX - drag.offsetX, event.clientY - drag.offsetY);
+  });
+
+  const endDrag = (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) {
+      return;
+    }
+    drag = null;
+    element.classList.remove("draggable-popup--moving");
+    if (handle.hasPointerCapture(event.pointerId)) {
+      handle.releasePointerCapture(event.pointerId);
+    }
+  };
+  handle.addEventListener("pointerup", endDrag);
+  handle.addEventListener("pointercancel", endDrag);
+}
+
+function setupDraggablePopups() {
+  makePopupDraggable(quickChat, quickChat?.querySelector(".agent-quick-chat__heading"), {
+    onDetach: () => {
+      quickChatDetached = true;
+      quickChat.classList.add("agent-quick-chat--detached");
+    },
+  });
+  makePopupDraggable(layoutEditor, layoutEditor?.querySelector(".layout-editor__heading"));
+  for (const dialog of document.querySelectorAll(".agent-dialog")) {
+    makePopupDraggable(dialog, dialog.querySelector(".dialog-heading"));
+  }
+}
+
+function clampOpenPopups() {
+  const popups = [quickChat, layoutEditor, ...document.querySelectorAll(".agent-dialog")];
+  for (const popup of popups) {
+    if (!popup || popup.hidden || (popup instanceof HTMLDialogElement && !popup.open)) {
+      continue;
+    }
+    const left = Number.parseFloat(popup.style.left);
+    const top = Number.parseFloat(popup.style.top);
+    if (Number.isFinite(left) && Number.isFinite(top)) {
+      positionPopup(popup, left, top);
+    }
+  }
 }
 
 function animate(now = 0) {
@@ -3768,6 +3896,7 @@ window.addEventListener("unhandledrejection", (event) => {
   });
 });
 
+setupDraggablePopups();
 applyTheme(currentTheme, { persist: false });
 buildScene();
 resize();

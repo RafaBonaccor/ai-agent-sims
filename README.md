@@ -73,6 +73,9 @@ popup viene riaperto. Le conversazioni di agenti diversi restano separate.
 Se l'agente usa il provider `simulated`, la chat non chiama Codex o API esterne:
 mostra un fallback deterministico che spiega di configurare un provider reale
 quando vuoi risposte generative.
+I popup principali sono spostabili: trascina la barra superiore/intestazione di
+chat rapida, editor o dialog. Se trascini la chat rapida, resta nella posizione
+scelta invece di seguire automaticamente l'agente finche non la riapri.
 
 ## Integrazione Discord
 

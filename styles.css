@@ -622,6 +622,16 @@ h2 {
   line-height: 1.45;
 }
 
+.draggable-popup__handle {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.draggable-popup--moving .draggable-popup__handle {
+  cursor: grabbing;
+}
+
 .event-log span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -845,6 +855,10 @@ h2 {
   background: #09101b;
   content: "";
   transform: translate(-50%, -5px) rotate(45deg);
+}
+
+.agent-quick-chat--detached::after {
+  display: none;
 }
 
 .agent-quick-chat__history {
