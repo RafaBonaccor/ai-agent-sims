@@ -48,9 +48,12 @@ solo un rettangolo; `doorLayout` contiene celle porta/corridoio camminabili. Il
 pathfinding usa `isInsideTile`, quindi agenti e tavoli rispettano sia la forma
 delle stanze sia le porte tra stanze. La UI usa un mini editor aperto dal
 pulsante `Editor` per aggiungere/rimuovere stanze, modellare celle e piazzare
-porte. L'inspector calcola membership stanza dai tile occupati e puo spostare la
-selezione corrente nella stanza scelta. Anche il tema `dark`/`white` e locale al
-browser: aggiorna UI e palette Three.js senza cambiare dati runtime.
+porte. Le workstation possono essere create da preset, collegate a un agente e
+salvate come layout custom; quando un agente ha una workstation dedicata, il
+pathing la usa come destinazione preferita. L'inspector calcola membership
+stanza dai tile occupati e puo spostare la selezione corrente nella stanza
+scelta. Anche il tema `dark`/`white` e locale al browser: aggiorna UI e palette
+Three.js senza cambiare dati runtime.
 
 Gli stati agente sono `idle`, `receiving`, `planning`, `executing`, `waiting`,
 `verifying`, `blocked`, `failed` e `stopped`.
@@ -164,6 +167,9 @@ Il bridge Botasaurus parla JSONL su stdin/stdout. Il runtime mantiene la session
 viva finche l'agente non chiama `browser_close` o finche il runtime non termina.
 Questa scelta mantiene indipendente The Main Scraper: il batch scraper resta nel
 submodule, mentre il contratto live vive nell'integrazione.
+Nel frontend il browsing agent mostra nello stesso popup le sessioni live del
+Main Scraper e i comandi browser disponibili, cosi la supervisione manuale e la
+navigazione interattiva stanno nello stesso punto operativo.
 
 Rischi:
 

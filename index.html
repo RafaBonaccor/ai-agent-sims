@@ -63,6 +63,24 @@
         <button id="delete-room" class="button button--danger" type="button">Rimuovi stanza</button>
         <button id="reset-layout" class="button" type="button">Reset</button>
       </div>
+      <div class="layout-editor__workstation">
+        <label>
+          <span>Preset workstation</span>
+          <select id="workstation-preset"></select>
+        </label>
+        <label>
+          <span>Collega agente</span>
+          <select id="workstation-agent"></select>
+        </label>
+        <button id="add-workstation" class="button button--primary" type="button">+ Workstation</button>
+      </div>
+      <div class="layout-editor__agent-table">
+        <div class="layout-editor__agent-table-heading">
+          <span>Agenti disponibili</span>
+          <small id="workstation-agent-count">0 agenti</small>
+        </div>
+        <div id="workstation-agent-table" class="layout-editor__agent-table-body"></div>
+      </div>
       <p class="layout-editor__hint" id="layout-editor-hint">
         Seleziona una stanza dal pannello, poi scegli cosa modificare.
       </p>
@@ -163,6 +181,7 @@
               <option value="builder">Builder</option>
               <option value="reviewer">Reviewer</option>
               <option value="memory">Memory</option>
+              <option value="browser">Browser</option>
             </select>
           </label>
           <label>
@@ -180,6 +199,12 @@
         <label>
           <span>Toolsets</span>
           <input name="toolsets" placeholder="files, web" />
+        </label>
+
+        <label>
+          <span>Workstation</span>
+          <select name="workstation_preset" id="agent-workstation-preset"></select>
+          <small>Dopo la creazione ti verra chiesto di cliccare nel mondo dove piazzarla.</small>
         </label>
 
         <p class="form-error" id="agent-form-error" role="alert"></p>
@@ -298,7 +323,7 @@
       </form>
     </dialog>
 
-    <dialog class="agent-dialog" id="agent-action-dialog" aria-labelledby="agent-action-title">
+    <dialog class="agent-dialog agent-dialog--wide" id="agent-action-dialog" aria-labelledby="agent-action-title">
       <div class="agent-form">
         <div class="dialog-heading">
           <div>
@@ -324,6 +349,54 @@
             <button class="button button--primary" id="work-projects" type="button">Progetti</button>
             <button class="button" id="work-internal-task" type="button">Task interno</button>
           </div>
+        </section>
+        <section class="settings-section" id="browser-options" hidden>
+          <div class="settings-section__heading">
+            <strong>Main Scraper browser</strong>
+            <small>Sessione browser e strumenti live per l'agente browsing.</small>
+          </div>
+          <div class="form-grid">
+            <label class="form-grid__wide">
+              <span>Sessione</span>
+              <select id="browser-session"></select>
+            </label>
+            <label class="form-grid__wide">
+              <span>URL</span>
+              <input id="browser-url" placeholder="https://example.com" />
+            </label>
+            <label><span>Selector</span><input id="browser-selector" placeholder="#app" /></label>
+            <label><span>Text</span><input id="browser-text" placeholder="Login" /></label>
+            <label><span>Value</span><input id="browser-value" placeholder="hello" /></label>
+            <label>
+              <span>Browser mode</span>
+              <select id="browser-mode">
+                <option value="sessione_persistente">Sessione persistente</option>
+                <option value="chrome_normale">Chrome normale</option>
+                <option value="profilo_personalizzato">Profilo personalizzato</option>
+                <option value="isolated">Isolato</option>
+              </select>
+            </label>
+            <label>
+              <span>Backend</span>
+              <select id="browser-backend">
+                <option value="botasaurus">Botasaurus</option>
+                <option value="mock">Mock</option>
+              </select>
+            </label>
+          </div>
+          <div class="work-source-grid work-source-grid--browser">
+            <button class="button button--primary" id="browser-refresh-sessions" type="button">Aggiorna</button>
+            <button class="button button--primary" id="browser-open-session" type="button">Apri sessione</button>
+            <button class="button" id="browser-current-url" type="button">URL attuale</button>
+            <button class="button" id="browser-snapshot" type="button">Snapshot</button>
+            <button class="button" id="browser-goto" type="button">Vai a URL</button>
+            <button class="button" id="browser-click-text" type="button">Click text</button>
+            <button class="button" id="browser-click-selector" type="button">Click selector</button>
+            <button class="button" id="browser-type" type="button">Type</button>
+            <button class="button" id="browser-extract" type="button">Extract</button>
+            <button class="button button--danger" id="browser-close" type="button">Chiudi sessione</button>
+          </div>
+          <small id="browser-status"></small>
         </section>
       </div>
     </dialog>

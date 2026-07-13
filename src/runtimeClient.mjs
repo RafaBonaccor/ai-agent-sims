@@ -105,6 +105,30 @@ export class RuntimeClient {
     });
   }
 
+  listBrowserSessions() {
+    return this.request("/api/browser/sessions");
+  }
+
+  createBrowserSession(session) {
+    return this.request("/api/browser/sessions", {
+      method: "POST",
+      body: JSON.stringify(session),
+    });
+  }
+
+  runBrowserCommand(sessionId, command, parameters = {}) {
+    return this.request(`/api/browser/sessions/${encodeURIComponent(sessionId)}/commands`, {
+      method: "POST",
+      body: JSON.stringify({ command, parameters }),
+    });
+  }
+
+  closeBrowserSession(sessionId) {
+    return this.request(`/api/browser/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    });
+  }
+
   getAgentChat(agentId) {
     return this.request(`/api/agents/${encodeURIComponent(agentId)}/chat`);
   }

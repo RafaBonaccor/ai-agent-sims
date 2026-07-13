@@ -615,6 +615,116 @@ h2 {
   width: 100%;
 }
 
+.layout-editor__workstation {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.layout-editor__workstation label {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+
+.layout-editor__workstation select {
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--button-bg);
+  color: var(--button-ink);
+  padding: 0 9px;
+  font: 0.74rem Inter, "Segoe UI", sans-serif;
+}
+
+.layout-editor__workstation .button {
+  grid-column: 1 / -1;
+}
+
+.layout-editor__agent-table {
+  margin-top: 10px;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.layout-editor__agent-table-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.layout-editor__agent-table-body {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.layout-editor__agent-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card-bg);
+  color: var(--ink);
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.layout-editor__agent-row--active {
+  border-color: rgba(94, 231, 242, 0.7);
+  box-shadow: 0 0 0 1px rgba(94, 231, 242, 0.2) inset;
+}
+
+.layout-editor__agent-row-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--agent-color);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.06);
+}
+
+.layout-editor__agent-row-text {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.layout-editor__agent-row-text strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.layout-editor__agent-row-text small {
+  min-width: 0;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.69rem;
+}
+
 .layout-editor__hint {
   margin: 11px 0 0;
   color: var(--muted);
@@ -1569,6 +1679,14 @@ body.theme-light .project-output-table th {
   background: rgba(224, 242, 254, 0.7);
 }
 
+body.theme-light .layout-editor__agent-row {
+  background: rgba(255, 255, 255, 0.88);
+}
+
+body.theme-light .layout-editor__agent-row-text small {
+  color: #475569;
+}
+
 body.theme-light .project-output-link,
 body.theme-light .agent-quick-chat__sources a {
   color: #0369a1;
@@ -1696,6 +1814,10 @@ body.theme-light .notification-badge {
   }
 
   .layout-editor__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .layout-editor__workstation {
     grid-template-columns: 1fr;
   }
 

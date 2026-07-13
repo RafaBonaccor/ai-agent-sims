@@ -44,6 +44,7 @@ un piccolo pannello di modifica layout:
 - `+ Stanza`: aggiunge una nuova stanza in uno spazio libero della griglia.
 - `Modella stanza`: modella la stanza selezionata cliccando i quadrati della griglia.
 - `Porte`: aggiunge/rimuove celle porta o corridoio tra stanze.
+- `+ Workstation`: inserisce una workstation da preset e la collega a un agente.
 - `Rimuovi stanza`: elimina la stanza selezionata se e vuota e non e l'ultima.
 - `Reset`: resetta il layout salvato e ricarica la scena.
 - `White`/`Dark`: cambia tema tra modalita scura e chiara.
@@ -60,6 +61,12 @@ sovrapporsi a un'altra stanza e non puoi rimuovere una cella occupata da agenti
 o tavoli.
 Con `Porte`, clicca una cella per trasformarla in porta/corridoio: quella cella
 diventa attraversabile dagli agenti e puo collegare stanze altrimenti separate.
+Il pannello Editor include anche preset di workstation: scegli il tipo di
+postazione, scegli l'agente collegato e premi `+ Workstation`. La postazione
+viene creata, selezionata e l'app ti chiede di cliccare il tile dove piazzarla.
+Quando crei un nuovo agente dal dialog `+ Agent`, scegli anche il preset della
+sua workstation; dopo il salvataggio l'Editor si apre automaticamente per
+piazzarla nel mondo.
 L'inspector mostra anche la sezione `Stanze`: ogni stanza indica quanti agenti
 contiene e il pulsante `Porta qui` sposta nella stanza l'agente o la postazione
 attualmente selezionata. Questo permette di controllare visivamente dove si
@@ -77,6 +84,9 @@ quando vuoi risposte generative.
 I popup principali sono spostabili: trascina la barra superiore/intestazione di
 chat rapida, editor o dialog. Se trascini la chat rapida, resta nella posizione
 scelta invece di seguire automaticamente l'agente finche non la riapri.
+L'agente browser espone nello stesso popup le sessioni live del Main Scraper e
+i comandi browser principali: apri sessione, naviga, leggi URL, fai snapshot,
+click text, click selector, type, extract e chiudi sessione.
 
 ## Integrazione Discord
 

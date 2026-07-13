@@ -20,6 +20,7 @@ Il progetto include:
 - integrazione con progetti esterni tramite project gateway
 - supporto a provider e modelli configurabili
 - editor visuale per stanze, porte, corridoi, agenti e postazioni
+- popup dedicato per l'agente browser con sessioni live e comandi del Main Scraper
 
 ## Stato attuale
 
@@ -28,6 +29,7 @@ Queste sono le cose gia presenti o in corso:
 - storico dei job finiti
 - notifiche quando un job termina
 - popup rapido sopra l'agente per scrivere messaggi
+- popup browser con lista sessioni e comandi live del Main Scraper
 - memoria persistente per non perdere la conversazione
 - configurazione API key per agente singolo o per tutto il progetto
 - scelta del tipo di modello e del provider
@@ -39,6 +41,8 @@ Queste sono le cose gia presenti o in corso:
 - stanze modellabili a celle come in un editor tipo The Sims
 - porte/corridoi che collegano stanze e diventano attraversabili dal pathfinding
 - spostamento visuale di agenti e postazioni tra stanze
+- preset workstation inseribili dall'Editor e collegabili agli agenti
+- creazione agente con scelta del preset workstation e piazzamento guidato
 - popup trascinabili dalla barra superiore
 - chat agente che segue l'agente finche non viene trascinata manualmente, poi diventa detached
 - log e output leggibili anche in light mode con testo nero
@@ -56,6 +60,7 @@ Queste sono le cose gia presenti o in corso:
   - scheduling con data, ora e ripetizione
   - editor stanza/porta con griglia di celle
   - spostamento visivo di agenti e tavoli/postazioni
+  - workstation dedicate per agente
   - modalita dark e white
   - log leggibili in tema chiaro
 
@@ -71,6 +76,8 @@ Queste sono le cose gia presenti o in corso:
   - aggiunta e rimozione stanze
   - modellazione stanze con celle contigue
   - porte e corridoi come celle camminabili reali
+  - preset workstation collegabili agli agenti
+  - piazzamento workstation richiesto durante creazione agente
   - popup trascinabili per chat, editor e dialog
   - comportamento detached della chat solo dopo un vero drag
   - correzione dei colori log/output in light mode
@@ -83,6 +90,8 @@ Queste sono le cose gia presenti o in corso:
   - pannello di configurazione agente
   - pannello progetto con output e pianificazione
   - lista job e notifiche quando finiscono
+  - select preset workstation nell'Editor e nel dialog `+ Agent`
+  - richiesta visuale di cliccare un tile per piazzare la workstation
   - mini editor per aggiungere stanze, modellarle, mettere porte e rimuoverle
   - stanze multiple con agenti e tavoli controllabili visivamente
   - log e output scuri/neri quando il tema e chiaro
@@ -219,3 +228,36 @@ Stato attuale:
 
 Nota utile per il video:
 - se mostri il tema chiaro, inquadrare anche i log o l'output per far vedere che ora il contrasto e corretto
+
+### Episodio 04
+
+Richiesta:
+- quando creo un agente deve chiedermi dove piazzare la sua workstation
+- nell'Editor devono esserci preset di workstation inseribili e collegabili a un agente
+
+Cosa ho fatto:
+- aggiunti preset workstation condivisi nel modello del mondo
+- aggiunto select `Workstation` nel dialog `+ Agent`
+- dopo la creazione agente, viene creata una workstation dedicata e l'Editor chiede di cliccare il tile dove piazzarla
+- aggiunta sezione preset workstation nel mini Editor
+- aggiunto collegamento workstation -> agente
+- gli agenti con workstation dedicata la usano come destinazione preferita
+- le workstation custom vengono salvate nel layout locale
+
+File toccati:
+- `src/agentWorld.mjs`
+- `app.mjs`
+- `index.html`
+- `styles.css`
+- `README.md`
+- `AGENT_PROTOCOL.md`
+- `VIDEO_SCRIPT_LOG.md`
+
+Stato attuale:
+- il mondo puo avere workstation statiche e workstation custom
+- ogni agente puo avere una workstation dedicata
+- il layout salva anche le workstation create da preset
+
+Nota utile per il video:
+- mostrare la creazione di un nuovo agente, la scelta del preset workstation, poi il click nel mondo per piazzarla
+- mostrare l'Editor con preset workstation e collegamento ad agente esistente

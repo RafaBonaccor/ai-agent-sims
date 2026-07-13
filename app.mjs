@@ -3,6 +3,7 @@ import { AgentNetwork } from "./src/agentProtocol.mjs";
 import {
   AgentWorld,
   addRoomToLayout,
+  addWorkstationToLayout,
   doorLayout,
   findAvailableRoomRect,
   isDoorTile,
@@ -14,11 +15,13 @@ import {
   resetRoomLayout,
   setDoorLayout,
   setRoomLayout,
+  setWorkstationLayout,
   tileEquals,
   tileKey,
   tileToWorld,
   toggleDoorAt,
   toggleRoomCell,
+  workstationPresets,
   workstations,
   worldToTile,
 } from "./src/agentWorld.mjs";
@@ -53,11 +56,17 @@ const roomDrawToggle = document.querySelector("#room-draw-toggle");
 const doorToggle = document.querySelector("#door-toggle");
 const addRoomButton = document.querySelector("#add-room");
 const deleteRoomButton = document.querySelector("#delete-room");
+const workstationPresetSelect = document.querySelector("#workstation-preset");
+const workstationAgentSelect = document.querySelector("#workstation-agent");
+const workstationAgentTable = document.querySelector("#workstation-agent-table");
+const workstationAgentCount = document.querySelector("#workstation-agent-count");
+const addWorkstationButton = document.querySelector("#add-workstation");
 const resetLayoutButton = document.querySelector("#reset-layout");
 const themeToggle = document.querySelector("#theme-toggle");
 const agentDialog = document.querySelector("#agent-dialog");
 const agentForm = document.querySelector("#agent-form");
 const agentFormError = document.querySelector("#agent-form-error");
+const agentWorkstationPreset = document.querySelector("#agent-workstation-preset");
 const configureAgentButton = document.querySelector("#configure-agent");
 const agentSettingsDialog = document.querySelector("#agent-settings-dialog");
 const agentSettingsForm = document.querySelector("#agent-settings-form");
@@ -74,6 +83,25 @@ const agentActionTitle = document.querySelector("#agent-action-title");
 const agentActionRole = document.querySelector("#agent-action-role");
 const agentActionStatus = document.querySelector("#agent-action-status");
 const workOptions = document.querySelector("#work-options");
+const browserOptions = document.querySelector("#browser-options");
+const browserSessionSelect = document.querySelector("#browser-session");
+const browserUrlInput = document.querySelector("#browser-url");
+const browserSelectorInput = document.querySelector("#browser-selector");
+const browserTextInput = document.querySelector("#browser-text");
+const browserValueInput = document.querySelector("#browser-value");
+const browserModeSelect = document.querySelector("#browser-mode");
+const browserBackendSelect = document.querySelector("#browser-backend");
+const browserStatus = document.querySelector("#browser-status");
+const browserRefreshSessionsButton = document.querySelector("#browser-refresh-sessions");
+const browserOpenSessionButton = document.querySelector("#browser-open-session");
+const browserCurrentUrlButton = document.querySelector("#browser-current-url");
+const browserSnapshotButton = document.querySelector("#browser-snapshot");
+const browserGotoButton = document.querySelector("#browser-goto");
+const browserClickTextButton = document.querySelector("#browser-click-text");
+const browserClickSelectorButton = document.querySelector("#browser-click-selector");
+const browserTypeButton = document.querySelector("#browser-type");
+const browserExtractButton = document.querySelector("#browser-extract");
+const browserCloseButton = document.querySelector("#browser-close");
 const projectDialog = document.querySelector("#project-dialog");
 const projectForm = document.querySelector("#project-form");
 const projectSelect = document.querySelector("#project-select");
@@ -130,6 +158,9 @@ function applyStoredLayoutBeforeWorld(layout) {
   }
   if (Array.isArray(layout.doors)) {
     setDoorLayout(layout.doors);
+  }
+  if (Array.isArray(layout.customWorkstations)) {
+    setWorkstationLayout(layout.customWorkstations);
   }
   for (const [stationId, storedTile] of Object.entries(layout.stations ?? {})) {
     const tile = tileFromStored(storedTile);
@@ -328,6 +359,9 @@ let quickChatAgentId = null;
 let quickChatFocusTimer = null;
 let quickChatDetached = false;
 let layoutMode = false;
+let pendingStationPlacementId = null;
+let selectedBrowserSessionId = "";
+let pendingAgentQuickChat = null;
 
 const selectableObjects = [];
 const agentVisuals = new Map();
@@ -483,6 +517,19 @@ function currentLayoutState() {
     version: 1,
     rooms: roomLayout.map((room) => ({ ...room })),
     doors: doorLayout.map((door) => ({ ...door })),
+    customWorkstations: workstations
+      .filter((station) => station.custom)
+      .map((station) => ({
+        id: station.id,
+        label: station.label,
+        role: station.role,
+        color: station.color,
+        position: { ...station.position },
+        jobs: [...(station.jobs ?? [])],
+        agentId: station.agentId ?? "",
+        presetId: station.presetId ?? "desk",
+        custom: true,
+      })),
     stations: Object.fromEntries(workstations.map((station) => [station.id, worldToTile(station.position)])),
     agents,
   };
@@ -523,6 +570,9 @@ function updateLayoutEditor() {
   if (layoutEditorHint) {
     if (!room) {
       layoutEditorHint.textContent = "Seleziona una stanza dal pannello Stanze, poi scegli cosa modificare.";
+    } else if (pendingStationPlacementId) {
+      const station = agentWorld.getStation(pendingStationPlacementId);
+      layoutEditorHint.textContent = `Clicca un tile per piazzare ${station?.label ?? "la workstation selezionata"}.`;
     } else if (roomDrawMode) {
       layoutEditorHint.textContent = "Clicca celle adiacenti per aggiungerle alla stanza; clicca celle della stanza per rimuoverle.";
     } else if (doorMode) {
@@ -531,6 +581,7 @@ function updateLayoutEditor() {
       layoutEditorHint.textContent = "Clicca un agente o tavolo, poi clicca un tile per spostarlo. Usa i pulsanti per stanze e porte.";
     }
   }
+  renderWorkstationControls();
 }
 
 function setLayoutMode(enabled) {
@@ -548,6 +599,7 @@ function setLayoutMode(enabled) {
   } else {
     roomDrawMode = false;
     doorMode = false;
+    pendingStationPlacementId = null;
   }
   updateLayoutEditor();
   updateHud();
@@ -585,12 +637,189 @@ function roomColor(index) {
   return ["#38bdf8", "#a78bfa", "#34d399", "#f97316", "#f472b6", "#eab308"][index % 6];
 }
 
+function workstationPresetForRole(role) {
+  return workstationPresets.find((preset) => preset.role === role)
+    ?? workstationPresets.find((preset) => preset.id === "desk")
+    ?? workstationPresets[0];
+}
+
+function renderWorkstationPresetOptions(select, preferredRole = "") {
+  if (!select) {
+    return;
+  }
+  const previous = select.value;
+  const preferred = workstationPresetForRole(preferredRole);
+  select.innerHTML = workstationPresets
+    .map((preset) => `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.label)}</option>`)
+    .join("");
+  select.value = workstationPresets.some((preset) => preset.id === previous) ? previous : preferred?.id ?? workstationPresets[0]?.id ?? "";
+}
+
+function renderWorkstationAgentOptions() {
+  if (!workstationAgentSelect) {
+    return;
+  }
+  const previous = workstationAgentSelect.value;
+  const agents = [...network.agents].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at ?? "") || 0;
+    const rightTime = Date.parse(right.created_at ?? "") || 0;
+    if (leftTime !== rightTime) {
+      return rightTime - leftTime;
+    }
+    return left.label.localeCompare(right.label);
+  });
+  workstationAgentSelect.innerHTML = agents
+    .map((agent) => `<option value="${escapeHtml(agent.id)}">${escapeHtml(agent.label)}</option>`)
+    .join("");
+  workstationAgentSelect.value = network.getAgent(previous)
+    ? previous
+    : network.getAgent(selectedAgentId)
+      ? selectedAgentId
+      : agents[0]?.id ?? "";
+  if (addWorkstationButton) {
+    addWorkstationButton.disabled = !workstationAgentSelect.value;
+  }
+}
+
+function renderWorkstationAgentTable() {
+  if (!workstationAgentTable) {
+    return;
+  }
+  const agents = [...network.agents].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at ?? "") || 0;
+    const rightTime = Date.parse(right.created_at ?? "") || 0;
+    if (leftTime !== rightTime) {
+      return rightTime - leftTime;
+    }
+    return left.label.localeCompare(right.label);
+  });
+  if (workstationAgentCount) {
+    workstationAgentCount.textContent = `${agents.length} agenti`;
+  }
+  workstationAgentTable.innerHTML = agents
+    .map((agent) => {
+      const state = agentWorld.getAgentState(agent.id);
+      const station = state?.stationId ? agentWorld.getStation(state.stationId) : null;
+      const linkedStation = workstations.find((item) => item.agentId === agent.id);
+      const stationLabel = linkedStation?.label ?? station?.label ?? "nessuna workstation";
+      const statusText = [agent.role, agent.runtime.status, stationLabel]
+        .filter(Boolean)
+        .join(" · ");
+      return `
+        <button class="layout-editor__agent-row ${agent.id === workstationAgentSelect?.value ? "layout-editor__agent-row--active" : ""}" type="button" data-agent="${escapeHtml(agent.id)}">
+          <span class="layout-editor__agent-row-color" style="--agent-color: ${escapeHtml(agent.color)}"></span>
+          <span class="layout-editor__agent-row-text">
+            <strong>${escapeHtml(agent.label)}</strong>
+            <small>${escapeHtml(statusText)}</small>
+          </span>
+        </button>
+      `;
+    })
+    .join("");
+  workstationAgentTable.querySelectorAll("[data-agent]").forEach((button) => {
+    button.addEventListener("click", () => {
+      workstationAgentSelect.value = button.dataset.agent ?? "";
+      renderWorkstationControls();
+    });
+  });
+}
+
+function renderWorkstationControls() {
+  renderWorkstationAgentOptions();
+  const selectedAgent = network.getAgent(workstationAgentSelect?.value) ?? network.getAgent(selectedAgentId);
+  renderWorkstationPresetOptions(workstationPresetSelect, selectedAgent?.role ?? "");
+  renderWorkstationAgentTable();
+}
+
 function moveStationVisual(stationId) {
   const station = agentWorld.getStation(stationId);
   const visual = stationVisuals.get(stationId);
   if (station && visual) {
     visual.position.set(station.position.x, 0, station.position.z);
   }
+}
+
+function uniqueWorkstationId(agentId, presetId) {
+  const base = `workstation-${agentId || presetId || "station"}`
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 64) || "workstation";
+  if (!workstations.some((station) => station.id === base)) {
+    return base;
+  }
+  let index = 2;
+  while (workstations.some((station) => station.id === `${base}-${index}`)) {
+    index += 1;
+  }
+  return `${base}-${index}`;
+}
+
+function initialWorkstationTile(agent) {
+  const state = agentWorld.getAgentState(agent?.id);
+  if (state?.tile) {
+    return state.tile;
+  }
+  const selectedRoom = selectedRoomId ? roomLayout.find((room) => room.id === selectedRoomId) : null;
+  return selectedRoom ? tileForRoomCenter(selectedRoom) : tileForRoomCenter(roomLayout[0]);
+}
+
+function assignLinkedAgentToStation(stationId) {
+  const station = agentWorld.getStation(stationId);
+  const agent = station?.agentId ? network.getAgent(station.agentId) : null;
+  if (agent) {
+    agentWorld.assignStation(agent, station.id, "assigned workstation", true);
+  }
+}
+
+function createLinkedWorkstation(agent, presetId, options = {}) {
+  if (!agent) {
+    setBootMessage("Seleziona prima un agente a cui collegare la workstation.");
+    return null;
+  }
+  const existing = workstations.find((station) => station.agentId === agent.id);
+  if (existing && options.allowDuplicate !== true) {
+    selectedAgentId = agent.id;
+    selectedStationId = existing.id;
+    selectedRoomId = roomForTile(worldToTile(existing.position))?.id ?? selectedRoomId;
+    pendingStationPlacementId = existing.id;
+    setLayoutMode(true);
+    setAutoAgents(false);
+    updateHud();
+    setBootMessage(`${existing.label} esiste gia: clicca un tile per ripiazzarla.`);
+    return existing;
+  }
+  const preset = workstationPresets.find((item) => item.id === presetId) ?? workstationPresetForRole(agent.role);
+  const station = addWorkstationToLayout({
+    id: uniqueWorkstationId(agent.id, preset.id),
+    label: `${agent.label} · ${preset.label}`.slice(0, 80),
+    role: agent.role,
+    color: agent.color || preset.color,
+    jobs: preset.jobs,
+    agentId: agent.id,
+    presetId: preset.id,
+    tile: initialWorkstationTile(agent),
+  });
+  createStationProp(station);
+  agentWorld.refreshBlockedTiles();
+  renderWorkstationControls();
+  selectedAgentId = agent.id;
+  selectedStationId = station.id;
+  selectedRoomId = roomForTile(worldToTile(station.position))?.id ?? selectedRoomId;
+  pendingStationPlacementId = station.id;
+  setLayoutMode(true);
+  setAutoAgents(false);
+  saveLayoutState();
+  updateHud();
+  const reason = options.reason ?? "Workstation creata";
+  setBootMessage(`${reason}: clicca un tile per piazzare "${station.label}".`);
+  return station;
+}
+
+function addEditorWorkstation() {
+  const agent = network.getAgent(workstationAgentSelect?.value);
+  const presetId = workstationPresetSelect?.value || workstationPresetForRole(agent?.role ?? "")?.id;
+  createLinkedWorkstation(agent, presetId, { reason: "Preset workstation inserito" });
 }
 
 function addLayoutRoom() {
@@ -1174,6 +1403,7 @@ function buildLights() {
 function createStationProp(station) {
   const group = new THREE.Group();
   const theme = WORLD_THEMES[currentTheme];
+  const stationKind = station.presetId || station.id;
   const stationMaterial = colorMaterial(station.color, {
     emissive: new THREE.Color(station.color).multiplyScalar(0.12),
     roughness: 0.48,
@@ -1214,7 +1444,7 @@ function createStationProp(station) {
   baseRing.position.y = 0.085;
   group.add(baseRing);
 
-  if (station.id === "hub") {
+  if (stationKind === "hub") {
     addMesh(group, new THREE.CylinderGeometry(0.76, 0.9, 0.42, 8), darkMaterial, { y: 0.26 });
     for (let i = 0; i < 4; i += 1) {
       const monitor = addMesh(
@@ -1225,7 +1455,7 @@ function createStationProp(station) {
       );
       monitor.lookAt(0, 0.72, 0);
     }
-  } else if (station.id === "planning") {
+  } else if (stationKind === "planning") {
     addMesh(group, new THREE.BoxGeometry(1.7, 0.12, 0.55), darkMaterial, { y: 0.38 });
     const board = addMesh(group, new THREE.BoxGeometry(1.9, 1.12, 0.1), stationMaterial, {
       y: 1.08,
@@ -1239,11 +1469,11 @@ function createStationProp(station) {
         z: -0.41,
       });
     }
-  } else if (station.id === "research") {
+  } else if (stationKind === "research") {
     addMesh(group, new THREE.BoxGeometry(1.6, 0.16, 0.72), darkMaterial, { y: 0.46 });
     addMesh(group, new THREE.BoxGeometry(0.86, 0.56, 0.08), lightMaterial, { y: 0.94, z: -0.22 });
     addMesh(group, new THREE.BoxGeometry(0.9, 0.06, 0.34), stationMaterial, { y: 0.58, z: 0.24 });
-  } else if (station.id === "build") {
+  } else if (stationKind === "build") {
     addMesh(group, new THREE.BoxGeometry(1.76, 0.32, 0.82), darkMaterial, { y: 0.34 });
     for (let i = 0; i < 4; i += 1) {
       addMesh(group, new THREE.BoxGeometry(0.28, 0.22 + i * 0.03, 0.28), stationMaterial, {
@@ -1252,11 +1482,11 @@ function createStationProp(station) {
         z: -0.12 + (i % 2) * 0.3,
       });
     }
-  } else if (station.id === "review") {
+  } else if (stationKind === "review") {
     addMesh(group, new THREE.BoxGeometry(1.55, 0.2, 0.95), darkMaterial, { y: 0.42 });
     addMesh(group, new THREE.ConeGeometry(0.3, 0.55, 16), stationMaterial, { y: 0.88, z: -0.2 });
     addMesh(group, new THREE.BoxGeometry(1.1, 0.035, 0.54), lightMaterial, { y: 0.58, z: 0.16 });
-  } else if (station.id === "memory") {
+  } else if (stationKind === "memory") {
     addMesh(group, new THREE.CylinderGeometry(0.48, 0.58, 1.35, 20), sharedMaterials.glass, { y: 0.78 });
     const core = addMesh(group, new THREE.IcosahedronGeometry(0.42, 1), lightMaterial, { y: 0.84 });
     core.userData.spin = 1.2;
@@ -1724,12 +1954,17 @@ function updateHud() {
         const stateItem = agentWorld.getAgentState(agentItem.id);
         return stateItem?.stationId === station.id;
       });
+      const owner = station.agentId ? network.getAgent(station.agentId) : null;
+      const detail = [
+        owner ? `collegata a ${owner.label}` : "",
+        workers.map((worker) => worker.label).join(", ") || "libera",
+      ].filter(Boolean).join(" · ");
       return `
         <button class="station-row ${station.id === selectedStationId ? "station-row--active" : ""}" data-station="${station.id}" type="button">
           <span class="station-row__dot" style="--station-color: ${station.color}"></span>
           <span>
             <strong>${station.label}</strong>
-            <small>${workers.map((worker) => worker.label).join(", ") || "libera"}</small>
+            <small>${escapeHtml(detail)}</small>
           </span>
         </button>
       `;
@@ -1809,6 +2044,7 @@ function openQuickChat(agentId) {
   quickChatDetached = false;
   quickChat.classList.remove("agent-quick-chat--detached");
   quickChat.style.transform = "";
+  quickChat.style.visibility = "visible";
   quickChatAgentId = agentId;
   quickChatAgent.textContent = agent.label;
   quickChatStatus.textContent = "";
@@ -1832,13 +2068,37 @@ function openQuickChat(agentId) {
     });
 }
 
+function cancelPendingAgentQuickChat() {
+  if (pendingAgentQuickChat?.timer) {
+    window.clearTimeout(pendingAgentQuickChat.timer);
+  }
+  pendingAgentQuickChat = null;
+}
+
+function scheduleAgentQuickChat(agentId) {
+  cancelPendingAgentQuickChat();
+  pendingAgentQuickChat = {
+    agentId,
+    timer: window.setTimeout(() => {
+      if (pendingAgentQuickChat?.agentId !== agentId || selectedAgentId !== agentId || layoutMode) {
+        return;
+      }
+      pendingAgentQuickChat = null;
+      openQuickChat(agentId);
+    }, 240),
+  };
+}
+
 function closeQuickChat() {
-  window.clearTimeout(quickChatFocusTimer);
+  cancelPendingAgentQuickChat();
   quickChatAgentId = null;
-  quickChatDetached = false;
   quickChat.hidden = true;
-  quickChat.classList.remove("agent-quick-chat--detached");
+  quickChat.style.visibility = "hidden";
   quickChat.style.transform = "";
+  quickChat.classList.remove("agent-quick-chat--detached");
+  quickChatDetached = false;
+  window.clearTimeout(quickChatFocusTimer);
+  quickChatFocusTimer = null;
   quickChatInput.value = "";
   quickChatHistory.replaceChildren();
   chatMessageIds.clear();
@@ -2123,6 +2383,7 @@ function ensureRuntimeAgent(snapshot) {
       state.lastRuntimeStatus = "";
     }
     ensureSupervisorRelation(snapshot.id);
+    renderWorkstationControls();
     return existing;
   }
 
@@ -2141,6 +2402,7 @@ function ensureRuntimeAgent(snapshot) {
   agentWorld.registerAgent(agent);
   createAgentVisual(agent);
   ensureSupervisorRelation(snapshot.id);
+  renderWorkstationControls();
   return agent;
 }
 
@@ -2231,8 +2493,10 @@ function handleRuntimeEvent(event) {
     for (const historicEvent of (event.events ?? []).slice(-8)) {
       network.log(historicEvent.summary);
     }
+    renderWorkstationControls();
   } else if (event.type === "agent.created" || event.type === "agent.updated") {
     ensureRuntimeAgent(event.data.agent);
+    renderWorkstationControls();
   } else if (event.type === "agent.state.changed") {
     const agent = network.getAgent(event.agent_id);
     if (agent) {
@@ -3079,6 +3343,7 @@ function openJobOutput(job) {
 }
 
 function openAgentActions(agentId) {
+  cancelPendingAgentQuickChat();
   const agent = network.getAgent(agentId);
   if (!agent) {
     return;
@@ -3087,8 +3352,113 @@ function openAgentActions(agentId) {
   agentActionRole.textContent = agent.role;
   agentActionStatus.textContent = agent.runtime.status;
   workOptions.hidden = true;
+  const browsingAgent = isBrowsingAgent(agent);
+  browserOptions.hidden = !browsingAgent;
   if (!agentActionDialog.open) {
     agentActionDialog.showModal();
+  }
+  if (browsingAgent) {
+    void refreshBrowserSessions(selectedBrowserSessionId || "");
+  }
+}
+
+function isBrowsingAgent(agent) {
+  if (!agent) {
+    return false;
+  }
+  const toolsets = Array.isArray(agent.toolsets) ? agent.toolsets : [];
+  const capabilities = Array.isArray(agent.capabilities) ? agent.capabilities : [];
+  return agent.role === "browser" || toolsets.includes("browser") || capabilities.includes("browser");
+}
+
+function browserSessionLabel(session) {
+  const parts = [
+    session.project_id || "main-scraper",
+    session.backend,
+    session.state,
+    session.current_url || "",
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function currentBrowserSession() {
+  return browserSessionSelect?.value || selectedBrowserSessionId || "";
+}
+
+function updateBrowserStatus(message) {
+  if (browserStatus) {
+    browserStatus.textContent = message;
+  }
+}
+
+async function refreshBrowserSessions(preferredSessionId = "") {
+  if (!browserOptions || browserOptions.hidden || !runtimeClient.connected) {
+    return [];
+  }
+  try {
+    const sessions = await runtimeClient.listBrowserSessions();
+    const filtered = sessions.filter((session) => !session.project_id || session.project_id === "main-scraper");
+    const previous = preferredSessionId || browserSessionSelect?.value || selectedBrowserSessionId;
+    if (browserSessionSelect) {
+      browserSessionSelect.innerHTML = filtered
+        .map((session) => `<option value="${escapeHtml(session.id)}">${escapeHtml(browserSessionLabel(session))}</option>`)
+        .join("");
+      browserSessionSelect.value = filtered.some((session) => session.id === previous)
+        ? previous
+        : filtered[0]?.id ?? "";
+    }
+    selectedBrowserSessionId = browserSessionSelect?.value ?? "";
+    updateBrowserStatus(
+      filtered.length
+        ? `Sessioni browser: ${filtered.length}`
+        : "Nessuna sessione browser attiva. Aprine una dal popup."
+    );
+    return filtered;
+  } catch (error) {
+    updateBrowserStatus(error.message);
+    return [];
+  }
+}
+
+async function openBrowserSessionFromPopup() {
+  if (!runtimeClient.connected) {
+    updateBrowserStatus("Runtime offline: impossibile aprire la sessione browser.");
+    return;
+  }
+  try {
+    const result = await runtimeClient.createBrowserSession({
+      project_id: "main-scraper",
+      backend: browserBackendSelect?.value ?? "botasaurus",
+      url: browserUrlInput?.value.trim() ?? "",
+      browser_mode: browserModeSelect?.value ?? "sessione_persistente",
+      browser_user_data_dir: "",
+      browser_profile_directory: "Default",
+      refresh_browser_profile: false,
+      page_text: "",
+      title: "",
+    });
+    selectedBrowserSessionId = result.id;
+    await refreshBrowserSessions(result.id);
+    updateBrowserStatus(`Sessione aperta: ${result.id}`);
+  } catch (error) {
+    updateBrowserStatus(error.message);
+  }
+}
+
+async function runBrowserPopupCommand(command, parameters = {}) {
+  const sessionId = currentBrowserSession();
+  if (!sessionId) {
+    updateBrowserStatus("Seleziona prima una sessione browser.");
+    return null;
+  }
+  try {
+    const result = await runtimeClient.runBrowserCommand(sessionId, command, parameters);
+    selectedBrowserSessionId = sessionId;
+    await refreshBrowserSessions(sessionId);
+    return result;
+  } catch (error) {
+    updateBrowserStatus(error.message);
+    return null;
   }
 }
 
@@ -3339,11 +3709,20 @@ function selectFromPointer(event) {
     } else if (tile) {
       selectedRoomId = roomForTile(tile)?.id ?? selectedRoomId;
       if (selectedStationId) {
+        const placingPendingStation = pendingStationPlacementId === selectedStationId;
         const moved = agentWorld.commandMoveStation(selectedStationId, tile);
         if (moved) {
           moveStationVisual(selectedStationId);
+          if (placingPendingStation) {
+            pendingStationPlacementId = null;
+            assignLinkedAgentToStation(selectedStationId);
+          }
           saveLayoutState();
-          setBootMessage(`${agentWorld.getStation(selectedStationId)?.label ?? "Tavolo"} spostato.`);
+          setBootMessage(
+            placingPendingStation
+              ? `${agentWorld.getStation(selectedStationId)?.label ?? "Workstation"} piazzata e collegata.`
+              : `${agentWorld.getStation(selectedStationId)?.label ?? "Tavolo"} spostato.`
+          );
         } else {
           setBootMessage("Quel tile non e disponibile per il tavolo selezionato.");
         }
@@ -3373,7 +3752,14 @@ function selectFromPointer(event) {
     selectedAgentId = agentId;
     selectedStationId = null;
     selectedRoomId = roomForTile(agentWorld.getAgentState(agentId)?.tile)?.id ?? selectedRoomId;
-    openQuickChat(agentId);
+    if (pendingAgentQuickChat?.agentId === agentId) {
+      cancelPendingAgentQuickChat();
+      closeQuickChat();
+      openAgentActions(agentId);
+    } else {
+      cancelPendingAgentQuickChat();
+      scheduleAgentQuickChat(agentId);
+    }
   } else if (stationId) {
     selectedStationId = stationId;
     selectedRoomId = roomForTile(worldToTile(agentWorld.getStation(stationId)?.position ?? { x: 0, z: 0 }))?.id ?? selectedRoomId;
@@ -3486,6 +3872,8 @@ roomDrawToggle?.addEventListener("click", () => setRoomDrawMode(!roomDrawMode));
 doorToggle?.addEventListener("click", () => setDoorMode(!doorMode));
 addRoomButton?.addEventListener("click", addLayoutRoom);
 deleteRoomButton?.addEventListener("click", deleteSelectedRoom);
+addWorkstationButton?.addEventListener("click", addEditorWorkstation);
+workstationAgentSelect?.addEventListener("change", renderWorkstationControls);
 resetLayoutButton?.addEventListener("click", resetSavedLayout);
 themeToggle?.addEventListener("click", () => applyTheme(currentTheme === "light" ? "dark" : "light"));
 speedControl.addEventListener("click", (event) => {
@@ -3552,6 +3940,7 @@ addAgentButton.addEventListener("click", () => {
     setBootMessage("Start the project with run.command to create persistent agents.");
     return;
   }
+  renderWorkstationPresetOptions(agentWorkstationPreset, agentForm.elements.namedItem("role")?.value ?? "specialist");
   agentDialog.showModal();
 });
 
@@ -3632,6 +4021,76 @@ document.querySelector("#work-projects").addEventListener("click", () => {
 document.querySelector("#work-internal-task").addEventListener("click", () => {
   agentActionDialog.close();
   triggerIntent("task");
+});
+browserSessionSelect?.addEventListener("change", () => {
+  selectedBrowserSessionId = browserSessionSelect.value;
+  updateBrowserStatus(browserSessionSelect.value ? `Sessione selezionata: ${browserSessionSelect.value}` : "Nessuna sessione selezionata.");
+});
+browserRefreshSessionsButton?.addEventListener("click", () => {
+  void refreshBrowserSessions();
+});
+browserOpenSessionButton?.addEventListener("click", () => {
+  void openBrowserSessionFromPopup();
+});
+browserCurrentUrlButton?.addEventListener("click", () => {
+  void (async () => {
+    const result = await runBrowserPopupCommand("current_url", {});
+    if (result?.url) {
+      browserUrlInput.value = result.url;
+      updateBrowserStatus(`URL attuale: ${result.url}`);
+    }
+  })();
+});
+browserSnapshotButton?.addEventListener("click", () => {
+  void (async () => {
+    const result = await runBrowserPopupCommand("snapshot", {});
+    if (result) {
+      updateBrowserStatus(`Snapshot: ${JSON.stringify(result).slice(0, 180)}`);
+    }
+  })();
+});
+browserGotoButton?.addEventListener("click", () => {
+  void runBrowserPopupCommand("goto", { url: browserUrlInput?.value.trim() ?? "" });
+});
+browserClickTextButton?.addEventListener("click", () => {
+  void runBrowserPopupCommand("click_text", { text: browserTextInput?.value.trim() ?? "" });
+});
+browserClickSelectorButton?.addEventListener("click", () => {
+  void runBrowserPopupCommand("click_selector", { selector: browserSelectorInput?.value.trim() ?? "" });
+});
+browserTypeButton?.addEventListener("click", () => {
+  void runBrowserPopupCommand("type", {
+    selector: browserSelectorInput?.value.trim() ?? "",
+    value: browserValueInput?.value ?? "",
+  });
+});
+browserExtractButton?.addEventListener("click", () => {
+  void (async () => {
+    const result = await runBrowserPopupCommand("extract", {
+      selector: browserSelectorInput?.value.trim() ?? "body",
+      mode: "text",
+    });
+    if (result) {
+      updateBrowserStatus(`Extract: ${JSON.stringify(result).slice(0, 180)}`);
+    }
+  })();
+});
+browserCloseButton?.addEventListener("click", () => {
+  void (async () => {
+    const sessionId = currentBrowserSession();
+    if (!sessionId) {
+      updateBrowserStatus("Seleziona prima una sessione browser.");
+      return;
+    }
+    try {
+      await runtimeClient.closeBrowserSession(sessionId);
+      selectedBrowserSessionId = "";
+      await refreshBrowserSessions();
+      updateBrowserStatus(`Sessione chiusa: ${sessionId}`);
+    } catch (error) {
+      updateBrowserStatus(error.message);
+    }
+  })();
 });
 projectSelect.addEventListener("change", async () => {
   renderProjectActions();
@@ -3763,16 +4222,21 @@ agentDialog.querySelectorAll("[data-dialog-close]").forEach((button) => {
   button.addEventListener("click", () => agentDialog.close());
 });
 
+agentForm.elements.namedItem("role")?.addEventListener("change", (event) => {
+  renderWorkstationPresetOptions(agentWorkstationPreset, event.target.value);
+});
+
 agentForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const formData = new FormData(agentForm);
   const name = String(formData.get("name") ?? "").trim();
   const capabilities = splitValues(String(formData.get("capabilities") ?? ""));
+  const workstationPresetId = String(formData.get("workstation_preset") ?? "");
   const createButton = document.querySelector("#create-agent");
   createButton.disabled = true;
   agentFormError.textContent = "";
   try {
-    await runtimeClient.createAgent({
+    const snapshot = await runtimeClient.createAgent({
       id: `${slugify(name)}-${Date.now().toString(36).slice(-4)}`,
       name,
       role: String(formData.get("role") ?? "specialist"),
@@ -3782,8 +4246,10 @@ agentForm.addEventListener("submit", async (event) => {
       protocols: ["agent-lifecycle", "task-contract"],
       memory_scope: "agent",
     });
+    const agent = ensureRuntimeAgent(snapshot);
     agentForm.reset();
     agentDialog.close();
+    createLinkedWorkstation(agent, workstationPresetId, { reason: "Agente creato, workstation pronta" });
   } catch (error) {
     agentFormError.textContent = error.message;
   } finally {

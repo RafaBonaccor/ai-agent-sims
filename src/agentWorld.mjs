@@ -22,7 +22,59 @@ const defaultRoomLayout = [
 export const roomLayout = defaultRoomLayout.map((room) => ({ ...room }));
 export const doorLayout = [];
 
-export const workstations = [
+export const workstationPresets = [
+  {
+    id: "desk",
+    label: "Agent Desk",
+    role: "specialist",
+    color: "#5ee7f2",
+    jobs: ["focused work", "tool call", "status update"],
+  },
+  {
+    id: "planning",
+    label: "Planning Board",
+    role: "planner",
+    color: "#3d6fd8",
+    jobs: ["decomposition", "handoff map", "task estimate"],
+  },
+  {
+    id: "research",
+    label: "Research Desk",
+    role: "researcher",
+    color: "#1e9fb1",
+    jobs: ["retrieval", "source check", "context scan"],
+  },
+  {
+    id: "build",
+    label: "Build Bench",
+    role: "builder",
+    color: "#d8891f",
+    jobs: ["patching", "integration", "tool run"],
+  },
+  {
+    id: "review",
+    label: "Review Table",
+    role: "reviewer",
+    color: "#c65050",
+    jobs: ["risk check", "test review", "finding triage"],
+  },
+  {
+    id: "memory",
+    label: "Memory Core",
+    role: "memory",
+    color: "#6f56c9",
+    jobs: ["snapshot", "context sync", "decision log"],
+  },
+  {
+    id: "schedule",
+    label: "Schedule Desk",
+    role: "scheduler",
+    color: "#f4b647",
+    jobs: ["cron plan", "follow-up", "briefing timer"],
+  },
+];
+
+const defaultWorkstations = [
   {
     id: "hub",
     label: "Coordination Hub",
@@ -88,6 +140,8 @@ export const workstations = [
     jobs: ["standup", "alignment", "handoff"],
   },
 ];
+
+export const workstations = defaultWorkstations.map((station) => ({ ...station }));
 
 const stationById = new Map(workstations.map((station) => [station.id, station]));
 
@@ -243,6 +297,65 @@ export function addRoomToLayout(room) {
   return normalized;
 }
 
+function normalizeWorkstation(station, fallbackIndex = 0) {
+  const preset = workstationPresets.find((item) => item.id === station?.presetId)
+    ?? workstationPresets.find((item) => item.role === station?.role)
+    ?? workstationPresets[0];
+  const tile = normalizeTile(station?.tile) ?? (
+    station?.position ? worldToTile(station.position) : { col: roomLayout[0]?.col ?? 0, row: roomLayout[0]?.row ?? 0 }
+  );
+  const position = tileToWorld(tile);
+  const agentId = String(station?.agentId ?? "").slice(0, 80);
+  const id = String(station?.id || `workstation-${fallbackIndex + 1}`).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "").slice(0, 80)
+    || `workstation-${fallbackIndex + 1}`;
+  return {
+    id,
+    label: String(station?.label || preset.label || `Workstation ${fallbackIndex + 1}`).slice(0, 80),
+    role: String(station?.role || preset.role || "specialist").slice(0, 48),
+    color: String(station?.color || preset.color || "#5ee7f2"),
+    position,
+    jobs: Array.isArray(station?.jobs) && station.jobs.length ? station.jobs.map((job) => String(job).slice(0, 80)) : [...preset.jobs],
+    agentId,
+    presetId: String(station?.presetId || preset.id),
+    custom: true,
+  };
+}
+
+function registerWorkstation(station) {
+  const existingIndex = workstations.findIndex((item) => item.id === station.id);
+  if (existingIndex >= 0) {
+    workstations.splice(existingIndex, 1, station);
+  } else {
+    workstations.push(station);
+  }
+  stationById.set(station.id, station);
+  return station;
+}
+
+export function setWorkstationLayout(stations) {
+  for (let index = workstations.length - 1; index >= 0; index -= 1) {
+    if (workstations[index].custom) {
+      stationById.delete(workstations[index].id);
+      workstations.splice(index, 1);
+    }
+  }
+  for (const [index, station] of (stations ?? []).entries()) {
+    const normalized = normalizeWorkstation(station, index);
+    if (stationById.has(normalized.id)) {
+      normalized.id = `${normalized.id}-${Date.now().toString(36)}-${index}`;
+    }
+    registerWorkstation(normalized);
+  }
+}
+
+export function addWorkstationToLayout(station) {
+  const normalized = normalizeWorkstation(station, workstations.length);
+  if (stationById.has(normalized.id)) {
+    normalized.id = `${normalized.id}-${Date.now().toString(36)}`;
+  }
+  return registerWorkstation(normalized);
+}
+
 export function removeRoomFromLayout(roomId) {
   const index = roomLayout.findIndex((room) => room.id === roomId);
   if (index < 0) {
@@ -390,6 +503,10 @@ function scenarioToTile(position) {
 }
 
 function roleStationId(agent) {
+  const dedicated = workstations.find((station) => station.agentId === agent.id);
+  if (dedicated) {
+    return dedicated.id;
+  }
   if (agent.role === "coordinator") {
     return "hub";
   }
@@ -418,6 +535,10 @@ function roleStationId(agent) {
 }
 
 function stationForStatus(agent) {
+  const dedicated = workstations.find((station) => station.agentId === agent.id);
+  if (dedicated) {
+    return dedicated.id;
+  }
   const status = agent.runtime.status.toLowerCase();
   if (status.includes("memory") || status.includes("snapshot")) {
     return agent.role === "memory" ? "memory" : "meeting";
