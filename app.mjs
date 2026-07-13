@@ -3,15 +3,22 @@ import { AgentNetwork } from "./src/agentProtocol.mjs";
 import {
   AgentWorld,
   addRoomToLayout,
+  doorLayout,
   findAvailableRoomRect,
+  isDoorTile,
   isInsideTile,
+  removeRoomFromLayout,
   roomConfig,
+  roomCells,
   roomLayout,
   resetRoomLayout,
+  setDoorLayout,
   setRoomLayout,
   tileEquals,
   tileKey,
   tileToWorld,
+  toggleDoorAt,
+  toggleRoomCell,
   workstations,
   worldToTile,
 } from "./src/agentWorld.mjs";
@@ -34,10 +41,18 @@ const selectedTile = document.querySelector("#selected-tile");
 const eventLog = document.querySelector("#event-log");
 const metrics = document.querySelector("#metrics");
 const stationList = document.querySelector("#station-list");
+const roomList = document.querySelector("#room-list");
 const runtimeStatus = document.querySelector("#runtime-status");
 const addAgentButton = document.querySelector("#add-agent");
 const layoutToggle = document.querySelector("#layout-toggle");
+const layoutEditor = document.querySelector("#layout-editor");
+const layoutEditorStatus = document.querySelector("#layout-editor-status");
+const layoutEditorHint = document.querySelector("#layout-editor-hint");
+const editorCloseButton = document.querySelector("#editor-close");
+const roomDrawToggle = document.querySelector("#room-draw-toggle");
+const doorToggle = document.querySelector("#door-toggle");
 const addRoomButton = document.querySelector("#add-room");
+const deleteRoomButton = document.querySelector("#delete-room");
 const resetLayoutButton = document.querySelector("#reset-layout");
 const themeToggle = document.querySelector("#theme-toggle");
 const agentDialog = document.querySelector("#agent-dialog");
@@ -112,6 +127,9 @@ function tileFromStored(value) {
 function applyStoredLayoutBeforeWorld(layout) {
   if (Array.isArray(layout.rooms) && layout.rooms.length) {
     setRoomLayout(layout.rooms);
+  }
+  if (Array.isArray(layout.doors)) {
+    setDoorLayout(layout.doors);
   }
   for (const [stationId, storedTile] of Object.entries(layout.stations ?? {})) {
     const tile = tileFromStored(storedTile);
@@ -217,6 +235,8 @@ const WORLD_THEMES = {
     tileDestination: 0x725b2b,
     tileOccupied: 0x273650,
     tileStation: 0x7c5b18,
+    tileRoom: 0x20304e,
+    tileDoor: 0xb8892f,
   },
   light: {
     label: "White",
@@ -242,6 +262,8 @@ const WORLD_THEMES = {
     tileDestination: 0xfde68a,
     tileOccupied: 0xc7d2fe,
     tileStation: 0xfbbf24,
+    tileRoom: 0xdbeafe,
+    tileDoor: 0xf59e0b,
   },
 };
 
@@ -296,6 +318,9 @@ let speed = 1;
 let autoAgents = true;
 let selectedAgentId = "orchestrator";
 let selectedStationId = null;
+let selectedRoomId = roomLayout[0]?.id ?? null;
+let roomDrawMode = false;
+let doorMode = false;
 let nextUiRefresh = 0;
 let nextRelationRefresh = 0;
 let lastFrameAt = 0;
@@ -310,6 +335,8 @@ const relationVisuals = new Map();
 const messageVisuals = new Map();
 const roomVisuals = new Map();
 const tileVisuals = new Map();
+const editorTileVisuals = new Map();
+let doorVisualGroup = null;
 const initialWorldTheme = WORLD_THEMES[currentTheme];
 
 const sharedMaterials = {
@@ -350,7 +377,16 @@ const tilePalette = {
   destination: new THREE.Color(initialWorldTheme.tileDestination),
   occupied: new THREE.Color(initialWorldTheme.tileOccupied),
   station: new THREE.Color(initialWorldTheme.tileStation),
+  room: new THREE.Color(initialWorldTheme.tileRoom),
+  door: new THREE.Color(initialWorldTheme.tileDoor),
 };
+
+const editorGridMaterial = new THREE.MeshBasicMaterial({
+  color: initialWorldTheme.tileRoom,
+  transparent: true,
+  opacity: 0,
+  depthWrite: false,
+});
 
 function setBootMessage(message) {
   if (bootMessage) {
@@ -359,6 +395,9 @@ function setBootMessage(message) {
 }
 
 function tileBaseColorFor(tile) {
+  if (isDoorTile(tile)) {
+    return tilePalette.door;
+  }
   if (agentWorld.isBlockedTile(tile)) {
     return tilePalette.blocked;
   }
@@ -396,6 +435,14 @@ function applyTheme(theme, options = {}) {
       }
     });
   }
+  doorVisualGroup?.traverse((child) => {
+    const material = child.material;
+    if (material?.userData?.themeRole === "door-marker") {
+      material.color.setHex(colors.tileDoor);
+      material.emissive?.setHex(colors.tileDoor);
+      material.emissive?.multiplyScalar(0.18);
+    }
+  });
 
   tilePalette.even.setHex(colors.tileEven);
   tilePalette.odd.setHex(colors.tileOdd);
@@ -404,6 +451,9 @@ function applyTheme(theme, options = {}) {
   tilePalette.destination.setHex(colors.tileDestination);
   tilePalette.occupied.setHex(colors.tileOccupied);
   tilePalette.station.setHex(colors.tileStation);
+  tilePalette.room.setHex(colors.tileRoom);
+  tilePalette.door.setHex(colors.tileDoor);
+  editorGridMaterial.color.setHex(colors.tileRoom);
 
   for (const mesh of tileVisuals.values()) {
     mesh.userData.baseColor = tileBaseColorFor(mesh.userData.tile).clone();
@@ -431,6 +481,7 @@ function currentLayoutState() {
   return {
     version: 1,
     rooms: roomLayout.map((room) => ({ ...room })),
+    doors: doorLayout.map((door) => ({ ...door })),
     stations: Object.fromEntries(workstations.map((station) => [station.id, worldToTile(station.position)])),
     agents,
   };
@@ -444,20 +495,89 @@ function saveLayoutState() {
   }
 }
 
+function stationsInRoom(room) {
+  return workstations.filter((station) => roomContainsTile(room, worldToTile(station.position)));
+}
+
+function updateLayoutEditor() {
+  const room = selectedRoomId ? roomLayout.find((item) => item.id === selectedRoomId) : null;
+  layoutEditor?.toggleAttribute("hidden", !layoutMode);
+  if (layoutToggle) {
+    layoutToggle.textContent = layoutMode ? "Close editor" : "Editor";
+    layoutToggle.classList.toggle("button--primary", layoutMode);
+  }
+  roomDrawToggle?.classList.toggle("button--primary", layoutMode && roomDrawMode);
+  doorToggle?.classList.toggle("button--primary", layoutMode && doorMode);
+
+  const hasAgents = room ? agentsInRoom(room).length > 0 : false;
+  const hasStations = room ? stationsInRoom(room).length > 0 : false;
+  if (deleteRoomButton) {
+    deleteRoomButton.disabled = !room || roomLayout.length <= 1 || hasAgents || hasStations;
+  }
+  if (layoutEditorStatus) {
+    const mode = roomDrawMode ? "modella stanza" : doorMode ? "porte/corridoi" : "sposta oggetti";
+    const roomText = room ? `${room.label} · ${roomCells(room).length} celle` : "nessuna stanza selezionata";
+    layoutEditorStatus.textContent = `${roomText} · ${mode}`;
+  }
+  if (layoutEditorHint) {
+    if (!room) {
+      layoutEditorHint.textContent = "Seleziona una stanza dal pannello Stanze, poi scegli cosa modificare.";
+    } else if (roomDrawMode) {
+      layoutEditorHint.textContent = "Clicca celle adiacenti per aggiungerle alla stanza; clicca celle della stanza per rimuoverle.";
+    } else if (doorMode) {
+      layoutEditorHint.textContent = "Clicca celle sulla griglia per aggiungere o rimuovere porte/corridoi camminabili.";
+    } else {
+      layoutEditorHint.textContent = "Clicca un agente o tavolo, poi clicca un tile per spostarlo. Usa i pulsanti per stanze e porte.";
+    }
+  }
+}
+
 function setLayoutMode(enabled) {
   layoutMode = enabled;
-  layoutToggle?.classList.toggle("button--primary", layoutMode);
   canvas.classList.toggle("layout-mode", layoutMode);
+  editorGridMaterial.opacity = layoutMode ? 0.07 : 0;
   setBootMessage(
     layoutMode
-      ? "Layout mode: seleziona un agente o un tavolo, poi clicca un tile per spostarlo. + Room aggiunge una stanza."
+      ? "Editor: seleziona agente/tavolo e clicca un tile. Usa Modella stanza o Porte per modificare la griglia."
       : ""
   );
   if (layoutMode) {
     closeQuickChat();
     setAutoAgents(false);
+  } else {
+    roomDrawMode = false;
+    doorMode = false;
   }
+  updateLayoutEditor();
   updateHud();
+}
+
+function setRoomDrawMode(enabled) {
+  roomDrawMode = Boolean(enabled);
+  if (roomDrawMode) {
+    doorMode = false;
+    setLayoutMode(true);
+  }
+  updateLayoutEditor();
+  setBootMessage(
+    roomDrawMode
+      ? "Modella stanza: seleziona una stanza, poi clicca celle della griglia per aggiungerle/toglierle."
+      : "Editor: sposta agenti/tavoli o usa Porte per creare passaggi."
+  );
+}
+
+function setDoorMode(enabled) {
+  doorMode = Boolean(enabled);
+  if (doorMode) {
+    roomDrawMode = false;
+    setLayoutMode(true);
+  }
+  updateLayoutEditor();
+  setBootMessage(
+    doorMode
+      ? "Porte: clicca celle vuote o bordi stanza per creare porte/corridoi camminabili."
+      : "Editor: sposta agenti/tavoli o usa Modella stanza per cambiare le stanze."
+  );
 }
 
 function roomColor(index) {
@@ -486,9 +606,8 @@ function addLayoutRoom() {
   });
   createRoomVisual(room);
   agentWorld.refreshBlockedTiles();
-  const center = roomCenter(room);
-  cameraTarget.set(center.x, 0, center.z);
-  updateCamera();
+  selectedRoomId = room.id;
+  focusRoom(room);
   setLayoutMode(true);
   saveLayoutState();
   setBootMessage(`${room.label} aggiunta. Seleziona un agente/tavolo e clicca un tile nella nuova stanza.`);
@@ -615,99 +734,169 @@ function roomCenter(room) {
   };
 }
 
+function roomContainsTile(room, tile) {
+  return Boolean(
+    room
+    && tile
+    && roomCells(room).some((cell) => tileEquals(cell, tile))
+  );
+}
+
+function roomForTile(tile) {
+  return roomLayout.find((room) => roomContainsTile(room, tile)) ?? null;
+}
+
+function tileForRoomCenter(room) {
+  const cells = roomCells(room);
+  if (!cells.length) {
+    return {
+      col: Math.floor(room.col + room.columns / 2),
+      row: Math.floor(room.row + room.rows / 2),
+    };
+  }
+  const centerCol = room.col + (room.columns - 1) / 2;
+  const centerRow = room.row + (room.rows - 1) / 2;
+  return cells.reduce((best, cell) => {
+    const bestDistance = Math.hypot(best.col - centerCol, best.row - centerRow);
+    const distance = Math.hypot(cell.col - centerCol, cell.row - centerRow);
+    return distance < bestDistance ? cell : best;
+  }, cells[0]);
+}
+
+function focusRoom(room) {
+  const center = roomCenter(room);
+  cameraTarget.set(center.x, 0, center.z);
+  updateCamera();
+}
+
+function agentsInRoom(room) {
+  return network.agents.filter((agent) => {
+    const state = agentWorld.getAgentState(agent.id);
+    return roomContainsTile(room, state?.tile);
+  });
+}
+
+function placeSelectionInRoom(roomId) {
+  const room = roomLayout.find((item) => item.id === roomId);
+  if (!room) {
+    return;
+  }
+  const target = tileForRoomCenter(room);
+  let moved = false;
+  if (selectedStationId) {
+    moved = agentWorld.commandMoveStation(selectedStationId, target);
+    if (moved) {
+      moveStationVisual(selectedStationId);
+      setBootMessage(`${agentWorld.getStation(selectedStationId)?.label ?? "Postazione"} spostata in ${room.label}.`);
+    }
+  } else if (selectedAgentId) {
+    moved = agentWorld.commandPlaceAgent(selectedAgentId, target, `assigned to ${room.label}`);
+    if (moved) {
+      setAutoAgents(false);
+      setBootMessage(`${network.getAgent(selectedAgentId)?.label ?? "Agente"} spostato in ${room.label}.`);
+    }
+  }
+  if (moved) {
+    selectedRoomId = room.id;
+    focusRoom(room);
+    saveLayoutState();
+    updateHud();
+  } else {
+    setBootMessage(`Non riesco a trovare un tile libero in ${room.label}.`);
+  }
+}
+
 function createRoomVisual(room) {
   if (roomVisuals.has(room.id)) {
     return roomVisuals.get(room.id);
   }
   const group = new THREE.Group();
   const center = roomCenter(room);
-  const roomWidth = room.columns * roomConfig.cellSize;
-  const roomDepth = room.rows * roomConfig.cellSize;
+  const cells = roomCells(room);
+  const cellKeys = new Set(cells.map(tileKey));
+  const roomWidth = Math.max(1, room.columns) * roomConfig.cellSize;
+  const roomDepth = Math.max(1, room.rows) * roomConfig.cellSize;
   const accentColor = new THREE.Color(room.color ?? "#38bdf8");
 
-  const base = new THREE.Mesh(
-    new THREE.BoxGeometry(roomWidth + 0.18, 0.16, roomDepth + 0.18),
-    sharedMaterials.trim
-  );
-  base.position.set(center.x, -roomConfig.blockHeight - 0.06, center.z);
-  base.receiveShadow = true;
-  group.add(base);
-
   const tileGeometry = new THREE.BoxGeometry(0.94, roomConfig.blockHeight, 0.94);
-  for (let row = room.row; row < room.row + room.rows; row += 1) {
-    for (let col = room.col; col < room.col + room.columns; col += 1) {
-      const tile = { col, row };
-      const key = tileKey(tile);
-      if (tileVisuals.has(key)) {
-        continue;
-      }
-      const world = tileToWorld(tile);
-      const baseColor = tileBaseColorFor(tile);
-      const material = new THREE.MeshStandardMaterial({
-        color: baseColor,
-        emissive: baseColor.clone().multiplyScalar(0.035),
-        roughness: 0.76,
-        metalness: 0.12,
-      });
-      const mesh = new THREE.Mesh(tileGeometry, material);
-      mesh.position.set(world.x, -roomConfig.blockHeight / 2, world.z);
-      mesh.receiveShadow = true;
-      mesh.userData.tile = tile;
-      mesh.userData.tileKey = key;
-      mesh.userData.roomId = room.id;
-      mesh.userData.baseColor = baseColor.clone();
-      group.add(mesh);
-      tileVisuals.set(key, mesh);
-      selectableObjects.push(mesh);
+  for (const tile of cells) {
+    const key = tileKey(tile);
+    if (tileVisuals.has(key)) {
+      continue;
     }
+    const world = tileToWorld(tile);
+    const baseColor = tileBaseColorFor(tile);
+    const material = new THREE.MeshStandardMaterial({
+      color: baseColor,
+      emissive: baseColor.clone().multiplyScalar(0.035),
+      roughness: 0.76,
+      metalness: 0.12,
+    });
+    const mesh = new THREE.Mesh(tileGeometry, material);
+    mesh.position.set(world.x, -roomConfig.blockHeight / 2, world.z);
+    mesh.receiveShadow = true;
+    mesh.userData.tile = tile;
+    mesh.userData.tileKey = key;
+    mesh.userData.roomId = room.id;
+    mesh.userData.baseColor = baseColor.clone();
+    group.add(mesh);
+    tileVisuals.set(key, mesh);
+    selectableObjects.push(mesh);
   }
 
-  const backWall = new THREE.Mesh(
-    new THREE.BoxGeometry(roomWidth, 1.2, 0.16),
-    sharedMaterials.wall
-  );
-  backWall.position.set(center.x, 0.55, center.z - roomDepth / 2 - 0.08);
-  backWall.castShadow = true;
-  backWall.receiveShadow = true;
-  group.add(backWall);
-
-  const leftWall = new THREE.Mesh(
-    new THREE.BoxGeometry(0.16, 1.2, roomDepth),
-    sharedMaterials.wall
-  );
-  leftWall.position.set(center.x - roomWidth / 2 - 0.08, 0.55, center.z);
-  leftWall.castShadow = true;
-  leftWall.receiveShadow = true;
-  group.add(leftWall);
+  const wallHeight = 1.05;
+  const wallThickness = 0.13;
+  const wallDirections = [
+    { dc: 0, dr: -1, width: 1, depth: wallThickness, offsetX: 0, offsetZ: -0.5, accentY: 0.18, accentOffsetX: 0, accentOffsetZ: -0.43 },
+    { dc: 0, dr: 1, width: 1, depth: wallThickness, offsetX: 0, offsetZ: 0.5, accentY: 0.08, accentOffsetX: 0, accentOffsetZ: 0.43 },
+    { dc: -1, dr: 0, width: wallThickness, depth: 1, offsetX: -0.5, offsetZ: 0, accentY: 0.18, accentOffsetX: -0.43, accentOffsetZ: 0 },
+    { dc: 1, dr: 0, width: wallThickness, depth: 1, offsetX: 0.5, offsetZ: 0, accentY: 0.08, accentOffsetX: 0.43, accentOffsetZ: 0 },
+  ];
 
   const accentMaterial = new THREE.MeshBasicMaterial({
     color: accentColor,
     transparent: true,
     opacity: 0.55,
   });
-  const backAccent = new THREE.Mesh(
-    new THREE.BoxGeometry(Math.max(0.5, roomWidth - 0.5), 0.025, 0.025),
-    accentMaterial
-  );
-  backAccent.position.set(center.x, 0.12, center.z - roomDepth / 2 + 0.05);
-  group.add(backAccent);
-  const sideAccent = new THREE.Mesh(
-    new THREE.BoxGeometry(0.025, 0.025, Math.max(0.5, roomDepth - 0.5)),
-    accentMaterial
-  );
-  sideAccent.position.set(center.x - roomWidth / 2 + 0.05, 0.12, center.z);
-  group.add(sideAccent);
 
-  const trimMaterial = sharedMaterials.trim;
-  for (const z of [center.z - roomDepth / 2, center.z + roomDepth / 2]) {
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(roomWidth, 0.08, 0.08), trimMaterial);
-    trim.position.set(center.x, 0.05, z);
-    group.add(trim);
-  }
-  for (const x of [center.x - roomWidth / 2, center.x + roomWidth / 2]) {
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, roomDepth), trimMaterial);
-    trim.position.set(x, 0.05, center.z);
-    group.add(trim);
+  for (const tile of cells) {
+    const world = tileToWorld(tile);
+    for (const direction of wallDirections) {
+      const neighbor = { col: tile.col + direction.dc, row: tile.row + direction.dr };
+      const neighborRoom = roomForTile(neighbor);
+      if (cellKeys.has(tileKey(neighbor)) || isDoorTile(tile) || isDoorTile(neighbor)) {
+        continue;
+      }
+      if (neighborRoom && neighborRoom.id !== room.id && String(room.id) > String(neighborRoom.id)) {
+        continue;
+      }
+      const wall = new THREE.Mesh(
+        new THREE.BoxGeometry(direction.width, wallHeight, direction.depth),
+        sharedMaterials.wall
+      );
+      wall.position.set(world.x + direction.offsetX, 0.52, world.z + direction.offsetZ);
+      wall.castShadow = true;
+      wall.receiveShadow = true;
+      group.add(wall);
+
+      const trim = new THREE.Mesh(
+        new THREE.BoxGeometry(direction.width, 0.07, direction.depth),
+        sharedMaterials.trim
+      );
+      trim.position.set(world.x + direction.offsetX, 0.055, world.z + direction.offsetZ);
+      group.add(trim);
+
+      const accent = new THREE.Mesh(
+        new THREE.BoxGeometry(
+          Math.max(0.02, direction.width - (direction.width > direction.depth ? 0.18 : 0)),
+          0.025,
+          Math.max(0.02, direction.depth - (direction.depth > direction.width ? 0.18 : 0))
+        ),
+        accentMaterial
+      );
+      accent.position.set(world.x + direction.accentOffsetX, direction.accentY, world.z + direction.accentOffsetZ);
+      group.add(accent);
+    }
   }
 
   const label = createTextSprite(room.label, {
@@ -749,10 +938,210 @@ function createRoomVisual(room) {
   return group;
 }
 
+function createDoorVisuals() {
+  if (doorVisualGroup) {
+    return doorVisualGroup;
+  }
+  doorVisualGroup = new THREE.Group();
+  const doorTileGeometry = new THREE.BoxGeometry(0.88, roomConfig.blockHeight * 0.82, 0.88);
+  const markerGeometry = new THREE.BoxGeometry(0.56, 0.08, 0.18);
+  for (const tile of doorLayout) {
+    const key = tileKey(tile);
+    const world = tileToWorld(tile);
+    let floorMesh = tileVisuals.get(key);
+    if (!floorMesh) {
+      const baseColor = tileBaseColorFor(tile);
+      const material = new THREE.MeshStandardMaterial({
+        color: baseColor,
+        emissive: baseColor.clone().multiplyScalar(0.08),
+        roughness: 0.62,
+        metalness: 0.18,
+      });
+      floorMesh = new THREE.Mesh(doorTileGeometry, material);
+      floorMesh.position.set(world.x, -roomConfig.blockHeight / 2 + 0.01, world.z);
+      floorMesh.receiveShadow = true;
+      floorMesh.userData.tile = tile;
+      floorMesh.userData.tileKey = key;
+      floorMesh.userData.doorTile = true;
+      floorMesh.userData.baseColor = baseColor.clone();
+      doorVisualGroup.add(floorMesh);
+      tileVisuals.set(key, floorMesh);
+      selectableObjects.push(floorMesh);
+    } else {
+      floorMesh.userData.baseColor = tileBaseColorFor(tile).clone();
+      floorMesh.material.color.copy(floorMesh.userData.baseColor);
+      floorMesh.material.emissive?.copy(floorMesh.userData.baseColor).multiplyScalar(0.08);
+    }
+
+    const markerMaterial = new THREE.MeshStandardMaterial({
+      color: tilePalette.door,
+      emissive: tilePalette.door.clone().multiplyScalar(0.18),
+      roughness: 0.4,
+      metalness: 0.25,
+    });
+    markerMaterial.userData.themeRole = "door-marker";
+    const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+    marker.position.set(world.x, 0.08, world.z);
+    marker.rotation.y = tile.col % 2 === 0 ? 0 : Math.PI / 2;
+    marker.userData.tile = tile;
+    marker.userData.doorMarker = true;
+    marker.castShadow = true;
+    marker.receiveShadow = true;
+    doorVisualGroup.add(marker);
+    selectableObjects.push(marker);
+  }
+  scene.add(doorVisualGroup);
+  return doorVisualGroup;
+}
+
 function buildRoom() {
   for (const room of roomLayout) {
     createRoomVisual(room);
   }
+  createDoorVisuals();
+}
+
+function buildEditorGrid() {
+  if (editorTileVisuals.size > 0) {
+    return;
+  }
+  const geometry = new THREE.BoxGeometry(0.92, 0.018, 0.92);
+  for (let row = 0; row < roomConfig.rows; row += 1) {
+    for (let col = 0; col < roomConfig.columns; col += 1) {
+      const tile = { col, row };
+      const key = tileKey(tile);
+      const world = tileToWorld(tile);
+      const mesh = new THREE.Mesh(geometry, editorGridMaterial);
+      mesh.position.set(world.x, -roomConfig.blockHeight - 0.03, world.z);
+      mesh.userData.tile = tile;
+      mesh.userData.tileKey = key;
+      mesh.userData.editorTile = true;
+      mesh.renderOrder = -1;
+      scene.add(mesh);
+      selectableObjects.push(mesh);
+      editorTileVisuals.set(key, mesh);
+    }
+  }
+}
+
+function clearLayoutVisuals() {
+  for (const group of roomVisuals.values()) {
+    scene.remove(group);
+  }
+  roomVisuals.clear();
+  if (doorVisualGroup) {
+    scene.remove(doorVisualGroup);
+    doorVisualGroup = null;
+  }
+  tileVisuals.clear();
+  for (let index = selectableObjects.length - 1; index >= 0; index -= 1) {
+    const object = selectableObjects[index];
+    if (object.userData.tile && !object.userData.editorTile) {
+      selectableObjects.splice(index, 1);
+    }
+  }
+}
+
+function rebuildLayoutVisuals() {
+  clearLayoutVisuals();
+  buildRoom();
+  agentWorld.refreshBlockedTiles();
+  applyTheme(currentTheme, { persist: false });
+  updateHud();
+}
+
+function toggleSelectedRoomCell(tile) {
+  if (!selectedRoomId) {
+    selectedRoomId = roomLayout[0]?.id ?? null;
+  }
+  const room = roomLayout.find((item) => item.id === selectedRoomId);
+  if (!room) {
+    setBootMessage("Seleziona prima una stanza dal pannello Stanze.");
+    return;
+  }
+  const removing = roomContainsTile(room, tile);
+  if (removing && agentWorld.isOccupiedTile(tile)) {
+    setBootMessage("Non posso rimuovere una cella occupata da un agente.");
+    return;
+  }
+  if (removing && agentWorld.isStationTileOccupied(tile)) {
+    setBootMessage("Non posso rimuovere una cella occupata da un tavolo.");
+    return;
+  }
+  const result = toggleRoomCell(room.id, tile);
+  if (!result.changed) {
+    const reason = result.reason === "occupied-by-room"
+      ? `Cella gia usata da ${result.room?.label ?? "un'altra stanza"}.`
+      : result.reason === "room-too-small"
+        ? "Una stanza deve avere almeno 3 celle."
+        : result.reason === "room-not-contiguous"
+          ? "Aggiungi celle adiacenti alla stanza selezionata."
+          : result.reason === "room-disconnected"
+            ? "Non posso spezzare una stanza in isole separate."
+            : "Cella non valida per questa stanza.";
+    setBootMessage(reason);
+    return;
+  }
+  selectedRoomId = room.id;
+  rebuildLayoutVisuals();
+  saveLayoutState();
+  setBootMessage(`${room.label}: cella ${result.added ? "aggiunta" : "rimossa"}.`);
+}
+
+function toggleDoorCell(tile) {
+  const removingOnlyPassage = isDoorTile(tile) && !roomForTile(tile);
+  if (removingOnlyPassage && agentWorld.isOccupiedTile(tile)) {
+    setBootMessage("Non posso rimuovere una porta/corridoio occupata da un agente.");
+    return;
+  }
+  if (removingOnlyPassage && agentWorld.isStationTileOccupied(tile)) {
+    setBootMessage("Non posso rimuovere una porta/corridoio occupata da un tavolo.");
+    return;
+  }
+  const result = toggleDoorAt(tile);
+  if (!result.changed) {
+    setBootMessage("Cella porta non valida.");
+    return;
+  }
+  selectedRoomId = roomForTile(tile)?.id ?? selectedRoomId;
+  rebuildLayoutVisuals();
+  saveLayoutState();
+  setBootMessage(`Porta/corridoio ${result.added ? "aggiunto" : "rimosso"}.`);
+}
+
+function deleteSelectedRoom() {
+  const room = selectedRoomId ? roomLayout.find((item) => item.id === selectedRoomId) : null;
+  if (!room) {
+    setBootMessage("Seleziona prima una stanza da rimuovere.");
+    return;
+  }
+  if (roomLayout.length <= 1) {
+    setBootMessage("Non posso rimuovere l'ultima stanza.");
+    return;
+  }
+  const roomAgents = agentsInRoom(room);
+  if (roomAgents.length > 0) {
+    setBootMessage(`Sposta prima gli agenti fuori da ${room.label}.`);
+    return;
+  }
+  const roomStations = stationsInRoom(room);
+  if (roomStations.length > 0) {
+    setBootMessage(`Sposta prima i tavoli fuori da ${room.label}.`);
+    return;
+  }
+
+  const roomIndex = roomLayout.findIndex((item) => item.id === room.id);
+  const deletedKeys = new Set(roomCells(room).map(tileKey));
+  const result = removeRoomFromLayout(room.id);
+  if (!result.changed) {
+    setBootMessage(result.reason === "last-room" ? "Non posso rimuovere l'ultima stanza." : "Stanza non trovata.");
+    return;
+  }
+  setDoorLayout(doorLayout.filter((door) => !deletedKeys.has(tileKey(door))));
+  selectedRoomId = roomLayout[Math.min(roomIndex, roomLayout.length - 1)]?.id ?? null;
+  rebuildLayoutVisuals();
+  saveLayoutState();
+  setBootMessage(`${room.label} rimossa.`);
 }
 
 function buildLights() {
@@ -1147,6 +1536,7 @@ function updateMessageVisuals() {
 function buildScene() {
   buildLights();
   buildRoom();
+  buildEditorGrid();
   for (const station of workstations) {
     createStationProp(station);
   }
@@ -1247,6 +1637,7 @@ function updateTiles() {
   const selectedState = agentWorld.getAgentState(selectedAgentId);
   const selectedStation = selectedStationId ? agentWorld.getStation(selectedStationId) : null;
   const selectedStationTile = selectedStation ? worldToTile(selectedStation.position) : null;
+  const selectedRoom = selectedRoomId ? roomLayout.find((room) => room.id === selectedRoomId) : null;
   const occupiedKeys = new Set();
   for (const agent of network.agents) {
     const state = agentWorld.getAgentState(agent.id);
@@ -1267,6 +1658,8 @@ function updateTiles() {
       renderState = "current";
     } else if (occupiedKeys.has(key)) {
       renderState = "occupied";
+    } else if (selectedRoom && roomContainsTile(selectedRoom, tile)) {
+      renderState = "room";
     }
 
     if (mesh.userData.renderState === renderState) {
@@ -1286,6 +1679,9 @@ function updateTiles() {
     } else if (renderState === "occupied") {
       mesh.material.color.copy(tilePalette.occupied);
       mesh.position.y = -roomConfig.blockHeight / 2 + 0.015;
+    } else if (renderState === "room") {
+      mesh.material.color.copy(tilePalette.room);
+      mesh.position.y = -roomConfig.blockHeight / 2 + 0.01;
     } else {
       mesh.material.color.copy(baseColor);
       mesh.position.y = -roomConfig.blockHeight / 2;
@@ -1297,10 +1693,11 @@ function updateHud() {
   const agent = network.getAgent(selectedAgentId) ?? network.agents[0];
   const state = agentWorld.getAgentState(agent.id);
   const station = agentWorld.getStation(state?.stationId);
+  const currentRoom = roomForTile(state?.tile);
 
   selectedName.textContent = agent.label;
   selectedRole.textContent = agent.role;
-  selectedJob.textContent = `${state?.jobLabel ?? "idle"} @ ${station?.label ?? "room"}`;
+  selectedJob.textContent = `${state?.jobLabel ?? "idle"} @ ${currentRoom?.label ?? station?.label ?? "room"}`;
   selectedStatus.textContent = agent.runtime.status;
   selectedLoad.textContent = `${Math.round(agent.runtime.load * 100)}%`;
   selectedTile.textContent = state ? `${state.tile.col + 1}, ${state.tile.row + 1}` : "-";
@@ -1336,6 +1733,32 @@ function updateHud() {
       `;
     })
     .join("");
+
+  if (roomList) {
+    roomList.innerHTML = roomLayout
+      .map((room) => {
+        const agents = agentsInRoom(room);
+        const selected = room.id === selectedRoomId;
+        const occupantText = agents.map((roomAgent) => roomAgent.label).join(", ") || "nessun agente";
+        const cellCount = roomCells(room).length;
+        return `
+          <div class="room-row ${selected ? "room-row--active" : ""}" style="--room-color: ${room.color}">
+            <button class="room-row__main" data-room="${escapeHtml(room.id)}" type="button">
+              <span class="station-row__dot" style="--station-color: ${room.color}"></span>
+              <span>
+                <strong>${escapeHtml(room.label)}</strong>
+                <small>${agents.length} agenti · ${cellCount} celle · ${escapeHtml(occupantText)}</small>
+              </span>
+            </button>
+            <button class="room-row__action" data-room-place="${escapeHtml(room.id)}" type="button">
+              Porta qui
+            </button>
+          </div>
+        `;
+      })
+      .join("");
+  }
+  updateLayoutEditor();
 }
 
 function appendChatMessage(message) {
@@ -2768,17 +3191,25 @@ function selectFromPointer(event) {
   const agentId = hit.object.userData.agentId;
   const stationId = hit.object.userData.stationId;
   const tile = hit.object.userData.tile;
+  const editorTile = hit.object.userData.editorTile;
   if (layoutMode) {
-    if (agentId) {
+    if (tile && roomDrawMode) {
+      toggleSelectedRoomCell(tile);
+    } else if (tile && doorMode) {
+      toggleDoorCell(tile);
+    } else if (agentId) {
       selectedAgentId = agentId;
       selectedStationId = null;
+      selectedRoomId = roomForTile(agentWorld.getAgentState(agentId)?.tile)?.id ?? selectedRoomId;
       closeQuickChat();
-      setBootMessage(`Layout mode: ${network.getAgent(agentId)?.label ?? agentId} selezionato. Clicca un tile per spostarlo.`);
+      setBootMessage(`Editor: ${network.getAgent(agentId)?.label ?? agentId} selezionato. Clicca un tile per spostarlo.`);
     } else if (stationId) {
       selectedStationId = stationId;
+      selectedRoomId = roomForTile(worldToTile(agentWorld.getStation(stationId)?.position ?? { x: 0, z: 0 }))?.id ?? selectedRoomId;
       closeQuickChat();
-      setBootMessage(`Layout mode: ${agentWorld.getStation(stationId)?.label ?? stationId} selezionato. Clicca un tile per spostarlo.`);
+      setBootMessage(`Editor: ${agentWorld.getStation(stationId)?.label ?? stationId} selezionato. Clicca un tile per spostarlo.`);
     } else if (tile) {
+      selectedRoomId = roomForTile(tile)?.id ?? selectedRoomId;
       if (selectedStationId) {
         const moved = agentWorld.commandMoveStation(selectedStationId, tile);
         if (moved) {
@@ -2803,15 +3234,25 @@ function selectFromPointer(event) {
     return;
   }
 
+  if (editorTile && tile && !isInsideTile(tile)) {
+    selectedStationId = null;
+    closeQuickChat();
+    updateHud();
+    return;
+  }
+
   if (agentId) {
     selectedAgentId = agentId;
     selectedStationId = null;
+    selectedRoomId = roomForTile(agentWorld.getAgentState(agentId)?.tile)?.id ?? selectedRoomId;
     openQuickChat(agentId);
   } else if (stationId) {
     selectedStationId = stationId;
+    selectedRoomId = roomForTile(worldToTile(agentWorld.getStation(stationId)?.position ?? { x: 0, z: 0 }))?.id ?? selectedRoomId;
     closeQuickChat();
   } else if (tile) {
     selectedStationId = null;
+    selectedRoomId = roomForTile(tile)?.id ?? selectedRoomId;
     closeQuickChat();
     const moved = agentWorld.commandMoveAgent(selectedAgentId, tile, "manual move");
     if (moved) {
@@ -2881,6 +3322,8 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.code === "Escape" && quickChatAgentId) {
     closeQuickChat();
+  } else if (event.code === "Escape" && layoutMode) {
+    setLayoutMode(false);
   } else if (event.code === "Space") {
     event.preventDefault();
     setRunning(!running);
@@ -2910,7 +3353,11 @@ window.addEventListener("keydown", (event) => {
 runToggle.addEventListener("click", () => setRunning(!running));
 autoToggle.addEventListener("click", () => setAutoAgents(!autoAgents));
 layoutToggle?.addEventListener("click", () => setLayoutMode(!layoutMode));
+editorCloseButton?.addEventListener("click", () => setLayoutMode(false));
+roomDrawToggle?.addEventListener("click", () => setRoomDrawMode(!roomDrawMode));
+doorToggle?.addEventListener("click", () => setDoorMode(!doorMode));
 addRoomButton?.addEventListener("click", addLayoutRoom);
+deleteRoomButton?.addEventListener("click", deleteSelectedRoom);
 resetLayoutButton?.addEventListener("click", resetSavedLayout);
 themeToggle?.addEventListener("click", () => applyTheme(currentTheme === "light" ? "dark" : "light"));
 speedControl.addEventListener("click", (event) => {
@@ -2939,11 +3386,34 @@ stationList.addEventListener("click", (event) => {
   selectedStationId = button.dataset.station;
   const station = agentWorld.getStation(selectedStationId);
   if (station) {
+    selectedRoomId = roomForTile(worldToTile(station.position))?.id ?? selectedRoomId;
     cameraTarget.set(station.position.x, 0, station.position.z);
     updateCamera();
     if (layoutMode) {
-      setBootMessage(`Layout mode: ${station.label} selezionato. Clicca un tile per spostarlo.`);
+      setBootMessage(`Editor: ${station.label} selezionato. Clicca un tile per spostarlo.`);
     }
+  }
+  updateHud();
+});
+
+roomList?.addEventListener("click", (event) => {
+  const placeButton = event.target.closest("[data-room-place]");
+  if (placeButton) {
+    placeSelectionInRoom(placeButton.dataset.roomPlace);
+    return;
+  }
+  const roomButton = event.target.closest("[data-room]");
+  if (!roomButton) {
+    return;
+  }
+  const room = roomLayout.find((item) => item.id === roomButton.dataset.room);
+  if (!room) {
+    return;
+  }
+  selectedRoomId = room.id;
+  focusRoom(room);
+  if (layoutMode) {
+    setBootMessage(`Editor: ${room.label} selezionata. Usa "Porta qui" o i controlli stanza/porte.`);
   }
   updateHud();
 });

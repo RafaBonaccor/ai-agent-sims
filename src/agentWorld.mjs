@@ -20,6 +20,7 @@ const defaultRoomLayout = [
 ];
 
 export const roomLayout = defaultRoomLayout.map((room) => ({ ...room }));
+export const doorLayout = [];
 
 export const workstations = [
   {
@@ -94,40 +95,132 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function normalizeTile(value) {
+  if (!value) {
+    return null;
+  }
+  const col = Math.round(Number(value.col));
+  const row = Math.round(Number(value.row));
+  if (!Number.isFinite(col) || !Number.isFinite(row)) {
+    return null;
+  }
+  if (col < 0 || col >= roomConfig.columns || row < 0 || row >= roomConfig.rows) {
+    return null;
+  }
+  return { col, row };
+}
+
+function uniqueTiles(values) {
+  const seen = new Set();
+  const tiles = [];
+  for (const value of values ?? []) {
+    const tile = normalizeTile(value);
+    if (!tile) {
+      continue;
+    }
+    const key = `${tile.col},${tile.row}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    tiles.push(tile);
+  }
+  return tiles;
+}
+
+function rectangleTiles(room) {
+  const columns = clamp(Math.round(Number(room.columns) || 6), 1, roomConfig.columns);
+  const rows = clamp(Math.round(Number(room.rows) || 5), 1, roomConfig.rows);
+  const col = clamp(Math.round(Number(room.col) || 0), 0, roomConfig.columns - columns);
+  const row = clamp(Math.round(Number(room.row) || 0), 0, roomConfig.rows - rows);
+  const tiles = [];
+  for (let tileRow = row; tileRow < row + rows; tileRow += 1) {
+    for (let tileCol = col; tileCol < col + columns; tileCol += 1) {
+      tiles.push({ col: tileCol, row: tileRow });
+    }
+  }
+  return tiles;
+}
+
+function updateRoomBounds(room) {
+  const cells = uniqueTiles(room.cells?.length ? room.cells : rectangleTiles(room));
+  if (!cells.length) {
+    const fallback = rectangleTiles({ col: room.col, row: room.row, columns: 3, rows: 3 });
+    room.cells = fallback;
+    return updateRoomBounds(room);
+  }
+  const cols = cells.map((tile) => tile.col);
+  const rows = cells.map((tile) => tile.row);
+  const minCol = Math.min(...cols);
+  const maxCol = Math.max(...cols);
+  const minRow = Math.min(...rows);
+  const maxRow = Math.max(...rows);
+  room.col = minCol;
+  room.row = minRow;
+  room.columns = maxCol - minCol + 1;
+  room.rows = maxRow - minRow + 1;
+  room.cells = cells;
+  return room;
+}
+
 function normalizeRoom(room, fallbackIndex = 0) {
   const columns = clamp(Math.round(Number(room.columns) || 6), 3, roomConfig.columns);
   const rows = clamp(Math.round(Number(room.rows) || 5), 3, roomConfig.rows);
-  return {
+  return updateRoomBounds({
     id: String(room.id || `room-${fallbackIndex + 1}`).slice(0, 60),
     label: String(room.label || `Room ${fallbackIndex + 1}`).slice(0, 80),
     col: clamp(Math.round(Number(room.col) || 0), 0, roomConfig.columns - columns),
     row: clamp(Math.round(Number(room.row) || 0), 0, roomConfig.rows - rows),
     columns,
     rows,
+    cells: uniqueTiles(room.cells?.length ? room.cells : rectangleTiles({ ...room, columns, rows })),
     color: String(room.color || "#38bdf8"),
-  };
+  });
+}
+
+export function roomCells(room) {
+  return uniqueTiles(room?.cells?.length ? room.cells : rectangleTiles(room ?? {}));
 }
 
 function roomContainsTile(room, tile) {
-  return (
-    tile.col >= room.col
-    && tile.col < room.col + room.columns
-    && tile.row >= room.row
-    && tile.row < room.row + room.rows
-  );
+  return roomCells(room).some((cell) => cell.col === tile.col && cell.row === tile.row);
 }
 
 function roomsOverlap(left, right) {
-  return !(
-    left.col + left.columns <= right.col
-    || right.col + right.columns <= left.col
-    || left.row + left.rows <= right.row
-    || right.row + right.rows <= left.row
-  );
+  const rightCells = new Set(roomCells(right).map((tile) => `${tile.col},${tile.row}`));
+  return roomCells(left).some((tile) => rightCells.has(`${tile.col},${tile.row}`));
+}
+
+function areTilesConnected(cells) {
+  if (cells.length <= 1) {
+    return true;
+  }
+  const wanted = new Set(cells.map(tileKey));
+  const queue = [cells[0]];
+  const visited = new Set([tileKey(cells[0])]);
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const candidates = [
+      { col: current.col + 1, row: current.row },
+      { col: current.col - 1, row: current.row },
+      { col: current.col, row: current.row + 1 },
+      { col: current.col, row: current.row - 1 },
+    ];
+    for (const candidate of candidates) {
+      const key = tileKey(candidate);
+      if (!wanted.has(key) || visited.has(key)) {
+        continue;
+      }
+      visited.add(key);
+      queue.push(candidate);
+    }
+  }
+  return visited.size === wanted.size;
 }
 
 export function resetRoomLayout() {
   roomLayout.splice(0, roomLayout.length, ...defaultRoomLayout.map((room) => ({ ...room })));
+  doorLayout.splice(0, doorLayout.length);
 }
 
 export function setRoomLayout(rooms) {
@@ -137,6 +230,10 @@ export function setRoomLayout(rooms) {
   roomLayout.splice(0, roomLayout.length, ...(normalized.length ? normalized : defaultRoomLayout.map((room) => ({ ...room }))));
 }
 
+export function setDoorLayout(doors) {
+  doorLayout.splice(0, doorLayout.length, ...uniqueTiles(doors));
+}
+
 export function addRoomToLayout(room) {
   const normalized = normalizeRoom(room, roomLayout.length);
   if (roomLayout.some((existing) => existing.id === normalized.id)) {
@@ -144,6 +241,68 @@ export function addRoomToLayout(room) {
   }
   roomLayout.push(normalized);
   return normalized;
+}
+
+export function removeRoomFromLayout(roomId) {
+  const index = roomLayout.findIndex((room) => room.id === roomId);
+  if (index < 0) {
+    return { changed: false, reason: "missing" };
+  }
+  if (roomLayout.length <= 1) {
+    return { changed: false, reason: "last-room" };
+  }
+  const [room] = roomLayout.splice(index, 1);
+  return { changed: true, room };
+}
+
+export function toggleRoomCell(roomId, tile) {
+  const room = roomLayout.find((item) => item.id === roomId);
+  const normalizedTile = normalizeTile(tile);
+  if (!room || !normalizedTile) {
+    return { changed: false, reason: "invalid" };
+  }
+  const owner = roomLayout.find((item) => item.id !== roomId && roomContainsTile(item, normalizedTile));
+  if (owner) {
+    return { changed: false, reason: "occupied-by-room", room: owner };
+  }
+  const key = tileKey(normalizedTile);
+  const cells = roomCells(room);
+  const exists = cells.some((cell) => tileKey(cell) === key);
+  if (exists && cells.length <= 3) {
+    return { changed: false, reason: "room-too-small" };
+  }
+  const nextCells = exists ? cells.filter((cell) => tileKey(cell) !== key) : [...cells, normalizedTile];
+  if (!exists) {
+    const adjacent = cells.some((cell) => Math.abs(cell.col - normalizedTile.col) + Math.abs(cell.row - normalizedTile.row) === 1);
+    if (!adjacent) {
+      return { changed: false, reason: "room-not-contiguous" };
+    }
+  }
+  if (!areTilesConnected(nextCells)) {
+    return { changed: false, reason: "room-disconnected" };
+  }
+  room.cells = nextCells;
+  updateRoomBounds(room);
+  return { changed: true, added: !exists, room };
+}
+
+export function isDoorTile(tile) {
+  return doorLayout.some((door) => tileEquals(door, tile));
+}
+
+export function toggleDoorAt(tile) {
+  const normalizedTile = normalizeTile(tile);
+  if (!normalizedTile) {
+    return { changed: false, reason: "invalid" };
+  }
+  const key = tileKey(normalizedTile);
+  const index = doorLayout.findIndex((door) => tileKey(door) === key);
+  if (index >= 0) {
+    doorLayout.splice(index, 1);
+    return { changed: true, added: false, tile: normalizedTile };
+  }
+  doorLayout.push(normalizedTile);
+  return { changed: true, added: true, tile: normalizedTile };
 }
 
 export function findAvailableRoomRect(columns = 6, rows = 5) {
@@ -205,7 +364,7 @@ export function isWithinWorldBounds(tile) {
 }
 
 export function isInsideTile(tile) {
-  return isWithinWorldBounds(tile) && roomLayout.some((room) => roomContainsTile(room, tile));
+  return isWithinWorldBounds(tile) && (roomLayout.some((room) => roomContainsTile(room, tile)) || isDoorTile(tile));
 }
 
 export function tileToWorld(tile) {

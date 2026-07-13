@@ -28,9 +28,7 @@
 
       <div class="toolbar" aria-label="Controlli">
         <button id="add-agent" class="button" type="button">+ Agent</button>
-        <button id="layout-toggle" class="button" type="button">Layout</button>
-        <button id="add-room" class="button" type="button">+ Room</button>
-        <button id="reset-layout" class="button button--icon" type="button" aria-label="Reset layout">↺</button>
+        <button id="layout-toggle" class="button" type="button">Editor</button>
         <button id="theme-toggle" class="button" type="button">White</button>
         <button id="run-toggle" class="button button--primary" type="button">Pausa</button>
         <button id="auto-toggle" class="button button--primary" type="button">Auto</button>
@@ -49,6 +47,26 @@
         </button>
       </div>
     </header>
+
+    <section class="layout-editor" id="layout-editor" aria-label="Editor layout" hidden>
+      <div class="layout-editor__heading">
+        <div>
+          <p class="section-label">Editor</p>
+          <strong id="layout-editor-status">Layout manuale</strong>
+        </div>
+        <button id="editor-close" class="button button--icon" type="button" aria-label="Chiudi editor">×</button>
+      </div>
+      <div class="layout-editor__actions">
+        <button id="add-room" class="button" type="button">+ Stanza</button>
+        <button id="room-draw-toggle" class="button" type="button">Modella stanza</button>
+        <button id="door-toggle" class="button" type="button">Porte</button>
+        <button id="delete-room" class="button button--danger" type="button">Rimuovi stanza</button>
+        <button id="reset-layout" class="button" type="button">Reset</button>
+      </div>
+      <p class="layout-editor__hint" id="layout-editor-hint">
+        Seleziona una stanza dal pannello, poi scegli cosa modificare.
+      </p>
+    </section>
 
     <aside class="inspector" aria-label="Stato agente">
       <section class="panel-section">
@@ -84,6 +102,11 @@
       <section class="panel-section">
         <p class="section-label">Postazioni</p>
         <div class="station-list" id="station-list"></div>
+      </section>
+
+      <section class="panel-section">
+        <p class="section-label">Stanze</p>
+        <div class="room-list" id="room-list"></div>
       </section>
     </aside>
 

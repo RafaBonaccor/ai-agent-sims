@@ -38,17 +38,32 @@ il timer effettivo resta nel runtime nativo.
 
 ## Layout del gioco
 
-La barra superiore include una modalita `Layout` per modificare la casa:
+La barra superiore include il pulsante `Editor`. Quando lo premi, la UI passa a
+un piccolo pannello di modifica layout:
 
-- `Layout`: attiva/disattiva l'editor.
-- `+ Room`: aggiunge una nuova stanza in uno spazio libero della griglia.
-- `↺`: resetta il layout salvato e ricarica la scena.
+- `+ Stanza`: aggiunge una nuova stanza in uno spazio libero della griglia.
+- `Modella stanza`: modella la stanza selezionata cliccando i quadrati della griglia.
+- `Porte`: aggiunge/rimuove celle porta o corridoio tra stanze.
+- `Rimuovi stanza`: elimina la stanza selezionata se e vuota e non e l'ultima.
+- `Reset`: resetta il layout salvato e ricarica la scena.
 - `White`/`Dark`: cambia tema tra modalita scura e chiara.
 
-In modalita Layout, clicca un agente o un tavolo/postazione e poi clicca un tile
+Con l'editor aperto, clicca un agente o un tavolo/postazione e poi clicca un tile
 di pavimento per spostarlo. Le posizioni di stanze, tavoli e agenti vengono
 salvate in `localStorage`, quindi restano dopo un refresh del browser. I task e
 gli agenti runtime restano invece persistiti nel backend/SQLite.
+Per creare forme tipo editor di The Sims, seleziona una stanza dal pannello
+`Stanze`, attiva `Modella stanza` e clicca le celle della griglia per aggiungerle
+o rimuoverle. Le stanze restano contigue: una cella nuova deve toccare la stanza
+selezionata e una rimozione non puo spezzarla in isole. Le celle non possono
+sovrapporsi a un'altra stanza e non puoi rimuovere una cella occupata da agenti
+o tavoli.
+Con `Porte`, clicca una cella per trasformarla in porta/corridoio: quella cella
+diventa attraversabile dagli agenti e puo collegare stanze altrimenti separate.
+L'inspector mostra anche la sezione `Stanze`: ogni stanza indica quanti agenti
+contiene e il pulsante `Porta qui` sposta nella stanza l'agente o la postazione
+attualmente selezionata. Questo permette di controllare visivamente dove si
+trovano gli agenti senza dover mirare manualmente un tile.
 Il tema visuale viene salvato nello stesso browser e aggiorna sia UI che scena
 3D: background, fog, pavimento, tile, muri e pannelli.
 

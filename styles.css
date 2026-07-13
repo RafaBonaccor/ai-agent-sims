@@ -109,6 +109,7 @@ button:focus-visible {
 .topbar,
 .inspector,
 .command-strip,
+.layout-editor,
 .boot-message {
   position: fixed;
   z-index: 2;
@@ -279,6 +280,18 @@ h2 {
   color: var(--muted);
 }
 
+.button--danger {
+  border-color: rgba(251, 113, 133, 0.28);
+  background: linear-gradient(135deg, rgba(251, 113, 133, 0.16), rgba(255, 255, 255, 0.035));
+  color: #fecdd3;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
+}
+
 .button--intent {
   min-width: 86px;
   border-color: rgba(155, 135, 245, 0.22);
@@ -403,6 +416,57 @@ h2 {
   gap: 7px;
 }
 
+.room-list {
+  display: grid;
+  gap: 8px;
+}
+
+.room-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.room-row__main,
+.room-row__action {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.room-row__main {
+  display: grid;
+  grid-template-columns: 9px 1fr;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 11px;
+  text-align: left;
+}
+
+.room-row__action {
+  padding: 0 10px;
+  color: var(--cyan);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.room-row:hover .room-row__main,
+.room-row:hover .room-row__action {
+  border-color: var(--line-strong);
+  background: var(--button-hover-bg);
+}
+
+.room-row--active .room-row__main,
+.room-row--active .room-row__action {
+  border-color: color-mix(in srgb, var(--room-color) 46%, transparent);
+  background: color-mix(in srgb, var(--room-color) 12%, transparent);
+}
+
 .station-row {
   width: 100%;
   min-width: 0;
@@ -437,6 +501,7 @@ h2 {
   box-shadow: 0 0 12px color-mix(in srgb, var(--station-color) 75%, transparent);
 }
 
+.room-row strong,
 .station-row strong {
   display: block;
   overflow-wrap: anywhere;
@@ -444,6 +509,7 @@ h2 {
   font-weight: 650;
 }
 
+.room-row small,
 .station-row small {
   display: block;
   margin-top: 3px;
@@ -509,6 +575,53 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
+.layout-editor {
+  top: 98px;
+  left: 18px;
+  width: min(390px, calc(100vw - 36px));
+  padding: 13px;
+  border-radius: 16px;
+  z-index: 3;
+}
+
+.layout-editor[hidden] {
+  display: none;
+}
+
+.layout-editor__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.layout-editor__heading strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 0.93rem;
+  line-height: 1.25;
+}
+
+.layout-editor__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.layout-editor__actions .button {
+  min-width: 0;
+  width: 100%;
+}
+
+.layout-editor__hint {
+  margin: 11px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
 .event-log span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -529,6 +642,10 @@ h2 {
 
 .boot-message:empty {
   display: none;
+}
+
+.layout-editor:not([hidden]) ~ .boot-message {
+  top: 314px;
 }
 
 .job-toast-stack {
@@ -1329,6 +1446,12 @@ body.theme-light .button--primary {
   color: #075985;
 }
 
+body.theme-light .button--danger {
+  border-color: rgba(225, 29, 72, 0.25);
+  background: linear-gradient(135deg, rgba(225, 29, 72, 0.12), rgba(255, 255, 255, 0.62));
+  color: #9f1239;
+}
+
 body.theme-light .button--intent {
   border-color: rgba(124, 58, 237, 0.22);
   background: linear-gradient(135deg, rgba(196, 181, 253, 0.28), rgba(255, 255, 255, 0.62));
@@ -1474,6 +1597,7 @@ body.theme-light .notification-badge {
 @media (max-width: 980px) {
   .topbar,
   .inspector,
+  .layout-editor,
   .command-strip {
     left: 12px;
     right: 12px;
@@ -1487,6 +1611,15 @@ body.theme-light .notification-badge {
 
   .toolbar {
     justify-content: space-between;
+  }
+
+  .layout-editor {
+    top: 142px;
+    width: auto;
+  }
+
+  .layout-editor:not([hidden]) ~ .boot-message {
+    top: 360px;
   }
 
   .live-status {
@@ -1522,6 +1655,14 @@ body.theme-light .notification-badge {
 
   .toolbar {
     gap: 5px;
+  }
+
+  .layout-editor {
+    top: 146px;
+  }
+
+  .layout-editor__actions {
+    grid-template-columns: 1fr;
   }
 
   .toolbar .button {

@@ -43,8 +43,14 @@ esegue timer direttamente; i timer reali restano in `agent_runtime/scheduler.py`
 Il layout della casa e modificabile dal frontend: stanze, tavoli e posizioni
 agenti vengono salvati in `localStorage`. Questo non cambia la definizione
 runtime degli agenti in SQLite; cambia solo la rappresentazione spaziale del
-gioco. Anche il tema `dark`/`white` e locale al browser: aggiorna UI e palette
-Three.js senza cambiare dati runtime.
+gioco. Ogni stanza puo essere un insieme contiguo di celle (`room.cells`) e non
+solo un rettangolo; `doorLayout` contiene celle porta/corridoio camminabili. Il
+pathfinding usa `isInsideTile`, quindi agenti e tavoli rispettano sia la forma
+delle stanze sia le porte tra stanze. La UI usa un mini editor aperto dal
+pulsante `Editor` per aggiungere/rimuovere stanze, modellare celle e piazzare
+porte. L'inspector calcola membership stanza dai tile occupati e puo spostare la
+selezione corrente nella stanza scelta. Anche il tema `dark`/`white` e locale al
+browser: aggiorna UI e palette Three.js senza cambiare dati runtime.
 
 Gli stati agente sono `idle`, `receiving`, `planning`, `executing`, `waiting`,
 `verifying`, `blocked`, `failed` e `stopped`.
