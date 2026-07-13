@@ -11,6 +11,17 @@
     "model": {"provider": "simulated", "model": "native-supervisor", "temperature": 0.2}
   },
   {
+    "id": "scheduler",
+    "name": "Scheduler",
+    "role": "scheduler",
+    "color": "#f4b647",
+    "capabilities": ["scheduling", "calendar", "cron", "follow-up", "briefing"],
+    "toolsets": ["tasks", "memory", "runtime"],
+    "protocols": ["agent-lifecycle", "task-contract", "scheduling-policy", "quality-review"],
+    "instructions": "Coordinate when work should run. Convert user timing requests into explicit schedules, clarify ambiguous dates, prefer concrete ISO timestamps, explain cron or repeat rules, and hand executable work back to the runtime scheduler. Do not pretend to execute timers directly; the native runtime owns actual timing.",
+    "model": {"provider": "simulated", "model": "native-scheduler", "temperature": 0.1}
+  },
+  {
     "id": "planner",
     "name": "Planner",
     "role": "planner",
@@ -31,6 +42,17 @@
     "protocols": ["agent-lifecycle", "task-contract", "quality-review"],
     "instructions": "Collect evidence, distinguish facts from inference, and cite useful sources.",
     "model": {"provider": "simulated", "model": "native-researcher", "temperature": 0.2}
+  },
+  {
+    "id": "ai-news-navigator",
+    "name": "AI News Navigator",
+    "role": "web-navigator",
+    "color": "#18b6ff",
+    "capabilities": ["news", "research", "web-navigation", "summarization", "source-checking"],
+    "toolsets": ["web", "browser", "memory"],
+    "protocols": ["agent-lifecycle", "task-contract", "quality-review"],
+    "instructions": "Navigate the web to prepare concise AI news briefings. Prioritize recent primary sources, official announcements, reputable reporting, and clear citations. Separate confirmed facts from analysis or rumors. Write in Italian unless asked otherwise.",
+    "model": {"provider": "openai", "model": "gpt-5.4-mini", "temperature": 0.2}
   },
   {
     "id": "builder",

@@ -2,11 +2,18 @@ import * as THREE from "three";
 import { AgentNetwork } from "./src/agentProtocol.mjs";
 import {
   AgentWorld,
+  addRoomToLayout,
+  findAvailableRoomRect,
+  isInsideTile,
   roomConfig,
+  roomLayout,
+  resetRoomLayout,
+  setRoomLayout,
   tileEquals,
   tileKey,
   tileToWorld,
   workstations,
+  worldToTile,
 } from "./src/agentWorld.mjs";
 import { defaultScenario } from "./src/scenarios.mjs";
 import { RuntimeClient } from "./src/runtimeClient.mjs";
@@ -29,6 +36,10 @@ const metrics = document.querySelector("#metrics");
 const stationList = document.querySelector("#station-list");
 const runtimeStatus = document.querySelector("#runtime-status");
 const addAgentButton = document.querySelector("#add-agent");
+const layoutToggle = document.querySelector("#layout-toggle");
+const addRoomButton = document.querySelector("#add-room");
+const resetLayoutButton = document.querySelector("#reset-layout");
+const themeToggle = document.querySelector("#theme-toggle");
 const agentDialog = document.querySelector("#agent-dialog");
 const agentForm = document.querySelector("#agent-form");
 const agentFormError = document.querySelector("#agent-form-error");
@@ -80,8 +91,43 @@ const projectOutputMeta = document.querySelector("#project-output-meta");
 const projectOutputHead = document.querySelector("#project-output-head");
 const projectOutputRows = document.querySelector("#project-output-rows");
 
+const LAYOUT_STORAGE_KEY = "agent-protocol-lab-layout-v1";
+
+function loadStoredLayout() {
+  try {
+    const raw = window.localStorage?.getItem(LAYOUT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (_error) {
+    return {};
+  }
+}
+
+function tileFromStored(value) {
+  if (!value || !Number.isFinite(Number(value.col)) || !Number.isFinite(Number(value.row))) {
+    return null;
+  }
+  return { col: Number(value.col), row: Number(value.row) };
+}
+
+function applyStoredLayoutBeforeWorld(layout) {
+  if (Array.isArray(layout.rooms) && layout.rooms.length) {
+    setRoomLayout(layout.rooms);
+  }
+  for (const [stationId, storedTile] of Object.entries(layout.stations ?? {})) {
+    const tile = tileFromStored(storedTile);
+    const station = workstations.find((item) => item.id === stationId);
+    if (station && tile && isInsideTile(tile)) {
+      station.position = tileToWorld(tile);
+    }
+  }
+}
+
+const storedLayout = loadStoredLayout();
+applyStoredLayoutBeforeWorld(storedLayout);
+
 const network = new AgentNetwork(defaultScenario);
 const agentWorld = new AgentWorld(network);
+agentWorld.restoreAgentTiles(storedLayout.agents ?? {});
 const runtimeClient = new RuntimeClient();
 const runtimeSnapshots = new Map();
 const agentReplies = new Map();
@@ -145,6 +191,71 @@ const PERFORMANCE = {
   fog: true,
 };
 
+const THEME_STORAGE_KEY = "agent-protocol-lab-theme-v1";
+const WORLD_THEMES = {
+  dark: {
+    label: "Dark",
+    sceneBg: 0x070c16,
+    fog: 0x070c16,
+    fogNear: 17,
+    fogFar: 31,
+    exposure: 1.15,
+    floor: 0x151f31,
+    wall: 0x111a2a,
+    trim: 0x050912,
+    glass: 0x67e8f9,
+    glassEmissive: 0x123c48,
+    glassOpacity: 0.38,
+    shadow: 0x000000,
+    shadowOpacity: 0.3,
+    stationSurface: 0x111a2a,
+    stationSurfaceEmissive: 0x000000,
+    tileEven: 0x172238,
+    tileOdd: 0x131d30,
+    tileBlocked: 0x0b1120,
+    tileCurrent: 0x1d7180,
+    tileDestination: 0x725b2b,
+    tileOccupied: 0x273650,
+    tileStation: 0x7c5b18,
+  },
+  light: {
+    label: "White",
+    sceneBg: 0xdbeafe,
+    fog: 0xdbeafe,
+    fogNear: 20,
+    fogFar: 40,
+    exposure: 1.05,
+    floor: 0xe8f4ff,
+    wall: 0xf8fafc,
+    trim: 0xb7c9e8,
+    glass: 0x38bdf8,
+    glassEmissive: 0xbae6fd,
+    glassOpacity: 0.5,
+    shadow: 0x2b4a6f,
+    shadowOpacity: 0.16,
+    stationSurface: 0xffffff,
+    stationSurfaceEmissive: 0xe0f2fe,
+    tileEven: 0xf8fbff,
+    tileOdd: 0xe7f2ff,
+    tileBlocked: 0xcbd5e1,
+    tileCurrent: 0x6ee7f9,
+    tileDestination: 0xfde68a,
+    tileOccupied: 0xc7d2fe,
+    tileStation: 0xfbbf24,
+  },
+};
+
+function loadStoredTheme() {
+  try {
+    const stored = window.localStorage?.getItem(THEME_STORAGE_KEY);
+    return stored === "light" || stored === "dark" ? stored : "dark";
+  } catch (_error) {
+    return "dark";
+  }
+}
+
+let currentTheme = loadStoredTheme();
+
 const renderer = new THREE.WebGLRenderer({
   canvas,
   antialias: true,
@@ -155,11 +266,13 @@ renderer.shadowMap.enabled = PERFORMANCE.shadows;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.15;
+renderer.toneMappingExposure = WORLD_THEMES[currentTheme].exposure;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x070c16);
-scene.fog = PERFORMANCE.fog ? new THREE.Fog(0x070c16, 17, 31) : null;
+scene.background = new THREE.Color(WORLD_THEMES[currentTheme].sceneBg);
+scene.fog = PERFORMANCE.fog
+  ? new THREE.Fog(WORLD_THEMES[currentTheme].fog, WORLD_THEMES[currentTheme].fogNear, WORLD_THEMES[currentTheme].fogFar)
+  : null;
 
 const camera = new THREE.OrthographicCamera(-8, 8, 5, -5, 0.1, 100);
 let cameraYaw = Math.PI * 0.25;
@@ -188,30 +301,33 @@ let nextRelationRefresh = 0;
 let lastFrameAt = 0;
 let quickChatAgentId = null;
 let quickChatFocusTimer = null;
+let layoutMode = false;
 
 const selectableObjects = [];
 const agentVisuals = new Map();
 const stationVisuals = new Map();
 const relationVisuals = new Map();
 const messageVisuals = new Map();
+const roomVisuals = new Map();
 const tileVisuals = new Map();
+const initialWorldTheme = WORLD_THEMES[currentTheme];
 
 const sharedMaterials = {
-  floor: new THREE.MeshStandardMaterial({ color: 0x151f31, roughness: 0.84, metalness: 0.08 }),
-  wall: new THREE.MeshStandardMaterial({ color: 0x111a2a, roughness: 0.74, metalness: 0.14 }),
-  trim: new THREE.MeshStandardMaterial({ color: 0x050912, roughness: 0.55, metalness: 0.32 }),
+  floor: new THREE.MeshStandardMaterial({ color: initialWorldTheme.floor, roughness: 0.84, metalness: 0.08 }),
+  wall: new THREE.MeshStandardMaterial({ color: initialWorldTheme.wall, roughness: 0.74, metalness: 0.14 }),
+  trim: new THREE.MeshStandardMaterial({ color: initialWorldTheme.trim, roughness: 0.55, metalness: 0.32 }),
   glass: new THREE.MeshStandardMaterial({
-    color: 0x67e8f9,
-    emissive: 0x123c48,
+    color: initialWorldTheme.glass,
+    emissive: initialWorldTheme.glassEmissive,
     transparent: true,
-    opacity: 0.38,
+    opacity: initialWorldTheme.glassOpacity,
     roughness: 0.12,
     metalness: 0.26,
   }),
   shadow: new THREE.MeshBasicMaterial({
-    color: 0x000000,
+    color: initialWorldTheme.shadow,
     transparent: true,
-    opacity: 0.3,
+    opacity: initialWorldTheme.shadowOpacity,
     depthWrite: false,
   }),
 };
@@ -227,18 +343,166 @@ const scratchCurve = new THREE.QuadraticBezierCurve3(
 );
 
 const tilePalette = {
-  even: new THREE.Color(0x172238),
-  odd: new THREE.Color(0x131d30),
-  blocked: new THREE.Color(0x0b1120),
-  current: new THREE.Color(0x1d7180),
-  destination: new THREE.Color(0x725b2b),
-  occupied: new THREE.Color(0x273650),
+  even: new THREE.Color(initialWorldTheme.tileEven),
+  odd: new THREE.Color(initialWorldTheme.tileOdd),
+  blocked: new THREE.Color(initialWorldTheme.tileBlocked),
+  current: new THREE.Color(initialWorldTheme.tileCurrent),
+  destination: new THREE.Color(initialWorldTheme.tileDestination),
+  occupied: new THREE.Color(initialWorldTheme.tileOccupied),
+  station: new THREE.Color(initialWorldTheme.tileStation),
 };
 
 function setBootMessage(message) {
   if (bootMessage) {
     bootMessage.textContent = message;
   }
+}
+
+function tileBaseColorFor(tile) {
+  if (agentWorld.isBlockedTile(tile)) {
+    return tilePalette.blocked;
+  }
+  return (tile.row + tile.col) % 2 === 0 ? tilePalette.even : tilePalette.odd;
+}
+
+function applyTheme(theme, options = {}) {
+  currentTheme = theme === "light" ? "light" : "dark";
+  const colors = WORLD_THEMES[currentTheme];
+  document.body.classList.toggle("theme-light", currentTheme === "light");
+  if (themeToggle) {
+    themeToggle.textContent = currentTheme === "light" ? "Dark" : "White";
+    themeToggle.classList.toggle("button--primary", currentTheme === "light");
+    themeToggle.setAttribute("aria-label", `Switch to ${currentTheme === "light" ? "dark" : "white"} mode`);
+  }
+  renderer.toneMappingExposure = colors.exposure;
+  scene.background = new THREE.Color(colors.sceneBg);
+  scene.fog = PERFORMANCE.fog ? new THREE.Fog(colors.fog, colors.fogNear, colors.fogFar) : null;
+
+  sharedMaterials.floor.color.setHex(colors.floor);
+  sharedMaterials.wall.color.setHex(colors.wall);
+  sharedMaterials.trim.color.setHex(colors.trim);
+  sharedMaterials.glass.color.setHex(colors.glass);
+  sharedMaterials.glass.emissive.setHex(colors.glassEmissive);
+  sharedMaterials.glass.opacity = colors.glassOpacity;
+  sharedMaterials.shadow.color.setHex(colors.shadow);
+  sharedMaterials.shadow.opacity = colors.shadowOpacity;
+
+  for (const group of stationVisuals.values()) {
+    group.traverse((child) => {
+      const material = child.material;
+      if (material?.userData?.themeRole === "station-surface") {
+        material.color.setHex(colors.stationSurface);
+        material.emissive?.setHex(colors.stationSurfaceEmissive);
+      }
+    });
+  }
+
+  tilePalette.even.setHex(colors.tileEven);
+  tilePalette.odd.setHex(colors.tileOdd);
+  tilePalette.blocked.setHex(colors.tileBlocked);
+  tilePalette.current.setHex(colors.tileCurrent);
+  tilePalette.destination.setHex(colors.tileDestination);
+  tilePalette.occupied.setHex(colors.tileOccupied);
+  tilePalette.station.setHex(colors.tileStation);
+
+  for (const mesh of tileVisuals.values()) {
+    mesh.userData.baseColor = tileBaseColorFor(mesh.userData.tile).clone();
+    mesh.userData.renderState = "";
+  }
+  updateTiles();
+
+  if (options.persist !== false) {
+    try {
+      window.localStorage?.setItem(THEME_STORAGE_KEY, currentTheme);
+    } catch (_error) {
+      // Ignore storage failures; the theme still changes for the current session.
+    }
+  }
+}
+
+function currentLayoutState() {
+  const agents = {};
+  for (const agent of network.agents) {
+    const state = agentWorld.getAgentState(agent.id);
+    if (state) {
+      agents[agent.id] = { ...state.tile };
+    }
+  }
+  return {
+    version: 1,
+    rooms: roomLayout.map((room) => ({ ...room })),
+    stations: Object.fromEntries(workstations.map((station) => [station.id, worldToTile(station.position)])),
+    agents,
+  };
+}
+
+function saveLayoutState() {
+  try {
+    window.localStorage?.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(currentLayoutState()));
+  } catch (error) {
+    runtimeClient.logClient?.("warning", error.message, { operation: "saveLayoutState" });
+  }
+}
+
+function setLayoutMode(enabled) {
+  layoutMode = enabled;
+  layoutToggle?.classList.toggle("button--primary", layoutMode);
+  canvas.classList.toggle("layout-mode", layoutMode);
+  setBootMessage(
+    layoutMode
+      ? "Layout mode: seleziona un agente o un tavolo, poi clicca un tile per spostarlo. + Room aggiunge una stanza."
+      : ""
+  );
+  if (layoutMode) {
+    closeQuickChat();
+    setAutoAgents(false);
+  }
+  updateHud();
+}
+
+function roomColor(index) {
+  return ["#38bdf8", "#a78bfa", "#34d399", "#f97316", "#f472b6", "#eab308"][index % 6];
+}
+
+function moveStationVisual(stationId) {
+  const station = agentWorld.getStation(stationId);
+  const visual = stationVisuals.get(stationId);
+  if (station && visual) {
+    visual.position.set(station.position.x, 0, station.position.z);
+  }
+}
+
+function addLayoutRoom() {
+  const rect = findAvailableRoomRect(5, 4);
+  if (!rect) {
+    setBootMessage("Non c'e spazio libero per un'altra stanza nel layout attuale.");
+    return;
+  }
+  const room = addRoomToLayout({
+    ...rect,
+    id: `room-${roomLayout.length + 1}`,
+    label: `Room ${roomLayout.length + 1}`,
+    color: roomColor(roomLayout.length),
+  });
+  createRoomVisual(room);
+  agentWorld.refreshBlockedTiles();
+  const center = roomCenter(room);
+  cameraTarget.set(center.x, 0, center.z);
+  updateCamera();
+  setLayoutMode(true);
+  saveLayoutState();
+  setBootMessage(`${room.label} aggiunta. Seleziona un agente/tavolo e clicca un tile nella nuova stanza.`);
+  updateHud();
+}
+
+function resetSavedLayout() {
+  try {
+    window.localStorage?.removeItem(LAYOUT_STORAGE_KEY);
+  } catch (_error) {
+    // Best effort; reload still restores source defaults if storage is unavailable.
+  }
+  resetRoomLayout();
+  window.location.reload();
 }
 
 function colorMaterial(color, options = {}) {
@@ -344,26 +608,41 @@ function addMesh(group, geometry, material, position, scale = null, castShadow =
   return mesh;
 }
 
-function buildRoom() {
+function roomCenter(room) {
+  return {
+    x: (room.col + room.columns / 2) * roomConfig.cellSize - roomConfig.width / 2,
+    z: (room.row + room.rows / 2) * roomConfig.cellSize - roomConfig.depth / 2,
+  };
+}
+
+function createRoomVisual(room) {
+  if (roomVisuals.has(room.id)) {
+    return roomVisuals.get(room.id);
+  }
+  const group = new THREE.Group();
+  const center = roomCenter(room);
+  const roomWidth = room.columns * roomConfig.cellSize;
+  const roomDepth = room.rows * roomConfig.cellSize;
+  const accentColor = new THREE.Color(room.color ?? "#38bdf8");
+
   const base = new THREE.Mesh(
-    new THREE.BoxGeometry(roomConfig.width + 0.18, 0.16, roomConfig.depth + 0.18),
+    new THREE.BoxGeometry(roomWidth + 0.18, 0.16, roomDepth + 0.18),
     sharedMaterials.trim
   );
-  base.position.y = -roomConfig.blockHeight - 0.06;
+  base.position.set(center.x, -roomConfig.blockHeight - 0.06, center.z);
   base.receiveShadow = true;
-  scene.add(base);
+  group.add(base);
 
   const tileGeometry = new THREE.BoxGeometry(0.94, roomConfig.blockHeight, 0.94);
-  for (let row = 0; row < roomConfig.rows; row += 1) {
-    for (let col = 0; col < roomConfig.columns; col += 1) {
+  for (let row = room.row; row < room.row + room.rows; row += 1) {
+    for (let col = room.col; col < room.col + room.columns; col += 1) {
       const tile = { col, row };
+      const key = tileKey(tile);
+      if (tileVisuals.has(key)) {
+        continue;
+      }
       const world = tileToWorld(tile);
-      const blocked = agentWorld.isBlockedTile(tile);
-      const baseColor = blocked
-        ? tilePalette.blocked
-        : (row + col) % 2 === 0
-          ? tilePalette.even
-          : tilePalette.odd;
+      const baseColor = tileBaseColorFor(tile);
       const material = new THREE.MeshStandardMaterial({
         color: baseColor,
         emissive: baseColor.clone().multiplyScalar(0.035),
@@ -374,82 +653,106 @@ function buildRoom() {
       mesh.position.set(world.x, -roomConfig.blockHeight / 2, world.z);
       mesh.receiveShadow = true;
       mesh.userData.tile = tile;
-      mesh.userData.tileKey = tileKey(tile);
+      mesh.userData.tileKey = key;
+      mesh.userData.roomId = room.id;
       mesh.userData.baseColor = baseColor.clone();
-      scene.add(mesh);
-      tileVisuals.set(tileKey(tile), mesh);
+      group.add(mesh);
+      tileVisuals.set(key, mesh);
       selectableObjects.push(mesh);
     }
   }
 
   const backWall = new THREE.Mesh(
-    new THREE.BoxGeometry(roomConfig.width, 1.55, 0.22),
+    new THREE.BoxGeometry(roomWidth, 1.2, 0.16),
     sharedMaterials.wall
   );
-  backWall.position.set(0, 0.72, -roomConfig.depth / 2 - 0.08);
+  backWall.position.set(center.x, 0.55, center.z - roomDepth / 2 - 0.08);
   backWall.castShadow = true;
   backWall.receiveShadow = true;
-  scene.add(backWall);
+  group.add(backWall);
 
   const leftWall = new THREE.Mesh(
-    new THREE.BoxGeometry(0.22, 1.55, roomConfig.depth),
+    new THREE.BoxGeometry(0.16, 1.2, roomDepth),
     sharedMaterials.wall
   );
-  leftWall.position.set(-roomConfig.width / 2 - 0.08, 0.72, 0);
+  leftWall.position.set(center.x - roomWidth / 2 - 0.08, 0.55, center.z);
   leftWall.castShadow = true;
   leftWall.receiveShadow = true;
-  scene.add(leftWall);
+  group.add(leftWall);
 
   const accentMaterial = new THREE.MeshBasicMaterial({
-    color: 0x5ee7f2,
+    color: accentColor,
     transparent: true,
     opacity: 0.55,
   });
   const backAccent = new THREE.Mesh(
-    new THREE.BoxGeometry(roomConfig.width - 0.5, 0.025, 0.025),
+    new THREE.BoxGeometry(Math.max(0.5, roomWidth - 0.5), 0.025, 0.025),
     accentMaterial
   );
-  backAccent.position.set(0, 0.12, -roomConfig.depth / 2 + 0.05);
-  scene.add(backAccent);
+  backAccent.position.set(center.x, 0.12, center.z - roomDepth / 2 + 0.05);
+  group.add(backAccent);
   const sideAccent = new THREE.Mesh(
-    new THREE.BoxGeometry(0.025, 0.025, roomConfig.depth - 0.5),
+    new THREE.BoxGeometry(0.025, 0.025, Math.max(0.5, roomDepth - 0.5)),
     accentMaterial
   );
-  sideAccent.position.set(-roomConfig.width / 2 + 0.05, 0.12, 0);
-  scene.add(sideAccent);
+  sideAccent.position.set(center.x - roomWidth / 2 + 0.05, 0.12, center.z);
+  group.add(sideAccent);
 
   const trimMaterial = sharedMaterials.trim;
-  for (const z of [-roomConfig.depth / 2, roomConfig.depth / 2]) {
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(roomConfig.width, 0.08, 0.08), trimMaterial);
-    trim.position.set(0, 0.05, z);
-    scene.add(trim);
+  for (const z of [center.z - roomDepth / 2, center.z + roomDepth / 2]) {
+    const trim = new THREE.Mesh(new THREE.BoxGeometry(roomWidth, 0.08, 0.08), trimMaterial);
+    trim.position.set(center.x, 0.05, z);
+    group.add(trim);
   }
-  for (const x of [-roomConfig.width / 2, roomConfig.width / 2]) {
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, roomConfig.depth), trimMaterial);
-    trim.position.set(x, 0.05, 0);
-    scene.add(trim);
+  for (const x of [center.x - roomWidth / 2, center.x + roomWidth / 2]) {
+    const trim = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, roomDepth), trimMaterial);
+    trim.position.set(x, 0.05, center.z);
+    group.add(trim);
   }
 
-  const rug = new THREE.Mesh(
-    new THREE.CylinderGeometry(2.15, 2.15, 0.035, 32),
-    new THREE.MeshStandardMaterial({
-      color: 0x17172e,
-      emissive: 0x151030,
-      roughness: 0.62,
-      metalness: 0.22,
-    })
-  );
-  rug.position.set(0, 0.03, -3.75);
-  rug.receiveShadow = true;
-  scene.add(rug);
+  const label = createTextSprite(room.label, {
+    background: "rgba(8, 14, 25, 0.62)",
+    color: "#c7d2fe",
+    size: 30,
+    scaleX: 2.1,
+    scaleY: 0.42,
+  });
+  label.position.set(center.x, 0.08, center.z + roomDepth / 2 - 0.7);
+  label.rotation.x = -Math.PI / 2;
+  group.add(label);
 
-  const rugRing = new THREE.Mesh(
-    new THREE.TorusGeometry(2.02, 0.025, 8, 64),
-    new THREE.MeshBasicMaterial({ color: 0x9b87f5, transparent: true, opacity: 0.6 })
-  );
-  rugRing.rotation.x = Math.PI / 2;
-  rugRing.position.set(0, 0.065, -3.75);
-  scene.add(rugRing);
+  if (room.id === "main") {
+    const rug = new THREE.Mesh(
+      new THREE.CylinderGeometry(2.15, 2.15, 0.035, 32),
+      new THREE.MeshStandardMaterial({
+        color: 0x17172e,
+        emissive: 0x151030,
+        roughness: 0.62,
+        metalness: 0.22,
+      })
+    );
+    rug.position.set(0, 0.03, -3.75);
+    rug.receiveShadow = true;
+    group.add(rug);
+
+    const rugRing = new THREE.Mesh(
+      new THREE.TorusGeometry(2.02, 0.025, 8, 64),
+      new THREE.MeshBasicMaterial({ color: 0x9b87f5, transparent: true, opacity: 0.6 })
+    );
+    rugRing.rotation.x = Math.PI / 2;
+    rugRing.position.set(0, 0.065, -3.75);
+    group.add(rugRing);
+  }
+
+  scene.add(group);
+  roomVisuals.set(room.id, group);
+  return group;
+}
+
+function buildRoom() {
+  for (const room of roomLayout) {
+    createRoomVisual(room);
+  }
 }
 
 function buildLights() {
@@ -480,12 +783,18 @@ function buildLights() {
 
 function createStationProp(station) {
   const group = new THREE.Group();
+  const theme = WORLD_THEMES[currentTheme];
   const stationMaterial = colorMaterial(station.color, {
     emissive: new THREE.Color(station.color).multiplyScalar(0.12),
     roughness: 0.48,
     metalness: 0.18,
   });
-  const darkMaterial = colorMaterial(0x111a2a, { roughness: 0.52, metalness: 0.3 });
+  const darkMaterial = colorMaterial(theme.stationSurface, {
+    emissive: theme.stationSurfaceEmissive,
+    roughness: 0.52,
+    metalness: 0.3,
+  });
+  darkMaterial.userData.themeRole = "station-surface";
   const lightMaterial = colorMaterial(station.color, {
     emissive: new THREE.Color(station.color).multiplyScalar(0.8),
     roughness: 0.24,
@@ -936,6 +1245,8 @@ function updateStations(elapsed) {
 
 function updateTiles() {
   const selectedState = agentWorld.getAgentState(selectedAgentId);
+  const selectedStation = selectedStationId ? agentWorld.getStation(selectedStationId) : null;
+  const selectedStationTile = selectedStation ? worldToTile(selectedStation.position) : null;
   const occupiedKeys = new Set();
   for (const agent of network.agents) {
     const state = agentWorld.getAgentState(agent.id);
@@ -948,7 +1259,9 @@ function updateTiles() {
     const tile = mesh.userData.tile;
     const baseColor = mesh.userData.baseColor;
     let renderState = "base";
-    if (selectedState && tileEquals(tile, selectedState.destinationTile)) {
+    if (selectedStationTile && tileEquals(tile, selectedStationTile)) {
+      renderState = "station";
+    } else if (selectedState && tileEquals(tile, selectedState.destinationTile)) {
       renderState = "destination";
     } else if (selectedState && tileEquals(tile, selectedState.tile)) {
       renderState = "current";
@@ -964,6 +1277,9 @@ function updateTiles() {
     if (renderState === "destination") {
       mesh.material.color.copy(tilePalette.destination);
       mesh.position.y = -roomConfig.blockHeight / 2 + 0.035;
+    } else if (renderState === "station") {
+      mesh.material.color.copy(tilePalette.station);
+      mesh.position.y = -roomConfig.blockHeight / 2 + 0.04;
     } else if (renderState === "current") {
       mesh.material.color.copy(tilePalette.current);
       mesh.position.y = -roomConfig.blockHeight / 2 + 0.045;
@@ -991,10 +1307,11 @@ function updateHud() {
 
   metrics.innerHTML = `
     <span>${network.agents.length} agenti</span>
+    <span>${roomLayout.length} stanze</span>
     <span>${network.messages.length} messaggi</span>
     <span>${network.relations.length} canali</span>
     <span>${speed}x</span>
-    <span>${autoAgents ? "auto" : "manuale"}</span>
+    <span>${layoutMode ? "layout" : autoAgents ? "auto" : "manuale"}</span>
   `;
 
   eventLog.innerHTML = network.events
@@ -1177,6 +1494,13 @@ async function triggerIntent(intentId) {
         description: "Create and execute a structured plan through the native runtime.",
         capability: "planning",
         priority: 3,
+      },
+      schedule: {
+        title: "Prepare the next runtime schedule",
+        description: "Review upcoming work, propose concrete run times, and explain which tasks should be delegated to the native scheduler.",
+        capability: "scheduling",
+        priority: 3,
+        requested_agent_id: "scheduler",
       },
       "memory-sync": {
         title: "Synchronize shared runtime context",
@@ -2433,14 +2757,52 @@ function objectFromPointer(event) {
 function selectFromPointer(event) {
   const hit = objectFromPointer(event);
   if (!hit) {
-    selectedStationId = null;
-    closeQuickChat();
+    if (!layoutMode) {
+      selectedStationId = null;
+      closeQuickChat();
+    }
     updateHud();
     return;
   }
 
   const agentId = hit.object.userData.agentId;
   const stationId = hit.object.userData.stationId;
+  const tile = hit.object.userData.tile;
+  if (layoutMode) {
+    if (agentId) {
+      selectedAgentId = agentId;
+      selectedStationId = null;
+      closeQuickChat();
+      setBootMessage(`Layout mode: ${network.getAgent(agentId)?.label ?? agentId} selezionato. Clicca un tile per spostarlo.`);
+    } else if (stationId) {
+      selectedStationId = stationId;
+      closeQuickChat();
+      setBootMessage(`Layout mode: ${agentWorld.getStation(stationId)?.label ?? stationId} selezionato. Clicca un tile per spostarlo.`);
+    } else if (tile) {
+      if (selectedStationId) {
+        const moved = agentWorld.commandMoveStation(selectedStationId, tile);
+        if (moved) {
+          moveStationVisual(selectedStationId);
+          saveLayoutState();
+          setBootMessage(`${agentWorld.getStation(selectedStationId)?.label ?? "Tavolo"} spostato.`);
+        } else {
+          setBootMessage("Quel tile non e disponibile per il tavolo selezionato.");
+        }
+      } else if (selectedAgentId) {
+        const moved = agentWorld.commandPlaceAgent(selectedAgentId, tile, "layout move");
+        if (moved) {
+          setAutoAgents(false);
+          saveLayoutState();
+          setBootMessage(`${network.getAgent(selectedAgentId)?.label ?? "Agente"} spostato.`);
+        } else {
+          setBootMessage("Quel tile non e disponibile per l'agente selezionato.");
+        }
+      }
+    }
+    updateHud();
+    return;
+  }
+
   if (agentId) {
     selectedAgentId = agentId;
     selectedStationId = null;
@@ -2448,12 +2810,13 @@ function selectFromPointer(event) {
   } else if (stationId) {
     selectedStationId = stationId;
     closeQuickChat();
-  } else if (hit.object.userData.tile) {
+  } else if (tile) {
     selectedStationId = null;
     closeQuickChat();
-    const moved = agentWorld.commandMoveAgent(selectedAgentId, hit.object.userData.tile, "manual move");
+    const moved = agentWorld.commandMoveAgent(selectedAgentId, tile, "manual move");
     if (moved) {
       setAutoAgents(false);
+      saveLayoutState();
     }
   }
   updateHud();
@@ -2465,8 +2828,8 @@ function panCamera(dx, dy) {
   const forward = new THREE.Vector3(Math.sin(cameraYaw), 0, Math.cos(cameraYaw));
   cameraTarget.addScaledVector(right, -dx * scale);
   cameraTarget.addScaledVector(forward, -dy * scale);
-  cameraTarget.x = Math.max(-2.5, Math.min(2.5, cameraTarget.x));
-  cameraTarget.z = Math.max(-2.2, Math.min(2.2, cameraTarget.z));
+  cameraTarget.x = Math.max(-roomConfig.width / 2, Math.min(roomConfig.width / 2, cameraTarget.x));
+  cameraTarget.z = Math.max(-roomConfig.depth / 2, Math.min(roomConfig.depth / 2, cameraTarget.z));
   updateCamera();
 }
 
@@ -2527,17 +2890,29 @@ window.addEventListener("keydown", (event) => {
   } else if (event.code === "KeyE") {
     cameraYaw += Math.PI / 12;
     updateCamera();
+  } else if (event.code === "KeyL") {
+    setLayoutMode(!layoutMode);
+  } else if (event.code === "KeyT") {
+    applyTheme(currentTheme === "light" ? "dark" : "light");
+  } else if (event.code === "KeyR" && layoutMode) {
+    addLayoutRoom();
   } else if (event.code === "Digit1") {
     triggerIntent("task");
   } else if (event.code === "Digit2") {
-    triggerIntent("memory-sync");
+    triggerIntent("schedule");
   } else if (event.code === "Digit3") {
+    triggerIntent("memory-sync");
+  } else if (event.code === "Digit4") {
     triggerIntent("review");
   }
 });
 
 runToggle.addEventListener("click", () => setRunning(!running));
 autoToggle.addEventListener("click", () => setAutoAgents(!autoAgents));
+layoutToggle?.addEventListener("click", () => setLayoutMode(!layoutMode));
+addRoomButton?.addEventListener("click", addLayoutRoom);
+resetLayoutButton?.addEventListener("click", resetSavedLayout);
+themeToggle?.addEventListener("click", () => applyTheme(currentTheme === "light" ? "dark" : "light"));
 speedControl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-speed]");
   if (button) {
@@ -2553,6 +2928,7 @@ cameraRight.addEventListener("click", () => {
   updateCamera();
 });
 document.querySelector("#intent-task").addEventListener("click", () => triggerIntent("task"));
+document.querySelector("#intent-schedule").addEventListener("click", () => triggerIntent("schedule"));
 document.querySelector("#intent-memory").addEventListener("click", () => triggerIntent("memory-sync"));
 document.querySelector("#intent-review").addEventListener("click", () => triggerIntent("review"));
 stationList.addEventListener("click", (event) => {
@@ -2563,8 +2939,11 @@ stationList.addEventListener("click", (event) => {
   selectedStationId = button.dataset.station;
   const station = agentWorld.getStation(selectedStationId);
   if (station) {
-    cameraTarget.set(station.position.x * 0.18, 0, station.position.z * 0.18);
+    cameraTarget.set(station.position.x, 0, station.position.z);
     updateCamera();
+    if (layoutMode) {
+      setBootMessage(`Layout mode: ${station.label} selezionato. Clicca un tile per spostarlo.`);
+    }
   }
   updateHud();
 });
@@ -2919,6 +3298,7 @@ window.addEventListener("unhandledrejection", (event) => {
   });
 });
 
+applyTheme(currentTheme, { persist: false });
 buildScene();
 resize();
 setSpeed(1);

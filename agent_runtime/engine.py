@@ -55,6 +55,8 @@ class AgentRuntime:
         self.executor = ModelExecutor(self.store, secrets, browser_control=self.browser_control)
         if not self.agents:
             self._seed_agents()
+        else:
+            self._seed_missing_agents()
         for agent_id in self.agents:
             self.store.bootstrap_wiki_from_chat(agent_id)
         self._recover_interrupted_state()
@@ -67,6 +69,27 @@ class AgentRuntime:
             agent = AgentSnapshot(**AgentDefinition.model_validate(item).model_dump())
             self.agents[agent.id] = agent
             self.store.save_agent(agent)
+
+    def _seed_missing_agents(self) -> None:
+        if self.seed_path is None or not self.seed_path.exists():
+            return
+        definitions = json.loads(self.seed_path.read_text(encoding="utf-8"))
+        for item in definitions:
+            definition = AgentDefinition.model_validate(item)
+            if definition.id in self.agents:
+                continue
+            agent = AgentSnapshot(**definition.model_dump())
+            self.agents[agent.id] = agent
+            self.store.save_agent(agent)
+            self.store.append_event(
+                RuntimeEvent(
+                    type="agent.seeded",
+                    entity_id=agent.id,
+                    agent_id=agent.id,
+                    summary=f"Seeded missing agent {agent.name}.",
+                    data={"agent": agent.model_dump(mode="json")},
+                )
+            )
 
     def _recover_interrupted_state(self) -> None:
         recovered_tasks = 0

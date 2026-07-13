@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from agent_runtime import server
+from agent_runtime.briefings import MorningBriefingConfig, MorningBriefingScheduler
 from agent_runtime.engine import AgentRuntime
 from agent_runtime.models import AgentDefinition, TaskCreate
 
@@ -30,9 +31,23 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
                 toolsets=["browser"],
             )
         )
+        await self.runtime.add_agent(
+            AgentDefinition(
+                id="ai-news-navigator",
+                name="AI News Navigator",
+                role="web-navigator",
+                capabilities=["news"],
+                toolsets=["web"],
+            )
+        )
         server.app.state.runtime = self.runtime
+        server.app.state.ai_news_briefing = MorningBriefingScheduler(
+            self.runtime,
+            MorningBriefingConfig(enabled=True, agent_id="ai-news-navigator"),
+        )
 
     async def asyncTearDown(self):
+        await server.app.state.ai_news_briefing.shutdown()
         await self.runtime.shutdown()
         self.temporary_directory.cleanup()
 
@@ -81,6 +96,16 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("Server browser context", extracted["value"])
         closed = await server.close_browser_session(session_id)
         self.assertTrue(closed["closed"])
+
+    async def test_ai_news_briefing_api_creates_agent_task(self):
+        status = await server.ai_news_briefing_status()
+        self.assertTrue(status["enabled"])
+        self.assertEqual("ai-news-navigator", status["agent_id"])
+
+        task = await server.run_ai_news_briefing()
+        self.assertEqual("ai-news-navigator", task.requested_agent_id)
+        self.assertEqual("chat", task.channel)
+        self.assertEqual("news", task.capability)
 
 
 if __name__ == "__main__":

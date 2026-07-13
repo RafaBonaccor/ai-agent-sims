@@ -1,11 +1,25 @@
 export const roomConfig = {
-  width: 14,
-  depth: 10,
-  columns: 14,
-  rows: 10,
+  width: 24,
+  depth: 18,
+  columns: 24,
+  rows: 18,
   cellSize: 1,
   blockHeight: 0.22,
 };
+
+const defaultRoomLayout = [
+  {
+    id: "main",
+    label: "Main Room",
+    col: 5,
+    row: 4,
+    columns: 14,
+    rows: 10,
+    color: "#1f8d6a",
+  },
+];
+
+export const roomLayout = defaultRoomLayout.map((room) => ({ ...room }));
 
 export const workstations = [
   {
@@ -23,6 +37,14 @@ export const workstations = [
     color: "#3d6fd8",
     position: { x: -4.5, z: -2.5 },
     jobs: ["decomposition", "handoff map", "task estimate"],
+  },
+  {
+    id: "schedule",
+    label: "Schedule Desk",
+    role: "scheduler",
+    color: "#f4b647",
+    position: { x: 2.5, z: -3.5 },
+    jobs: ["cron plan", "follow-up", "briefing timer"],
   },
   {
     id: "research",
@@ -72,6 +94,87 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function normalizeRoom(room, fallbackIndex = 0) {
+  const columns = clamp(Math.round(Number(room.columns) || 6), 3, roomConfig.columns);
+  const rows = clamp(Math.round(Number(room.rows) || 5), 3, roomConfig.rows);
+  return {
+    id: String(room.id || `room-${fallbackIndex + 1}`).slice(0, 60),
+    label: String(room.label || `Room ${fallbackIndex + 1}`).slice(0, 80),
+    col: clamp(Math.round(Number(room.col) || 0), 0, roomConfig.columns - columns),
+    row: clamp(Math.round(Number(room.row) || 0), 0, roomConfig.rows - rows),
+    columns,
+    rows,
+    color: String(room.color || "#38bdf8"),
+  };
+}
+
+function roomContainsTile(room, tile) {
+  return (
+    tile.col >= room.col
+    && tile.col < room.col + room.columns
+    && tile.row >= room.row
+    && tile.row < room.row + room.rows
+  );
+}
+
+function roomsOverlap(left, right) {
+  return !(
+    left.col + left.columns <= right.col
+    || right.col + right.columns <= left.col
+    || left.row + left.rows <= right.row
+    || right.row + right.rows <= left.row
+  );
+}
+
+export function resetRoomLayout() {
+  roomLayout.splice(0, roomLayout.length, ...defaultRoomLayout.map((room) => ({ ...room })));
+}
+
+export function setRoomLayout(rooms) {
+  const normalized = Array.isArray(rooms)
+    ? rooms.map((room, index) => normalizeRoom(room, index))
+    : [];
+  roomLayout.splice(0, roomLayout.length, ...(normalized.length ? normalized : defaultRoomLayout.map((room) => ({ ...room }))));
+}
+
+export function addRoomToLayout(room) {
+  const normalized = normalizeRoom(room, roomLayout.length);
+  if (roomLayout.some((existing) => existing.id === normalized.id)) {
+    normalized.id = `${normalized.id}-${Date.now().toString(36)}`;
+  }
+  roomLayout.push(normalized);
+  return normalized;
+}
+
+export function findAvailableRoomRect(columns = 6, rows = 5) {
+  const wanted = {
+    columns: clamp(Math.round(columns), 3, roomConfig.columns),
+    rows: clamp(Math.round(rows), 3, roomConfig.rows),
+  };
+  const candidates = [
+    { col: 0, row: 0 },
+    { col: roomConfig.columns - wanted.columns, row: 0 },
+    { col: 0, row: roomConfig.rows - wanted.rows },
+    { col: roomConfig.columns - wanted.columns, row: roomConfig.rows - wanted.rows },
+    { col: 0, row: Math.floor((roomConfig.rows - wanted.rows) / 2) },
+    { col: roomConfig.columns - wanted.columns, row: Math.floor((roomConfig.rows - wanted.rows) / 2) },
+    { col: Math.floor((roomConfig.columns - wanted.columns) / 2), row: 0 },
+    { col: Math.floor((roomConfig.columns - wanted.columns) / 2), row: roomConfig.rows - wanted.rows },
+  ];
+  for (let row = 0; row <= roomConfig.rows - wanted.rows; row += 1) {
+    for (let col = 0; col <= roomConfig.columns - wanted.columns; col += 1) {
+      candidates.push({ col, row });
+    }
+  }
+  for (const candidate of candidates) {
+    const room = { ...candidate, ...wanted };
+    if (!roomLayout.some((existing) => roomsOverlap(existing, room))) {
+      return room;
+    }
+  }
+  return null;
+}
+
 function hashNumber(text) {
   let hash = 0;
   for (let i = 0; i < text.length; i += 1) {
@@ -92,13 +195,17 @@ export function tileEquals(a, b) {
   return Boolean(a && b && a.col === b.col && a.row === b.row);
 }
 
-export function isInsideTile(tile) {
+export function isWithinWorldBounds(tile) {
   return (
     tile.col >= 0 &&
     tile.col < roomConfig.columns &&
     tile.row >= 0 &&
     tile.row < roomConfig.rows
   );
+}
+
+export function isInsideTile(tile) {
+  return isWithinWorldBounds(tile) && roomLayout.some((room) => roomContainsTile(room, tile));
 }
 
 export function tileToWorld(tile) {
@@ -116,10 +223,11 @@ export function worldToTile(position) {
 }
 
 function scenarioToTile(position) {
-  return worldToTile({
-    x: (position.x - 0.5) * (roomConfig.width - 2.4),
-    z: (position.y - 0.5) * (roomConfig.depth - 2.2),
-  });
+  const room = roomLayout[0] ?? defaultRoomLayout[0];
+  return {
+    col: clamp(Math.round(room.col + position.x * (room.columns - 1)), room.col, room.col + room.columns - 1),
+    row: clamp(Math.round(room.row + position.y * (room.rows - 1)), room.row, room.row + room.rows - 1),
+  };
 }
 
 function roleStationId(agent) {
@@ -131,6 +239,9 @@ function roleStationId(agent) {
   }
   if ((agent.role === "specialist" || agent.role === "planner") && agent.capabilities.includes("planning")) {
     return "planning";
+  }
+  if (agent.role === "scheduler" || agent.capabilities.includes("scheduling")) {
+    return "schedule";
   }
   if ((agent.role === "specialist" || agent.role === "researcher") && agent.capabilities.includes("research")) {
     return "research";
@@ -261,6 +372,22 @@ export class AgentWorld {
     return isInsideTile(tile) && !this.isBlockedTile(tile) && !this.isOccupiedTile(tile, exceptAgentId);
   }
 
+  isStationTileOccupied(tile, exceptStationId = null) {
+    for (const station of this.stations) {
+      if (station.id === exceptStationId) {
+        continue;
+      }
+      if (tileEquals(worldToTile(station.position), tile)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  isOpenStationTile(tile, exceptStationId = null) {
+    return isInsideTile(tile) && !this.isOccupiedTile(tile) && !this.isStationTileOccupied(tile, exceptStationId);
+  }
+
   commandMoveAgent(agentId, tile, jobLabel = "manual move") {
     const agentState = this.getAgentState(agentId);
     if (!agentState || !isInsideTile(tile)) {
@@ -281,6 +408,56 @@ export class AgentWorld {
     return ok;
   }
 
+  commandPlaceAgent(agentId, tile, jobLabel = "layout move") {
+    const agentState = this.getAgentState(agentId);
+    if (!agentState || !isInsideTile(tile)) {
+      return false;
+    }
+    const destination = this.findNearestOpenTile(tile, agentId);
+    const world = tileToWorld(destination);
+    agentState.x = world.x;
+    agentState.z = world.z;
+    agentState.tile = destination;
+    agentState.targetTile = destination;
+    agentState.destinationTile = destination;
+    agentState.targetX = world.x;
+    agentState.targetZ = world.z;
+    agentState.path = [];
+    agentState.mode = "idle";
+    agentState.stationId = "manual";
+    agentState.jobLabel = jobLabel;
+    agentState.bubble = jobLabel;
+    agentState.manualUntil = this.clock + 30;
+    agentState.nextDecisionAt = this.clock + 30;
+    return true;
+  }
+
+  commandMoveStation(stationId, tile) {
+    const station = this.getStation(stationId);
+    if (!station || !isWithinWorldBounds(tile)) {
+      return false;
+    }
+    const destination = this.findNearestOpenStationTile(tile, stationId);
+    if (!destination) {
+      return false;
+    }
+    station.position = tileToWorld(destination);
+    this.refreshBlockedTiles();
+    return true;
+  }
+
+  restoreAgentTiles(agentTiles) {
+    for (const [agentId, tile] of Object.entries(agentTiles ?? {})) {
+      if (tile && Number.isFinite(tile.col) && Number.isFinite(tile.row)) {
+        this.commandPlaceAgent(agentId, tile, "restored layout");
+      }
+    }
+  }
+
+  refreshBlockedTiles() {
+    this.blockedTiles = this.buildBlockedTiles();
+  }
+
   triggerIntent(intentId, network, options = {}) {
     if (options.autoEnabled === false) {
       return;
@@ -289,6 +466,7 @@ export class AgentWorld {
     const assignments = {
       task: [
         ["orchestrator", "hub", "dispatching"],
+        ["scheduler", "schedule", "checking time"],
         ["planner", "planning", "planning"],
         ["researcher", "research", "researching"],
         ["builder", "build", "building"],
@@ -296,10 +474,16 @@ export class AgentWorld {
       "memory-sync": [
         ["orchestrator", "meeting", "syncing"],
         ["memory", "memory", "publishing"],
+        ["scheduler", "schedule", "syncing"],
         ["planner", "meeting", "receiving"],
         ["researcher", "meeting", "receiving"],
         ["builder", "meeting", "receiving"],
         ["critic", "meeting", "receiving"],
+      ],
+      schedule: [
+        ["orchestrator", "hub", "requesting"],
+        ["scheduler", "schedule", "scheduling"],
+        ["memory", "memory", "checking context"],
       ],
       review: [
         ["builder", "build", "submitting"],
@@ -513,6 +697,34 @@ export class AgentWorld {
     return this.getAgentState(agentId)?.tile ?? start;
   }
 
+  findNearestOpenStationTile(preferred, stationId = null) {
+    const start = {
+      col: clamp(preferred.col, 0, roomConfig.columns - 1),
+      row: clamp(preferred.row, 0, roomConfig.rows - 1),
+    };
+    if (this.isOpenStationTile(start, stationId)) {
+      return start;
+    }
+
+    const queue = [start];
+    const visited = new Set([tileKey(start)]);
+    while (queue.length > 0) {
+      const current = queue.shift();
+      for (const next of neighbors(current)) {
+        const key = tileKey(next);
+        if (visited.has(key)) {
+          continue;
+        }
+        if (this.isOpenStationTile(next, stationId)) {
+          return next;
+        }
+        visited.add(key);
+        queue.push(next);
+      }
+    }
+    return null;
+  }
+
   findPath(start, goal, agentId = null) {
     if (tileEquals(start, goal)) {
       return [];
@@ -569,6 +781,11 @@ export class AgentWorld {
   }
 
   buildBlockedTiles() {
-    return new Set(workstations.map((station) => tileKey(worldToTile(station.position))));
+    return new Set(
+      workstations
+        .map((station) => worldToTile(station.position))
+        .filter(isInsideTile)
+        .map(tileKey)
+    );
   }
 }

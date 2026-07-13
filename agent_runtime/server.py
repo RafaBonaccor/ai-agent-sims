@@ -33,6 +33,7 @@ from .project_gateway import ProjectGateway, ProjectJob, ProjectJobCreate
 from .logging_config import configure_logging
 from .secrets import SecretStore
 from .discord_gateway import DiscordGateway
+from .briefings import MorningBriefingScheduler
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -50,9 +51,12 @@ async def lifespan(app: FastAPI):
     app.state.secrets = secrets
     app.state.project_gateway = ProjectGateway(PROJECT_ROOT, runtime.publish, runtime.store)
     app.state.discord_gateway = DiscordGateway(runtime)
+    app.state.ai_news_briefing = MorningBriefingScheduler(runtime)
+    await app.state.ai_news_briefing.start()
     await app.state.discord_gateway.start()
     yield
     await app.state.discord_gateway.shutdown()
+    await app.state.ai_news_briefing.shutdown()
     await app.state.project_gateway.shutdown()
     await runtime.shutdown()
 
@@ -124,9 +128,14 @@ def discord_gateway() -> DiscordGateway | None:
     return getattr(app.state, "discord_gateway", None)
 
 
+def ai_news_briefing() -> MorningBriefingScheduler | None:
+    return getattr(app.state, "ai_news_briefing", None)
+
+
 @app.get("/api/health")
 async def health() -> dict[str, object]:
     discord = discord_gateway()
+    briefing = ai_news_briefing()
     return {
         "status": "ok",
         "runtime": "native",
@@ -136,11 +145,13 @@ async def health() -> dict[str, object]:
             "persistentLogs": True,
             "browserControl": True,
             "discordGateway": bool(discord and discord.enabled),
+            "aiNewsBriefing": bool(briefing and briefing.config.enabled),
         },
         "agents": len(runtime().agents),
         "activeTasks": len(runtime().running_jobs),
         "browserSessions": len(runtime().browser_control.list_sessions()),
         "discord": discord.status() if discord else {"enabled": False, "connected": False},
+        "aiNewsBriefing": briefing.status() if briefing else {"enabled": False},
     }
 
 
@@ -272,6 +283,23 @@ async def list_tasks() -> list[TaskRecord]:
 @app.post("/api/tasks", response_model=TaskRecord, status_code=202)
 async def create_task(task: TaskCreate) -> TaskRecord:
     return await runtime().create_task(task)
+
+
+@app.get("/api/briefings/ai-news")
+async def ai_news_briefing_status() -> dict[str, object]:
+    briefing = ai_news_briefing()
+    return briefing.status() if briefing else {"enabled": False}
+
+
+@app.post("/api/briefings/ai-news/run", response_model=TaskRecord, status_code=202)
+async def run_ai_news_briefing(force: bool = Query(default=False)) -> TaskRecord:
+    briefing = ai_news_briefing()
+    if briefing is None:
+        raise HTTPException(status_code=404, detail="AI news briefing is not configured")
+    try:
+        return await briefing.create_briefing(force=force)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.get("/api/events", response_model=list[RuntimeEvent])

@@ -27,6 +27,31 @@ Gli agenti con provider `OpenAI` e toolset `web` possono usare il tool hosted
 `web_search` della Responses API. Fonti e citazioni vengono normalizzate nel
 risultato del task e mostrate come link cliccabili nella chat dell'agente.
 
+`AI News Navigator` e l'agente dedicato alla navigazione web. Usa provider
+`OpenAI`, toolset `web`/`browser` e istruzioni focalizzate su fonti recenti,
+citazioni e distinzione tra fatti, rumor e analisi.
+
+`Scheduler` e l'agente dedicato alla pianificazione temporale. Nel gioco appare
+alla postazione `Schedule Desk`; nella UI puoi premere `Schedule` per chiedergli
+di proporre orari, cron e follow-up. L'agente decide e spiega lo schedule, mentre
+il timer effettivo resta nel runtime nativo.
+
+## Layout del gioco
+
+La barra superiore include una modalita `Layout` per modificare la casa:
+
+- `Layout`: attiva/disattiva l'editor.
+- `+ Room`: aggiunge una nuova stanza in uno spazio libero della griglia.
+- `↺`: resetta il layout salvato e ricarica la scena.
+- `White`/`Dark`: cambia tema tra modalita scura e chiara.
+
+In modalita Layout, clicca un agente o un tavolo/postazione e poi clicca un tile
+di pavimento per spostarlo. Le posizioni di stanze, tavoli e agenti vengono
+salvate in `localStorage`, quindi restano dopo un refresh del browser. I task e
+gli agenti runtime restano invece persistiti nel backend/SQLite.
+Il tema visuale viene salvato nello stesso browser e aggiorna sia UI che scena
+3D: background, fog, pavimento, tile, muri e pannelli.
+
 La chat rapida e persistente per agente: ogni messaggio viene salvato come task con
 canale `chat`, mentre risposte, errori e fonti sono ricostruiti da SQLite quando il
 popup viene riaperto. Le conversazioni di agenti diversi restano separate.
@@ -79,6 +104,38 @@ export AGENT_LAB_DISCORD_MESSAGE_CONTENT=1
 Questo richiede il Message Content Intent nel Developer Portal Discord. Senza
 questa variabile restano attivi gli slash command, che sono il percorso
 consigliato.
+
+## Briefing mattutino AI
+
+Il runtime crea automaticamente un task giornaliero per `ai-news-navigator` alle
+08:00 Europe/Rome. Il task chiede un riepilogo in italiano sulle ultime notizie AI
+con TL;DR, 5-8 notizie, fonti/link, distinzione fatti/rumor/analisi e trend da
+monitorare.
+
+Variabili utili:
+
+```bash
+AGENT_LAB_AI_NEWS_BRIEFING=1
+AGENT_LAB_AI_NEWS_TIME=08:00
+AGENT_LAB_AI_NEWS_TIMEZONE=Europe/Rome
+AGENT_LAB_AI_NEWS_AGENT=ai-news-navigator
+```
+
+Di default il runtime non recupera automaticamente un briefing perso se lo avvii
+dopo l'orario. Per farlo:
+
+```bash
+AGENT_LAB_AI_NEWS_RUN_MISSED=1
+```
+
+Endpoint di controllo:
+
+- `GET /api/briefings/ai-news`: stato scheduler e prossimo run.
+- `POST /api/briefings/ai-news/run`: crea subito il task del briefing per test.
+
+Per ottenere notizie reali serve una API key valida nello scope scelto
+dall'agente. Se la key manca o non e valida, il task viene creato ma fallisce con
+un errore provider leggibile.
 
 ## Run
 

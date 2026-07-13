@@ -168,7 +168,7 @@ export class AgentNetwork {
 
     this.autopilotClock -= delta;
     if (this.autopilotClock <= 0) {
-      const intent = seededPick(["task", "memory-sync", "review"], this.intentCounter);
+      const intent = seededPick(["task", "schedule", "memory-sync", "review"], this.intentCounter);
       this.triggerIntent(intent);
       this.autopilotClock = 3.4 + (this.intentCounter % 3) * 0.8;
     }

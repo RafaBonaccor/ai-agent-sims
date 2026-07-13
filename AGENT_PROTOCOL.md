@@ -7,7 +7,7 @@ Questa applicazione combina un runtime agenti nativo in Python con una visualizz
 - `index.html`: shell dell'app, controlli, inspector e log.
 - `styles.css`: interfaccia operativa responsive.
 - `app.mjs`: renderer Three.js, camera isometrica, selezione, HUD e comunicazioni animate.
-- `src/agentWorld.mjs`: stato del mondo di gioco, griglia di blocchi, postazioni, pathfinding, target manuali e lavori degli agenti.
+- `src/agentWorld.mjs`: stato del mondo di gioco, griglia di blocchi, stanze, postazioni, pathfinding, target manuali e lavori degli agenti.
 - `src/scenarios.mjs`: scenario modificabile con agenti, relazioni, protocolli e intenti.
 - `src/agentProtocol.mjs`: motore logico di messaggistica, scheduling e regole di protocollo.
 - `src/runtimeClient.mjs`: client REST/WebSocket del runtime nativo.
@@ -17,8 +17,10 @@ Questa applicazione combina un runtime agenti nativo in Python con una visualizz
 - `agent_runtime/browser_control.py`: session manager ibrido per browser live.
 - `agent_runtime/protocols.py`: tipi messaggio e transizioni ammesse.
 - `agent_runtime/storage.py`: persistenza SQLite di agenti, task ed event log.
+- `agent_runtime/scheduler.py`: primitive condivise per `at`, `cron`, repeat giornaliero/weekday e runner async.
 - `agent_runtime/server.py`: API FastAPI, WebSocket e hosting del frontend.
 - `agent_runtime/discord_gateway.py`: bot Discord opzionale per creare task chat verso gli agenti.
+- `agent_runtime/briefings.py`: scheduler del briefing mattutino AI come task agentico standard.
 - `config/agents.json`: definizioni degli agenti iniziali.
 
 ## Runtime nativo
@@ -31,7 +33,18 @@ Browser 3D <- WebSocket (eventi) <- AgentRuntime
 Discord -> slash command -> DiscordGateway -> AgentRuntime
 Discord <- risposta canale <- DiscordGateway <- RuntimeEvent
 AgentRuntime -> RuntimeStore -> SQLite
+Scheduler -> TaskCreate(channel=chat) -> AgentRuntime
 ```
+
+Il personaggio `Scheduler` e un agente decisionale: interpreta richieste di
+orario, propone timestamp/cron/follow-up e coordina con orchestrator/memory. Non
+esegue timer direttamente; i timer reali restano in `agent_runtime/scheduler.py`.
+
+Il layout della casa e modificabile dal frontend: stanze, tavoli e posizioni
+agenti vengono salvati in `localStorage`. Questo non cambia la definizione
+runtime degli agenti in SQLite; cambia solo la rappresentazione spaziale del
+gioco. Anche il tema `dark`/`white` e locale al browser: aggiorna UI e palette
+Three.js senza cambiare dati runtime.
 
 Gli stati agente sono `idle`, `receiving`, `planning`, `executing`, `waiting`,
 `verifying`, `blocked`, `failed` e `stopped`.
@@ -52,6 +65,8 @@ Le transizioni non dichiarate vengono rifiutate. Il runtime attuale usa un execu
 - `GET|PUT /api/agents/{id}/memory`: memoria privata persistente.
 - `GET|POST /api/tasks`: elenco e avvio task.
 - `GET /api/events`: event log persistente.
+- `GET /api/briefings/ai-news`: stato briefing mattutino AI.
+- `POST /api/briefings/ai-news/run`: crea manualmente il task briefing AI.
 - `GET /api/tools`: catalogo tool registrati e livello di rischio.
 - `GET /api/browser/sessions`: elenco sessioni browser live.
 - `POST /api/browser/sessions`: apertura sessione via backend `botasaurus` o `mock`.
@@ -77,6 +92,22 @@ Comandi supportati:
 Il supporto ai messaggi prefissati (`!agents`, `!use`, `!ask`) e disabilitato di
 default per evitare di richiedere il Message Content Intent. Si abilita con
 `AGENT_LAB_DISCORD_MESSAGE_CONTENT=1`.
+
+## Scheduler runtime
+
+La logica di scheduling e centralizzata in `agent_runtime/scheduler.py`.
+Project Gateway e briefing agentici usano lo stesso calcolo per:
+
+- `immediate`, `at`, `cron`;
+- normalizzazione timezone UTC per esecuzione interna;
+- repeat `daily` e `weekdays`;
+- runner async cancellabile durante shutdown.
+
+Il briefing AI non e un percorso speciale: lo scheduler crea un normale
+`TaskCreate(channel="chat", requested_agent_id="ai-news-navigator")`, quindi
+provider, memoria, wiki, Web search e error handling restano quelli del runtime.
+L'agente `Scheduler` puo preparare o revisionare questi schedule, ma la
+registrazione temporale rimane una responsabilita runtime.
 
 ## Provider e tool
 

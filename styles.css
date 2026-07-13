@@ -1,10 +1,20 @@
 :root {
   color-scheme: dark;
+  --page-bg: #070b13;
   --surface: rgba(9, 15, 27, 0.78);
   --surface-strong: rgba(15, 23, 39, 0.94);
   --surface-soft: rgba(255, 255, 255, 0.045);
+  --panel-gradient: linear-gradient(145deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018));
+  --button-bg: rgba(255, 255, 255, 0.055);
+  --button-hover-bg: rgba(255, 255, 255, 0.09);
+  --button-ink: #dbe5f2;
+  --overlay-vignette:
+    radial-gradient(circle at 48% 44%, transparent 38%, rgba(3, 6, 12, 0.38) 100%),
+    linear-gradient(180deg, rgba(6, 11, 20, 0.08), rgba(6, 11, 20, 0.25));
   --ink: #f4f7fb;
   --muted: #8d9bb0;
+  --fact-label: #718198;
+  --fact-value: #dce6f4;
   --line: rgba(174, 197, 225, 0.14);
   --line-strong: rgba(174, 197, 225, 0.27);
   --cyan: #5ee7f2;
@@ -12,6 +22,33 @@
   --violet: #9b87f5;
   --danger: #fb7185;
   --shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+}
+
+body.theme-light {
+  color-scheme: light;
+  --page-bg: #eef5ff;
+  --surface: rgba(255, 255, 255, 0.78);
+  --surface-strong: rgba(255, 255, 255, 0.95);
+  --surface-soft: rgba(37, 99, 235, 0.055);
+  --panel-gradient: linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(232, 244, 255, 0.72));
+  --button-bg: rgba(255, 255, 255, 0.68);
+  --button-hover-bg: rgba(224, 242, 254, 0.92);
+  --button-ink: #1f2a44;
+  --overlay-vignette:
+    radial-gradient(circle at 18% 16%, rgba(125, 211, 252, 0.22), transparent 34%),
+    radial-gradient(circle at 82% 70%, rgba(196, 181, 253, 0.22), transparent 36%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(219, 234, 254, 0.3));
+  --ink: #132036;
+  --muted: #64748b;
+  --fact-label: #64748b;
+  --fact-value: #172033;
+  --line: rgba(59, 130, 246, 0.18);
+  --line-strong: rgba(37, 99, 235, 0.34);
+  --cyan: #0284c7;
+  --cyan-soft: rgba(14, 165, 233, 0.12);
+  --violet: #7c3aed;
+  --danger: #e11d48;
+  --shadow: 0 24px 70px rgba(59, 130, 246, 0.18);
 }
 
 * {
@@ -26,7 +63,7 @@ body {
   overflow: hidden;
   color: var(--ink);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #070b13;
+  background: var(--page-bg);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -36,9 +73,7 @@ body::after {
   inset: 0;
   pointer-events: none;
   content: "";
-  background:
-    radial-gradient(circle at 48% 44%, transparent 38%, rgba(3, 6, 12, 0.38) 100%),
-    linear-gradient(180deg, rgba(6, 11, 20, 0.08), rgba(6, 11, 20, 0.25));
+  background: var(--overlay-vignette);
 }
 
 button {
@@ -59,8 +94,16 @@ button:focus-visible {
   cursor: grab;
 }
 
+#game.layout-mode {
+  cursor: crosshair;
+}
+
 #game:active {
   cursor: grabbing;
+}
+
+#game.layout-mode:active {
+  cursor: crosshair;
 }
 
 .topbar,
@@ -211,8 +254,8 @@ h2 {
   min-height: 38px;
   border: 1px solid var(--line);
   border-radius: 11px;
-  background: rgba(255, 255, 255, 0.055);
-  color: #dbe5f2;
+  background: var(--button-bg);
+  color: var(--button-ink);
   cursor: pointer;
   font-size: 0.79rem;
   font-weight: 650;
@@ -246,8 +289,8 @@ h2 {
 .segment:hover,
 .station-row:hover {
   border-color: var(--line-strong);
-  background-color: rgba(255, 255, 255, 0.09);
-  color: #ffffff;
+  background-color: var(--button-hover-bg);
+  color: var(--ink);
 }
 
 .button:hover {
@@ -305,7 +348,7 @@ h2 {
   padding: 14px;
   border: 1px solid rgba(174, 197, 225, 0.1);
   border-radius: 15px;
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018));
+  background: var(--panel-gradient);
 }
 
 .panel-section:first-child {
@@ -341,7 +384,7 @@ h2 {
 }
 
 .fact-grid dt {
-  color: #718198;
+  color: var(--fact-label);
   font-size: 0.64rem;
   font-weight: 700;
   letter-spacing: 0.09em;
@@ -351,7 +394,7 @@ h2 {
 .fact-grid dd {
   margin: 4px 0 0;
   overflow-wrap: anywhere;
-  color: #dce6f4;
+  color: var(--fact-value);
   font-size: 0.86rem;
 }
 
@@ -370,7 +413,7 @@ h2 {
   padding: 10px 11px;
   border: 1px solid transparent;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--surface-soft);
   color: var(--ink);
   cursor: pointer;
   text-align: left;
@@ -1270,6 +1313,112 @@ noscript {
 
 .project-presets__name {
   grid-column: 1 / 3;
+}
+
+body.theme-light .live-status {
+  color: #334155;
+}
+
+body.theme-light .segmented {
+  background: rgba(255, 255, 255, 0.58);
+}
+
+body.theme-light .button--primary {
+  border-color: rgba(14, 165, 233, 0.42);
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.22), rgba(125, 211, 252, 0.12));
+  color: #075985;
+}
+
+body.theme-light .button--intent {
+  border-color: rgba(124, 58, 237, 0.22);
+  background: linear-gradient(135deg, rgba(196, 181, 253, 0.28), rgba(255, 255, 255, 0.62));
+}
+
+body.theme-light .job-toast,
+body.theme-light .agent-quick-chat,
+body.theme-light .agent-dialog {
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--ink);
+  box-shadow: 0 24px 70px rgba(59, 130, 246, 0.2);
+}
+
+body.theme-light .agent-quick-chat::after {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+body.theme-light .job-toast__summary,
+body.theme-light .job-toast__output,
+body.theme-light .agent-quick-chat__message,
+body.theme-light .project-output-summary,
+body.theme-light .project-output-view__heading strong,
+body.theme-light .settings-section__heading strong,
+body.theme-light .project-job-item,
+body.theme-light .project-output-table td {
+  color: #1e293b;
+}
+
+body.theme-light .job-toast__output,
+body.theme-light .project-result {
+  background: rgba(241, 245, 249, 0.92);
+  color: #334155;
+}
+
+body.theme-light .agent-quick-chat__message {
+  background: #f8fafc;
+}
+
+body.theme-light .agent-quick-chat__message--user {
+  border-color: rgba(14, 165, 233, 0.28);
+  background: #e0f2fe;
+  color: #0c4a6e;
+}
+
+body.theme-light .agent-quick-chat__composer input,
+body.theme-light .agent-form input,
+body.theme-light .agent-form select,
+body.theme-light .agent-form textarea {
+  color-scheme: light;
+  border-color: rgba(37, 99, 235, 0.18);
+  background: rgba(255, 255, 255, 0.9);
+  color: #172033;
+}
+
+body.theme-light .agent-form select option,
+body.theme-light .agent-form select optgroup {
+  background-color: #ffffff;
+  color: #172033;
+}
+
+body.theme-light .dialog-actions--sticky {
+  background: rgba(255, 255, 255, 0.97);
+}
+
+body.theme-light .project-panel-tab,
+body.theme-light .project-presets,
+body.theme-light .settings-section,
+body.theme-light .project-job-item {
+  background: rgba(255, 255, 255, 0.64);
+  color: #334155;
+}
+
+body.theme-light .project-panel-tab--active {
+  border-color: rgba(14, 165, 233, 0.38);
+  background: rgba(14, 165, 233, 0.14);
+  color: #075985;
+}
+
+body.theme-light .project-output-table th {
+  color: #475569;
+  background: rgba(224, 242, 254, 0.7);
+}
+
+body.theme-light .project-output-link,
+body.theme-light .agent-quick-chat__sources a {
+  color: #0369a1;
+}
+
+body.theme-light .notification-badge {
+  box-shadow: 0 0 0 2px #eff6ff;
 }
 
 @media (max-width: 620px) {

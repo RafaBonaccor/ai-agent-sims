@@ -1,4 +1,5 @@
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -63,6 +64,35 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({"supervisor", "analyst"}, set(self.runtime.agents))
         loaded = self.runtime.store.load_agents()
         self.assertEqual({"supervisor", "analyst"}, {agent.id for agent in loaded})
+
+    async def test_missing_seed_agents_are_added_without_overwriting_existing_agents(self):
+        seed_path = Path(self.temporary_directory.name) / "agents.json"
+        seed_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "analyst",
+                        "name": "Seed Analyst",
+                        "role": "specialist",
+                        "instructions": "Do not overwrite existing analyst.",
+                    },
+                    {
+                        "id": "ai-news-navigator",
+                        "name": "AI News Navigator",
+                        "role": "web-navigator",
+                        "capabilities": ["news"],
+                    },
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        await self.runtime.shutdown()
+        database = Path(self.temporary_directory.name) / "runtime.db"
+        self.runtime = AgentRuntime(database, seed_path=seed_path, simulation_delay=0)
+
+        self.assertIn("ai-news-navigator", self.runtime.agents)
+        self.assertEqual("Analyst", self.runtime.agents["analyst"].name)
 
     async def test_chat_history_is_scoped_to_requested_agent(self):
         task = await self.runtime.create_task(
