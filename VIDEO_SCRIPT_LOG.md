@@ -12,12 +12,14 @@ Il progetto include:
 - scena 3D con agenti e interazioni
 - popup sopra l'agente per dare comandi
 - chat persistente per singolo agente
+- popup e finestre spostabili manualmente
 - memoria separata per agente o condivisa di progetto
 - job in coda, completati e notifiche
 - scheduling dei job
 - output leggibili nel gioco
 - integrazione con progetti esterni tramite project gateway
 - supporto a provider e modelli configurabili
+- editor visuale per stanze, porte, corridoi, agenti e postazioni
 
 ## Stato attuale
 
@@ -33,6 +35,13 @@ Queste sono le cose gia presenti o in corso:
 - output strutturato per risultati tabellari, file o riepiloghi
 - fallback testuale per output non strutturati
 - supporto al lancio di progetti esterni dal gioco
+- editor layout aperto dal pulsante `Editor`
+- stanze modellabili a celle come in un editor tipo The Sims
+- porte/corridoi che collegano stanze e diventano attraversabili dal pathfinding
+- spostamento visuale di agenti e postazioni tra stanze
+- popup trascinabili dalla barra superiore
+- chat agente che segue l'agente finche non viene trascinata manualmente, poi diventa detached
+- log e output leggibili anche in light mode con testo nero
 
 ### Scheda per il video
 
@@ -40,10 +49,15 @@ Queste sono le cose gia presenti o in corso:
   - selezione agente dalla scena
   - popup rapido sopra la testa dell'agente
   - chat persistente per singolo agente
+  - popup rapido che segue l'agente e si stacca solo se spostato manualmente
   - job con stato, coda, completamento e notifiche
   - output leggibile nel gioco con fallback testuale
   - project gateway per lanciare progetti esterni
   - scheduling con data, ora e ripetizione
+  - editor stanza/porta con griglia di celle
+  - spostamento visivo di agenti e tavoli/postazioni
+  - modalita dark e white
+  - log leggibili in tema chiaro
 
 - cosa ho implementato:
   - vista output generica riusabile per piu tipi di risultato
@@ -53,14 +67,25 @@ Queste sono le cose gia presenti o in corso:
   - pannello job finiti
   - notifiche job in alto
   - memoria persistente e wiki persistente
+  - mini editor `Editor` per modificare il mondo senza riempire la toolbar
+  - aggiunta e rimozione stanze
+  - modellazione stanze con celle contigue
+  - porte e corridoi come celle camminabili reali
+  - popup trascinabili per chat, editor e dialog
+  - comportamento detached della chat solo dopo un vero drag
+  - correzione dei colori log/output in light mode
 
 - cosa si vede a schermo:
   - mondo 3D con agenti che si muovono
   - nome e ruolo dell'agente visibili
   - popup di messaggio vicino all'agente
+  - popup che puo essere trascinato e lasciato in posizione libera
   - pannello di configurazione agente
   - pannello progetto con output e pianificazione
   - lista job e notifiche quando finiscono
+  - mini editor per aggiungere stanze, modellarle, mettere porte e rimuoverle
+  - stanze multiple con agenti e tavoli controllabili visivamente
+  - log e output scuri/neri quando il tema e chiaro
 
 - quali agenti esistono:
   - Orchestrator
@@ -69,6 +94,7 @@ Queste sono le cose gia presenti o in corso:
   - Builder
   - Critic
   - Memory
+  - Scheduler
 
 - che workflow fanno:
   - Orchestrator: assegna e coordina i compiti
@@ -77,12 +103,14 @@ Queste sono le cose gia presenti o in corso:
   - Builder: implementa cambiamenti e patch
   - Critic: controlla errori, rischi e regressioni
   - Memory: conserva contesto e fatti stabili
+  - Scheduler: prepara scheduling, follow-up e riepiloghi temporizzati
 
 - che parte è ancora mock/prototipo:
   - diversi agenti usano ancora provider simulato
   - il comportamento del mondo e ancora in evoluzione
   - alcune risposte e output sono ancora semplificati per UI e test
   - il routing verso progetti esterni sta diventando stabile ma non e ancora definitivo
+  - l'editor e funzionante, ma puo ancora evolvere verso strumenti piu avanzati tipo selezione multi-cella/paint
 
 - prossimo step:
   - rendere i workflow piu espliciti in UI
@@ -90,21 +118,25 @@ Queste sono le cose gia presenti o in corso:
   - rafforzare la memoria condivisa e la wiki per agente
   - mostrare meglio lo stato dei job lunghi e dei job schedulati
   - collegare sempre meglio il gioco ai progetti esterni reali
+  - migliorare il controllo visuale degli agenti nelle stanze
+  - rendere l'editor ancora piu simile a un builder da gioco
 
 ## Cosa deve raccontare il video
 
 Il video deve mostrare:
 - come gli agenti vengono selezionati e comandati
 - come si apre il popup sopra la testa dell'agente
+- come la chat segue l'agente e diventa detached solo quando viene trascinata
 - come parte un job o un progetto esterno
 - come si vede lo stato in tempo reale
 - come appare l'output dentro al gioco
 - come viene salvata la memoria e lo storico
+- come si apre l'editor, si aggiungono stanze, si modellano celle e si collegano porte
 - come il sistema resta estensibile per altri progetti e altri tipi di output
 
 ## Regola per gli aggiornamenti
 
-Da ora in poi questo file va tenuto aggiornato ogni volta che lavoriamo su un prompt per il videolog.
+Da ora in poi questo file va tenuto aggiornato ogni volta che lavoriamo su una feature visibile o narrabile nel videolog, non solo quando viene chiesto esplicitamente uno script.
 
 Formato da mantenere:
 - richiesta
@@ -125,3 +157,65 @@ Stato:
 
 Nota video:
 - il progetto parte come simulazione controllabile, non come semplice dashboard
+
+### Episodio 02
+
+Richiesta:
+- rendere il mondo piu controllabile visivamente
+- aggiungere piu stanze
+- permettere di spostare agenti e tavoli/postazioni
+- collegare le stanze con porte
+- creare stanze tramite griglia di celle in stile editor The Sims
+- sostituire i pulsanti sparsi con un piccolo `Editor`
+- rendere popup e finestre spostabili
+- fare in modo che la chat agente segua l'agente finche non viene trascinata manualmente
+
+Cosa ho fatto:
+- aggiunto pannello `Editor` per entrare in modalita modifica mondo
+- aggiunte azioni `+ Stanza`, `Modella stanza`, `Porte`, `Rimuovi stanza`, `Reset`
+- trasformate le stanze da semplici rettangoli a insiemi contigui di celle
+- aggiunte porte/corridoi come celle realmente camminabili dal pathfinding
+- aggiunto controllo stanza nell'inspector con conteggio agenti/celle e azione `Porta qui`
+- aggiunto drag per chat rapida, editor e dialog
+- corretto il comportamento della chat: resta agganciata all'agente e diventa detached solo dopo un vero trascinamento
+
+File toccati:
+- `app.mjs`
+- `src/agentWorld.mjs`
+- `index.html`
+- `styles.css`
+- `README.md`
+- `AGENT_PROTOCOL.md`
+
+Stato attuale:
+- il gioco permette di costruire una piccola mappa di stanze e corridoi
+- agenti e tavoli possono essere spostati visualmente
+- il layout viene salvato nel browser
+- la chat agente e piu simile a un dialog di gioco, ma puo diventare finestra libera se spostata
+
+Nota utile per il video:
+- mostrare prima l'agente con chat che lo segue, poi trascinare la chat per far vedere il detach
+- mostrare l'apertura di `Editor`, la creazione di una stanza, la modifica a celle e l'aggiunta di una porta/corridoio
+- sottolineare che non e solo estetica: porte e celle influenzano davvero dove gli agenti possono camminare
+
+### Episodio 03
+
+Richiesta:
+- migliorare la leggibilita dei log in light mode
+
+Cosa ho fatto:
+- impostato testo nero per event log, job toast summary/output e project result quando il tema e chiaro
+- mantenuto background chiaro per contrasto
+- aggiornato README e video script log
+
+File toccati:
+- `styles.css`
+- `README.md`
+- `VIDEO_SCRIPT_LOG.md`
+
+Stato attuale:
+- in white mode i log non restano piu grigi/chiari su sfondo chiaro
+- gli output testuali sono piu leggibili durante demo e registrazione
+
+Nota utile per il video:
+- se mostri il tema chiaro, inquadrare anche i log o l'output per far vedere che ora il contrasto e corretto

@@ -65,7 +65,8 @@ contiene e il pulsante `Porta qui` sposta nella stanza l'agente o la postazione
 attualmente selezionata. Questo permette di controllare visivamente dove si
 trovano gli agenti senza dover mirare manualmente un tile.
 Il tema visuale viene salvato nello stesso browser e aggiorna sia UI che scena
-3D: background, fog, pavimento, tile, muri e pannelli.
+3D: background, fog, pavimento, tile, muri e pannelli. In modalita chiara i log
+e gli output restano in testo nero per mantenere leggibilita.
 
 La chat rapida e persistente per agente: ogni messaggio viene salvato come task con
 canale `chat`, mentre risposte, errori e fonti sono ricostruiti da SQLite quando il

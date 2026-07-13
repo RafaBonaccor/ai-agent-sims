@@ -1497,7 +1497,27 @@ body.theme-light .project-output-table td {
 body.theme-light .job-toast__output,
 body.theme-light .project-result {
   background: rgba(241, 245, 249, 0.92);
-  color: #334155;
+  color: #000000;
+}
+
+body.theme-light .event-log {
+  border-color: rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+body.theme-light .event-log li,
+body.theme-light .event-log span,
+body.theme-light .job-toast__summary,
+body.theme-light .job-toast__title strong,
+body.theme-light .job-toast__title span,
+body.theme-light .job-toast__meta,
+body.theme-light .job-toast__output,
+body.theme-light .project-result {
+  color: #000000;
+}
+
+body.theme-light .event-log time {
+  color: #111827;
 }
 
 body.theme-light .agent-quick-chat__message {
