@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from agent_runtime.models import ProjectJobPresetCreate
 from agent_runtime.project_gateway import ProjectGateway, ProjectJobCreate
@@ -165,6 +166,20 @@ class ProjectGatewayTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual("weekdays", job.repeat_mode.value)
         self.assertEqual([0, 2, 4], job.weekdays)
+
+    def test_macos_local_ui_uses_terminal_launcher(self):
+        action = {"risk": "local-ui"}
+        with patch("agent_runtime.project_gateway.sys.platform", "darwin"):
+            self.assertTrue(self.gateway._should_launch_via_macos_terminal(action))
+            command = self.gateway._macos_terminal_command(
+                ["/tmp/python", "/tmp/main.py", "gui"],
+                Path("/tmp/demo project"),
+            )
+
+        self.assertEqual("osascript", command[0])
+        self.assertIn("Terminal", " ".join(command))
+        self.assertIn("exec /tmp/python /tmp/main.py gui", " ".join(command))
+        self.assertIn("cd '/tmp/demo project'", " ".join(command))
 
 
 if __name__ == "__main__":

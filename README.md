@@ -291,6 +291,21 @@ anche da `GET /api/diagnostics/logs`; i valori dei parametri non vengono loggati
 
 L'azione predefinita `Apri interfaccia scraper` avvia la GUI desktop come processo
 separato. `Controlla configurazione` esegue invece soltanto il comando CLI `status`.
+Su macOS, l'azione `Apri interfaccia scraper` viene aperta tramite Terminal:
+il launch headless diretto dal backend faceva abortire il processo Tk della GUI.
+
+Nella GUI Vinted di The Main Scraper puoi salvare e riusare termini o URL di
+ricerca. I valori vengono persistiti nel file
+`projects/main-scraper/output/_saved_search_terms.json`, separati dalle run
+archiviate nel database SQLite.
+Le nuove ricerche Vinted escludono di default gli annunci gia analizzati nel DB,
+con checkbox dedicata per riattivarli quando serve.
+L'offerta Vinted automatica usa una percentuale configurabile direttamente dalla
+GUI, non piu solo il valore fisso del 15%.
+Le offerte gia inviate vengono registrate nello stesso DB Vinted e vengono
+saltate automaticamente nelle esecuzioni successive.
+Il badge stato nell'header del main scraper e colorato: grigio `Idle`, verde
+`Running`, rosso `Stopping...`, rosso scuro `Error`.
 
 ## Browser ibrido: scraper batch + controllo live
 

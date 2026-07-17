@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shlex
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -262,25 +264,30 @@ class ProjectGateway:
                 )
 
                 detached = action.get("mode") == "detached"
-                process = await asyncio.create_subprocess_exec(
-                    *arguments,
-                    cwd=str(project_root),
-                    stdout=asyncio.subprocess.DEVNULL if detached else asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL if detached else asyncio.subprocess.PIPE,
-                )
                 if detached:
+                    launch_result = await self._launch_detached_process(arguments, project_root, action)
                     job.result = {
                         "ok": True,
                         "command": job.action,
-                        "pid": process.pid,
-                        "message": "Programma avviato.",
+                        **launch_result,
                     }
                     job.state = "completed"
                     job.updated_at = utc_now()
-                    self.logger.info("job_detached id=%s pid=%s", job.id, process.pid)
+                    self.logger.info(
+                        "job_detached id=%s launcher=%s pid=%s",
+                        job.id,
+                        job.result.get("launcher", "subprocess"),
+                        job.result.get("pid"),
+                    )
                     await self._publish(job, "completed")
                     await self._schedule_followup(job, entry, manifest, action)
                     return
+                process = await asyncio.create_subprocess_exec(
+                    *arguments,
+                    cwd=str(project_root),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
                 timeout = max(10, int(entry.get("defaultTimeoutSeconds", 900)))
                 stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
                 stdout_text = stdout.decode("utf-8", errors="replace").strip()
@@ -299,6 +306,61 @@ class ProjectGateway:
                 job.updated_at = utc_now()
                 self.logger.exception("job_failed id=%s error=%s", job.id, error)
                 await self._publish(job, "failed")
+
+    async def _launch_detached_process(
+        self,
+        arguments: list[str],
+        project_root: Path,
+        action: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self._should_launch_via_macos_terminal(action):
+            launcher_arguments = self._macos_terminal_command(arguments, project_root)
+            process = await asyncio.create_subprocess_exec(
+                *launcher_arguments,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+            stdout_text = stdout.decode("utf-8", errors="replace").strip()
+            stderr_text = stderr.decode("utf-8", errors="replace").strip()
+            if process.returncode != 0:
+                raise RuntimeError(stderr_text or stdout_text or "Impossibile aprire Terminal per avviare la GUI.")
+            return {
+                "launcher": "terminal",
+                "message": "Programma avviato in Terminale.",
+                "pid": process.pid,
+            }
+        process_kwargs: dict[str, Any] = {
+            "cwd": str(project_root),
+            "stdout": asyncio.subprocess.DEVNULL,
+            "stderr": asyncio.subprocess.DEVNULL,
+        }
+        if sys.platform != "win32":
+            process_kwargs["start_new_session"] = True
+        process = await asyncio.create_subprocess_exec(
+            *arguments,
+            **process_kwargs,
+        )
+        return {
+            "launcher": "subprocess",
+            "message": "Programma avviato.",
+            "pid": process.pid,
+        }
+
+    @staticmethod
+    def _should_launch_via_macos_terminal(action: dict[str, Any]) -> bool:
+        return sys.platform == "darwin" and str(action.get("risk", "") or "").strip().lower() == "local-ui"
+
+    @staticmethod
+    def _macos_terminal_command(arguments: list[str], project_root: Path) -> list[str]:
+        shell_command = f"cd {shlex.quote(str(project_root))} && exec {shlex.join([str(value) for value in arguments])}"
+        return [
+            "osascript",
+            "-e",
+            f'tell application "Terminal" to do script {json.dumps(shell_command)}',
+            "-e",
+            'tell application "Terminal" to activate',
+        ]
 
     async def _schedule_followup(
         self,
