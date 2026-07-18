@@ -298,6 +298,10 @@ Nella GUI Vinted di The Main Scraper puoi salvare e riusare termini o URL di
 ricerca. I valori vengono persistiti nel file
 `projects/main-scraper/output/_saved_search_terms.json`, separati dalle run
 archiviate nel database SQLite.
+La GUI espone anche categorie rapide Vinted per cercare direttamente in:
+accessori donna, accessori uomo, gioielli donna, scarpe donna e scarpe uomo;
+se abbini una keyword, costruisce automaticamente l'URL della categoria con
+`search_text`.
 Le nuove ricerche Vinted escludono di default gli annunci gia analizzati nel DB,
 con checkbox dedicata per riattivarli quando serve.
 L'offerta Vinted automatica usa una percentuale configurabile direttamente dalla
