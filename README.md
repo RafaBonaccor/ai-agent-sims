@@ -321,6 +321,22 @@ continua.
 Le offerte gia inviate vengono registrate nello stesso DB Vinted e vengono
 saltate automaticamente nelle esecuzioni successive; gli annunci con offerta
 inviata non restano piu in `da valutare assolutamente`.
+Nella tabella risultati, gli annunci con offerta gia inviata vengono anche
+spostati in fondo alla lista e colorati in modo dedicato, anche dopo i cambi di
+ordinamento.
+
+L'estrazione descrizioni Vinted usa ora un profilo piu rapido dedicato
+(`0,15s` pausa azioni, `0,6s` attesa pagina) e una singola lettura JS del
+dettaglio annuncio per titolo, prezzo, spedizione, caricato, offerta e testo.
+Anche il procacciatore usa ora navigazione Vinted `Wait.SHORT` quando apre
+catalogo, dettaglio, pagine successive e ritorno post-login, per evitare attese
+lunghe prima del parsing.
+Nel procacciatore, un annuncio viene confermato come affare solo se rispetta
+tutti i vincoli attivi: like minimi, eta massima, prezzo massimo e spedizione
+non oltre `2,99 €`.
+Puoi anche attivare l'invio Discord via webhook dal pannello del procacciatore:
+ogni nuovo affare confermato viene inviato una sola volta al canale configurato,
+con deduplica persistente nel DB SQLite.
 Il badge stato nell'header del main scraper e colorato: grigio `Idle`, verde
 `Running`, rosso `Stopping...`, rosso scuro `Error`.
 

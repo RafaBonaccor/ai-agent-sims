@@ -283,6 +283,11 @@ Cosa ho fatto:
 - abilitate offerte Vinted in parallelo al procacciatore: l'offerta usa un processo separato e il loop resta attivo
 - velocizzata estrazione descrizioni e pagine Vinted: profilo rapido anche per descrizioni, timeout navigazione 15s, meno attese duplicate dopo cambio pagina
 - gli annunci con offerta gia inviata non restano piu in `da valutare assolutamente` e vengono tolti dai match procacciatore
+- ulteriore boost su descrizioni Vinted: profilo dedicato `0,15s` / `0,6s` e singola lettura JS del dettaglio annuncio per ridurre i round-trip browser
+- il procacciatore e il flusso Vinted usano ora `Wait.SHORT` sulle aperture pagina principali, per evitare blocchi di decine di secondi prima del parsing del dettaglio
+- gli annunci con offerta gia inviata vengono colorati in modo dedicato e spostati in fondo alla tabella risultati Vinted, anche dopo i riordinamenti
+- il procacciatore ora richiede tutti i vincoli per confermare un affare: like minimi, eta massima, prezzo massimo dedicato in GUI e spedizione non oltre `2,99 €`
+- il procacciatore puo inviare ogni nuovo affare confermato direttamente su un canale Discord via webhook, con deduplica persistente nel DB per evitare reinvii a ogni ciclo
 
 File toccati:
 - `projects/main-scraper/scraper_app/sources/vinted.py`
