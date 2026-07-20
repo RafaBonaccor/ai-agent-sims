@@ -261,3 +261,44 @@ Stato attuale:
 Nota utile per il video:
 - mostrare la creazione di un nuovo agente, la scelta del preset workstation, poi il click nel mondo per piazzarla
 - mostrare l'Editor con preset workstation e collegamento ad agente esistente
+
+### Episodio 05
+
+Richiesta:
+- modalita procacciatore affari per Vinted in loop
+- la tabella deve aggiornarsi dopo ogni articolo, non solo alla fine della ricerca
+- se il processo viene fermato, devono restare visibili i risultati parziali
+
+Cosa ho fatto:
+- spostato il lavoro sul branch `feature/procacciatore`
+- aggiunto aggiornamento live del JSON UI dopo ogni card Vinted valida
+- aggiunto aggiornamento live anche dopo ogni annuncio aperto per enrichment dettagli
+- nel batch procacciatore il singolo termine passa il file UI al scraper, quindi la tabella si aggiorna durante la ricerca
+- mantenuto il loop: finito il giro dei termini, il procacciatore riparte dall'inizio dopo la pausa configurata
+- il filtro `procacciatore affari` mostra anche i candidati mentre il loop e attivo, poi li aggiorna quando vengono confermati o demossi
+- ridotto il retry interno del procacciatore a 3 secondi quando trova un processo ancora attivo
+- aggiunto profilo rapido procacciatore: pausa azioni 0,25s, attesa pagina 1,0s, pausa loop default 5s
+- ridotta l'attesa di paginazione Vinted eliminando il vecchio minimo di circa 6 secondi
+- aggiunta cache dettaglio per `item_id`: se prezzo e descrizione sono gia nel DB, l'annuncio non viene riaperto
+- abilitate offerte Vinted in parallelo al procacciatore: l'offerta usa un processo separato e il loop resta attivo
+- velocizzata estrazione descrizioni e pagine Vinted: profilo rapido anche per descrizioni, timeout navigazione 15s, meno attese duplicate dopo cambio pagina
+- gli annunci con offerta gia inviata non restano piu in `da valutare assolutamente` e vengono tolti dai match procacciatore
+
+File toccati:
+- `projects/main-scraper/scraper_app/sources/vinted.py`
+- `projects/main-scraper/scraper_app/runner.py`
+- `projects/main-scraper/scraper_app/ui.py`
+- `projects/main-scraper/tests/test_runner_vinted.py`
+- `projects/main-scraper/tests/test_vinted.py`
+- `VIDEO_SCRIPT_LOG.md`
+
+Stato attuale:
+- il procacciatore puo girare in loop sui termini configurati
+- la tabella mostra progressi articolo per articolo
+- lo stop manuale conserva e carica l'ultimo snapshot parziale
+- i colori della tabella restano quelli originali di valutazione Vinted
+
+Nota utile per il video:
+- avviare il procacciatore, mostrare la tabella che si popola durante la run
+- fermare il processo a meta e mostrare che i risultati parziali restano visibili
+- lasciare finire un ciclo per mostrare che il loop riparte dai termini iniziali

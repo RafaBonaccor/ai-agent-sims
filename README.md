@@ -304,10 +304,23 @@ se abbini una keyword, costruisce automaticamente l'URL della categoria con
 `search_text`.
 Le nuove ricerche Vinted escludono di default gli annunci gia analizzati nel DB,
 con checkbox dedicata per riattivarli quando serve.
+La GUI Vinted include ora anche una modalita `Procacciatore affari`: ruota in
+loop una lista di keyword (per esempio charm, bracciali, pandora, collane,
+gioielli), entra nei candidati con almeno una soglia like configurabile
+(default 70), conferma la data dal dettaglio annuncio e tiene nei risultati
+solo gli articoli entro la finestra oraria configurata (default 24 ore). Il
+procacciatore usa un profilo rapido dedicato: pausa azioni 0,25s, attesa pagina
+1,0s e pausa loop default 5s. Se un annuncio e gia nel DB con `item_id`, prezzo
+e descrizione, il dettaglio viene riusato dalla cache e la pagina annuncio non
+viene riaperta. Anche l'estrazione descrizioni Vinted usa il profilo rapido e
+timeout navigazione 15s.
 L'offerta Vinted automatica usa una percentuale configurabile direttamente dalla
-GUI, non piu solo il valore fisso del 15%.
+GUI, non piu solo il valore fisso del 15%. Le offerte possono partire anche
+mentre il procacciatore sta lavorando: girano in un processo separato e il loop
+continua.
 Le offerte gia inviate vengono registrate nello stesso DB Vinted e vengono
-saltate automaticamente nelle esecuzioni successive.
+saltate automaticamente nelle esecuzioni successive; gli annunci con offerta
+inviata non restano piu in `da valutare assolutamente`.
 Il badge stato nell'header del main scraper e colorato: grigio `Idle`, verde
 `Running`, rosso `Stopping...`, rosso scuro `Error`.
 
