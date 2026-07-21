@@ -184,6 +184,7 @@ const chatMessageIds = new Set();
 const projectJobToasts = new Map();
 const projectJobsCache = new Map();
 const seenCompletedProjectJobs = new Set();
+const taskUiNotices = new Set();
 let availableProjects = [];
 let availableProjectPresets = [];
 let projectPanel = "output";
@@ -2471,6 +2472,62 @@ function renderQuickChatReply(text, sources = [], isError = false, taskId = "") 
   quickChatStatus.classList.toggle("agent-quick-chat__status--error", isError);
 }
 
+function rememberTaskUiNotice(taskId, phase) {
+  const normalizedTaskId = String(taskId || "").trim();
+  const normalizedPhase = String(phase || "").trim();
+  if (!normalizedTaskId || !normalizedPhase) {
+    return false;
+  }
+  const key = `${normalizedTaskId}:${normalizedPhase}`;
+  if (taskUiNotices.has(key)) {
+    return false;
+  }
+  taskUiNotices.add(key);
+  return true;
+}
+
+function showGameNotification({ title = "", subtitle = "", summary = "", tone = "active", key = "" } = {}) {
+  if (!jobToastStack || !summary) {
+    return;
+  }
+  const notice = document.createElement("article");
+  notice.className = "job-toast job-toast--active";
+  if (tone === "success") {
+    notice.classList.add("job-toast--success");
+  } else if (tone === "danger") {
+    notice.classList.add("job-toast--danger");
+  }
+  if (key) {
+    notice.dataset.notificationKey = key;
+  }
+  notice.innerHTML = `
+    <div class="job-toast__header">
+      <div class="job-toast__title">
+        <strong></strong>
+        <span></span>
+      </div>
+      <div class="job-toast__meta">
+        <span class="job-toast__status" data-tone="${escapeHtml(tone)}"></span>
+        <button type="button" aria-label="Chiudi notifica">x</button>
+      </div>
+    </div>
+    <p class="job-toast__summary"></p>
+    <pre class="job-toast__output"></pre>
+  `;
+  notice.querySelector(".job-toast__title strong").textContent = title;
+  notice.querySelector(".job-toast__title span").textContent = subtitle;
+  notice.querySelector(".job-toast__status").textContent =
+    tone === "danger" ? "Errore" : tone === "success" ? "Completato" : "Nuovo";
+  notice.querySelector(".job-toast__summary").textContent = summary;
+  notice.querySelector(".job-toast__output").textContent = "";
+  const dismiss = () => notice.remove();
+  notice.querySelector("button")?.addEventListener("click", dismiss);
+  jobToastStack.prepend(notice);
+  jobNotificationsButton?.classList.add("is-pulse");
+  window.setTimeout(() => jobNotificationsButton?.classList.remove("is-pulse"), 900);
+  window.setTimeout(dismiss, 9000);
+}
+
 function showAgentReply(agentId, text, isError = false, sources = [], taskId = "") {
   if (!agentId || !text) {
     return;
@@ -2483,6 +2540,31 @@ function showAgentReply(agentId, text, isError = false, sources = [], taskId = "
   if (quickChatAgentId === agentId && !quickChat.hidden) {
     renderQuickChatReply(text, sources, isError, taskId);
   }
+}
+
+function acknowledgeAgentTask(task, phase = "accepted") {
+  if (!task?.id || !task?.assigned_agent_id || !rememberTaskUiNotice(task.id, phase)) {
+    return;
+  }
+  const agent = network.getAgent(task.assigned_agent_id);
+  const agentLabel = agent?.label || task.assigned_agent_id;
+  const requestText = String(task.description || task.title || "Task ricevuto.").trim();
+  const shortRequest = requestText.length > 72 ? `${requestText.slice(0, 69)}...` : requestText;
+  const replyText = phase === "running"
+    ? `Sto lavorando su: ${shortRequest}`
+    : `Ricevuto. Mi occupo di: ${shortRequest}`;
+  showAgentReply(task.assigned_agent_id, replyText, false, [], `${task.id}-${phase}`);
+  const state = agentWorld.getAgentState(task.assigned_agent_id);
+  if (state) {
+    state.bubble = replyText.slice(0, 42);
+  }
+  showGameNotification({
+    title: agentLabel,
+    subtitle: `Task ${phase === "running" ? "in corso" : "assegnato"} · ${task.id}`,
+    summary: replyText,
+    tone: "active",
+    key: `${task.id}-${phase}`,
+  });
 }
 
 function handleRuntimeEvent(event) {
@@ -2514,10 +2596,30 @@ function handleRuntimeEvent(event) {
         message.payload?.sources ?? [],
         message.task_id ?? ""
       );
+      showGameNotification({
+        title: network.getAgent(message.sender)?.label || message.sender || "Agente",
+        subtitle: `Task completato · ${message.task_id ?? ""}`,
+        summary: message.payload?.summary ?? "Task completato.",
+        tone: "success",
+        key: `${message.task_id ?? ""}-result`,
+      });
     }
-  } else if (event.type === "task.state.changed" && event.data?.to === "failed") {
+  } else if (event.type === "task.state.changed") {
     const task = event.data?.task;
-    showAgentReply(task?.assigned_agent_id, task?.error ?? "Task fallito.", true, [], task?.id ?? "");
+    if (event.data?.to === "accepted") {
+      acknowledgeAgentTask(task, "accepted");
+    } else if (event.data?.to === "running") {
+      acknowledgeAgentTask(task, "running");
+    } else if (event.data?.to === "failed") {
+      showAgentReply(task?.assigned_agent_id, task?.error ?? "Task fallito.", true, [], task?.id ?? "");
+      showGameNotification({
+        title: network.getAgent(task?.assigned_agent_id)?.label || task?.assigned_agent_id || "Agente",
+        subtitle: `Task fallito · ${task?.id ?? ""}`,
+        summary: task?.error ?? "Task fallito.",
+        tone: "danger",
+        key: `${task?.id ?? ""}-failed`,
+      });
+    }
   } else if (event.type?.startsWith("project.job.")) {
     const job = event.data?.job;
     const agent = job?.agent_id ? network.getAgent(job.agent_id) : null;

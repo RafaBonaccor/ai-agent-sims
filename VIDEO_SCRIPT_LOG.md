@@ -307,3 +307,4 @@ Nota utile per il video:
 - avviare il procacciatore, mostrare la tabella che si popola durante la run
 - fermare il processo a meta e mostrare che i risultati parziali restano visibili
 - lasciare finire un ciclo per mostrare che il loop riparte dai termini iniziali
+- mostrare che tra un giro e il successivo il browser non viene chiuso: il procacciatore continua nello stesso processo/browser senza riaprire Chrome
