@@ -104,6 +104,8 @@ const browserExtractButton = document.querySelector("#browser-extract");
 const browserCloseButton = document.querySelector("#browser-close");
 const projectDialog = document.querySelector("#project-dialog");
 const projectForm = document.querySelector("#project-form");
+const projectDialogKicker = projectDialog?.querySelector(".section-label");
+const projectDialogTitle = document.querySelector("#project-dialog-title");
 const projectSelect = document.querySelector("#project-select");
 const projectAction = document.querySelector("#project-action");
 const projectParameters = document.querySelector("#project-parameters");
@@ -126,6 +128,8 @@ const jobToastStack = document.querySelector("#job-toast-stack");
 const jobNotificationsButton = document.querySelector("#job-notifications");
 const jobNotificationCount = document.querySelector("#job-notification-count");
 const projectJobList = document.querySelector("#project-job-list");
+const projectJobFilters = document.querySelector("#project-job-filters");
+const projectJobFilterButtons = Array.from(document.querySelectorAll("[data-job-filter]"));
 const projectPanelTabs = Array.from(document.querySelectorAll("[data-panel-tab]"));
 const projectPanels = Array.from(document.querySelectorAll("[data-project-panel]"));
 const projectOutputSummary = document.querySelector("#project-output-summary");
@@ -133,6 +137,11 @@ const projectOutputView = document.querySelector("#project-output-view");
 const projectOutputMeta = document.querySelector("#project-output-meta");
 const projectOutputHead = document.querySelector("#project-output-head");
 const projectOutputRows = document.querySelector("#project-output-rows");
+const projectGatewayHeaderGrid = projectDialog?.querySelector(".form-grid");
+const projectPresetsSection = projectDialog?.querySelector(".project-presets");
+const projectParametersSection = projectParameters?.closest(".settings-section");
+const projectDialogActions = projectDialog?.querySelector(".dialog-actions");
+const runProjectActionButton = document.querySelector("#run-project-action");
 
 const LAYOUT_STORAGE_KEY = "agent-protocol-lab-layout-v1";
 
@@ -185,9 +194,13 @@ const projectJobToasts = new Map();
 const projectJobsCache = new Map();
 const seenCompletedProjectJobs = new Set();
 const taskUiNotices = new Set();
+const projectJobAgentMessages = new Map();
+const projectJobUiNotices = new Set();
 let availableProjects = [];
 let availableProjectPresets = [];
 let projectPanel = "output";
+let projectDialogMode = "gateway";
+let projectJobFilter = "all";
 let unreadCompletedProjectJobs = 0;
 
 const providerDefaults = {
@@ -2037,6 +2050,25 @@ function renderChatHistory(messages) {
   }
 }
 
+function mergeAgentChatHistory(agentId, messages = []) {
+  const persistent = Array.isArray(messages) ? messages : [];
+  const local = projectJobAgentMessages.get(agentId) ?? [];
+  const merged = [...persistent, ...local];
+  const seenIds = new Set();
+  return merged
+    .filter((message) => {
+      if (!message?.id) {
+        return true;
+      }
+      if (seenIds.has(message.id)) {
+        return false;
+      }
+      seenIds.add(message.id);
+      return true;
+    })
+    .sort((left, right) => String(left?.created_at ?? "").localeCompare(String(right?.created_at ?? "")));
+}
+
 function openQuickChat(agentId) {
   const agent = network.getAgent(agentId);
   if (!agent) {
@@ -2059,12 +2091,12 @@ function openQuickChat(agentId) {
   runtimeClient.getAgentChat(agentId)
     .then((messages) => {
       if (quickChatAgentId === agentId) {
-        renderChatHistory(messages);
+        renderChatHistory(mergeAgentChatHistory(agentId, messages));
       }
     })
     .catch((error) => {
       if (quickChatAgentId === agentId) {
-        renderChatHistory([{ role: "system", content: error.message }]);
+        renderChatHistory(mergeAgentChatHistory(agentId, [{ role: "system", content: error.message }]));
       }
     });
 }
@@ -2542,6 +2574,124 @@ function showAgentReply(agentId, text, isError = false, sources = [], taskId = "
   }
 }
 
+function rememberProjectJobUiNotice(jobId, phase = "update") {
+  const normalizedJobId = String(jobId || "").trim();
+  const normalizedPhase = String(phase || "").trim();
+  if (!normalizedJobId || !normalizedPhase) {
+    return false;
+  }
+  const key = `${normalizedJobId}:${normalizedPhase}`;
+  if (projectJobUiNotices.has(key)) {
+    return false;
+  }
+  projectJobUiNotices.add(key);
+  return true;
+}
+
+function storeProjectJobAgentMessage(agentId, message) {
+  if (!agentId || !message) {
+    return;
+  }
+  const current = projectJobAgentMessages.get(agentId) ?? [];
+  if (message.id && current.some((entry) => entry.id === message.id)) {
+    return;
+  }
+  const next = [...current, message].sort((left, right) => String(left?.created_at ?? "").localeCompare(String(right?.created_at ?? "")));
+  projectJobAgentMessages.set(agentId, next);
+}
+
+function projectJobRows(job) {
+  const result = job?.result ?? {};
+  const normalized = result.normalized ?? {};
+  if (Array.isArray(normalized.rows)) {
+    return normalized.rows;
+  }
+  if (Array.isArray(result.rows)) {
+    return result.rows;
+  }
+  return [];
+}
+
+function projectJobMeta(job) {
+  const result = job?.result ?? {};
+  const normalized = result.normalized ?? {};
+  return normalized.meta_summary ?? result.meta_summary ?? {};
+}
+
+function extractProjectJobDealMatches(job) {
+  return projectJobRows(job).filter((row) => row && typeof row === "object" && row.deal_hunter_match);
+}
+
+function formatDealPriceForChat(row) {
+  return String(
+    row?.price
+      || row?.total_price
+      || row?.base_price
+      || row?.price_value
+      || row?.total_price_value
+      || ""
+  ).trim();
+}
+
+function formatDealLineForChat(row) {
+  const title = String(row?.name || row?.title || row?.item_id || "Affare Vinted").trim();
+  const price = formatDealPriceForChat(row);
+  const reason = String(row?.deal_hunter_reason || row?.deal_hunter_label || "").trim();
+  const parts = [title];
+  if (price) parts.push(price);
+  if (reason) parts.push(reason);
+  return parts.join(" — ");
+}
+
+function notifyAgentAboutProjectJobDeals(job) {
+  if (!job?.id || !job?.agent_id || job.state !== "completed" || !rememberProjectJobUiNotice(job.id, "deal-hunter")) {
+    return;
+  }
+  const meta = projectJobMeta(job);
+  const dealMatches = extractProjectJobDealMatches(job);
+  const declaredMatches = Number(meta?.deal_hunter_matches ?? job?.result?.normalized?.meta_summary?.deal_hunter_matches ?? 0) || 0;
+  const matches = dealMatches.length ? dealMatches : [];
+  const matchCount = matches.length || declaredMatches;
+  if (matchCount <= 0 || !meta?.deal_hunter_enabled) {
+    return;
+  }
+  const agent = network.getAgent(job.agent_id);
+  const agentLabel = agent?.label || job.agent_id;
+  const preview = matches.slice(0, 3).map((row) => formatDealLineForChat(row));
+  const summary = preview.length
+    ? `Ho trovato ${matchCount} affari nel procacciatore.\n${preview.map((line, index) => `${index + 1}. ${line}`).join("\n")}`
+    : `Ho trovato ${matchCount} affari nel procacciatore. Apri l'output del job per il dettaglio completo.`;
+  const sources = matches.slice(0, 8)
+    .map((row, index) => {
+      const url = safeWebUrl(row?.link);
+      if (!url) {
+        return null;
+      }
+      return {
+        title: formatDealLineForChat(row) || `Affare ${index + 1}`,
+        url,
+      };
+    })
+    .filter(Boolean);
+  const createdAt = job.updated_at || job.created_at || new Date().toISOString();
+  storeProjectJobAgentMessage(job.agent_id, {
+    id: `${job.id}-deal-hunter`,
+    task_id: job.id,
+    role: "assistant",
+    content: summary,
+    sources,
+    created_at: createdAt,
+  });
+  showAgentReply(job.agent_id, summary, false, sources, `${job.id}-deal-hunter`);
+  showGameNotification({
+    title: agentLabel,
+    subtitle: `Affari trovati · ${job.id}`,
+    summary: `Procacciatore: ${matchCount} affari confermati.`,
+    tone: "success",
+    key: `${job.id}-deal-hunter-toast`,
+  });
+}
+
 function acknowledgeAgentTask(task, phase = "accepted") {
   if (!task?.id || !task?.assigned_agent_id || !rememberTaskUiNotice(task.id, phase)) {
     return;
@@ -2629,6 +2779,9 @@ function handleRuntimeEvent(event) {
       agent.runtime.load = active ? 0.82 : 0.08;
     }
     syncProjectJobToast(job, event.type);
+    if (event.type === "project.job.completed") {
+      notifyAgentAboutProjectJobDeals(job);
+    }
     if (job?.state === "completed" || job?.state === "failed") {
       markCompletedJobUnread(job.id);
       if (projectDialog.open) {
@@ -2723,7 +2876,9 @@ function loadSelectedProjectPreset() {
   projectResult.textContent = `Preset caricato: ${preset.name}`;
 }
 
-async function openProjectGateway() {
+async function openProjectGateway(options = {}) {
+  const panel = options.panel === "finished" ? "finished" : "output";
+  projectDialogMode = options.mode === "notifications" ? "notifications" : "gateway";
   projectError.textContent = "";
   projectResult.textContent = "Caricamento progetti...";
   try {
@@ -2736,8 +2891,11 @@ async function openProjectGateway() {
     renderProjectActions();
     await refreshProjectPresets();
     refreshProjectScheduleDefaults();
-    setProjectPanel("output");
-    projectResult.textContent = "Seleziona un'azione da eseguire con l'agente corrente.";
+    setProjectPanel(panel);
+    syncProjectDialogMode();
+    projectResult.textContent = panel === "finished"
+      ? "Cronologia job caricata."
+      : "Seleziona un'azione da eseguire con l'agente corrente.";
     projectDialog.showModal();
     await refreshProjectJobHistory(true);
   } catch (error) {
@@ -2748,6 +2906,48 @@ async function openProjectGateway() {
 
 function projectNameFor(job) {
   return availableProjects.find((project) => project.id === job.project_id)?.name ?? job.project_id ?? "Project";
+}
+
+function syncProjectDialogMode() {
+  const notificationsMode = projectDialogMode === "notifications";
+  if (projectDialogKicker) {
+    projectDialogKicker.textContent = notificationsMode ? "Job notifications" : "Project Gateway";
+  }
+  if (projectDialogTitle) {
+    projectDialogTitle.textContent = notificationsMode ? "Jobs and notifications" : "The Main Scraper";
+  }
+  if (projectGatewayHeaderGrid) {
+    projectGatewayHeaderGrid.hidden = notificationsMode;
+  }
+  if (projectPresetsSection) {
+    projectPresetsSection.hidden = notificationsMode;
+  }
+  if (projectParametersSection) {
+    projectParametersSection.hidden = notificationsMode;
+  }
+  if (projectApprovalRow) {
+    projectApprovalRow.hidden = notificationsMode;
+  }
+  if (projectScheduleSection) {
+    projectScheduleSection.hidden = notificationsMode;
+  }
+  if (runProjectActionButton) {
+    runProjectActionButton.hidden = notificationsMode;
+  }
+  if (projectJobFilters) {
+    projectJobFilters.hidden = !notificationsMode;
+  }
+  if (projectDialogActions) {
+    projectDialogActions.classList.toggle("dialog-actions--notifications", notificationsMode);
+  }
+}
+
+function syncProjectJobFilterButtons() {
+  for (const button of projectJobFilterButtons) {
+    const active = button.dataset.jobFilter === projectJobFilter;
+    button.classList.toggle("project-job-filter--active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
 }
 
 function projectActionLabelFor(job) {
@@ -3376,7 +3576,26 @@ function markCompletedJobUnread(jobId) {
 function projectJobsForHistory(jobs) {
   const currentProjectId = projectSelect.value;
   return jobs
-    .filter((job) => job.state === "completed" || job.state === "failed")
+    .filter((job) => (
+      projectDialogMode === "notifications"
+        ? true
+        : (job.state === "completed" || job.state === "failed")
+    ))
+    .filter((job) => {
+      if (projectDialogMode !== "notifications") {
+        return true;
+      }
+      if (projectJobFilter === "active") {
+        return ["queued", "running", "scheduled"].includes(job.state);
+      }
+      if (projectJobFilter === "done") {
+        return job.state === "completed";
+      }
+      if (projectJobFilter === "failed") {
+        return job.state === "failed";
+      }
+      return true;
+    })
     .filter((job) => !currentProjectId || job.project_id === currentProjectId)
     .sort((left, right) => String(right.updated_at ?? right.created_at).localeCompare(String(left.updated_at ?? left.created_at)));
 }
@@ -3390,12 +3609,18 @@ function renderProjectJobHistory(jobs) {
     projectJobsCache.set(job.id, job);
   }
   if (!jobs.length) {
-    projectJobList.innerHTML = '<p class="project-job-empty">Nessun job finito per questo progetto.</p>';
+    projectJobList.innerHTML = `<p class="project-job-empty">${
+      projectDialogMode === "notifications"
+        ? "No jobs match the current filter for this project."
+        : "No completed jobs for this project."
+    }</p>`;
     return;
   }
   projectJobList.innerHTML = jobs
     .map((job) => {
-      const tone = job.state === "failed" ? "project-job-item--failed" : "project-job-item--completed";
+      const tone = job.state === "failed"
+        ? "project-job-item--failed"
+        : (job.state === "completed" ? "project-job-item--completed" : "");
       const summary = formatProjectJobSummary(job);
       const time = formatProjectJobTime(job);
       return `
@@ -4230,13 +4455,24 @@ projectWeekdayPicker?.querySelectorAll("[data-weekday]").forEach((input) => {
 projectPanelTabs.forEach((button) => {
   button.addEventListener("click", () => setProjectPanel(button.dataset.panelTab));
 });
+projectJobFilterButtons.forEach((button) => {
+  button.addEventListener("click", async () => {
+    projectJobFilter = button.dataset.jobFilter || "all";
+    syncProjectJobFilterButtons();
+    await refreshProjectJobHistory(false);
+  });
+});
 jobNotificationsButton?.addEventListener("click", async () => {
   if (!projectDialog.open) {
-    await openProjectGateway();
+    await openProjectGateway({ panel: "finished", mode: "notifications" });
     if (!projectDialog.open) {
       return;
     }
   }
+  projectDialogMode = "notifications";
+  projectJobFilter = "all";
+  syncProjectDialogMode();
+  syncProjectJobFilterButtons();
   setProjectPanel("finished");
 });
 

@@ -1515,6 +1515,28 @@ noscript {
   gap: 8px;
 }
 
+.project-job-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.project-job-filter {
+  border: 1px solid rgba(174, 197, 225, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #b7c4d5;
+  padding: 6px 10px;
+  font-size: 0.68rem;
+}
+
+.project-job-filter--active {
+  border-color: rgba(94, 231, 242, 0.42);
+  background: rgba(94, 231, 242, 0.12);
+  color: #f3f8ff;
+}
+
 .project-job-empty {
   margin: 0;
   padding: 12px;
@@ -1663,12 +1685,19 @@ body.theme-light .dialog-actions--sticky {
 body.theme-light .project-panel-tab,
 body.theme-light .project-presets,
 body.theme-light .settings-section,
+body.theme-light .project-job-filter,
 body.theme-light .project-job-item {
   background: rgba(255, 255, 255, 0.64);
   color: #334155;
 }
 
 body.theme-light .project-panel-tab--active {
+  border-color: rgba(14, 165, 233, 0.38);
+  background: rgba(14, 165, 233, 0.14);
+  color: #075985;
+}
+
+body.theme-light .project-job-filter--active {
   border-color: rgba(14, 165, 233, 0.38);
   background: rgba(14, 165, 233, 0.14);
   color: #075985;

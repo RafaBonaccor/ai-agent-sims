@@ -510,6 +510,12 @@
           </div>
         </div>
         <div class="project-panel" data-project-panel="finished" hidden>
+          <div class="project-job-filters" id="project-job-filters" hidden>
+            <button class="project-job-filter project-job-filter--active" type="button" data-job-filter="all">All</button>
+            <button class="project-job-filter" type="button" data-job-filter="active">Active</button>
+            <button class="project-job-filter" type="button" data-job-filter="done">Completed</button>
+            <button class="project-job-filter" type="button" data-job-filter="failed">Failed</button>
+          </div>
           <div class="project-job-list" id="project-job-list"></div>
         </div>
         <p class="form-error" id="project-error" role="alert"></p>

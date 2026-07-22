@@ -308,3 +308,4 @@ Nota utile per il video:
 - fermare il processo a meta e mostrare che i risultati parziali restano visibili
 - lasciare finire un ciclo per mostrare che il loop riparte dai termini iniziali
 - mostrare che tra un giro e il successivo il browser non viene chiuso: il procacciatore continua nello stesso processo/browser senza riaprire Chrome
+- mostrare che quando il procacciatore trova affari, l'agente che sta eseguendo il job li riceve direttamente nella chat in-game con link cliccabili, oltre al toast di notifica
