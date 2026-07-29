@@ -43,13 +43,61 @@
       "label": "Cerca prodotti Vinted",
       "risk": "browser-read",
       "arguments": ["run", "vinted", "--stdout-json", "--quiet", "--format", "none"],
-      "parameters": ["search", "max-results", "browser-mode"]
+      "parameters": [
+        "search",
+        "max-results",
+        "browser-mode",
+        { "id": "browser-user-data-dir", "label": "Browser user data dir", "type": "text", "default": "", "defaultFromUiSetting": "browser_user_data_dir", "placeholder": "/Users/.../Google/Chrome" },
+        { "id": "browser-profile-directory", "label": "Browser profile directory", "type": "text", "default": "Default", "defaultFromUiSetting": "browser_profile_directory", "placeholder": "Default" }
+      ]
+    },
+    "vinted.deal_hunter": {
+      "label": "Procacciatore",
+      "description": "Avvia il loop Vinted deal-hunter usando i valori salvati dalla GUI come default modificabili.",
+      "risk": "browser-read-write",
+      "arguments": ["run", "vinted", "--stdout-json", "--quiet", "--format", "none"],
+      "parameters": [
+        { "id": "deal-hunter-terms", "label": "Rotation terms", "type": "text", "default": "charm, bracciali, pandora, collane, gioielli, ciondoli, orecchini, anelli", "defaultFromUiSetting": "vinted_deal_hunter_terms", "placeholder": "charm, pandora, collane" },
+        { "id": "deal-hunter-category", "label": "Category", "type": "select", "default": "Gioielli donna", "defaultFromUiSetting": "vinted_deal_hunter_category", "options": [
+          { "value": "Nessuna categoria rapida", "label": "No quick category" },
+          { "value": "Monitoraggio", "label": "Monitoring" },
+          { "value": "Accessori donna", "label": "Women accessories" },
+          { "value": "Accessori uomo", "label": "Men accessories" },
+          { "value": "Elettronica", "label": "Electronics" },
+          { "value": "Gioielli donna", "label": "Women jewellery" },
+          { "value": "Scarpe donna", "label": "Women shoes" },
+          { "value": "Scarpe uomo", "label": "Men shoes" }
+        ] },
+        { "id": "max-results", "label": "Max items / search", "type": "number", "default": 250, "defaultFromUiSetting": "vinted_deal_hunter_max_results", "min": 0, "step": 1 },
+        { "id": "max-price", "label": "Max item price", "type": "text", "default": "", "defaultFromUiSetting": "vinted_deal_hunter_max_price", "placeholder": "19.90" },
+        { "id": "deal-hunter-min-favorites", "label": "Min likes", "type": "number", "default": 70, "defaultFromUiSetting": "vinted_deal_hunter_min_favorites", "min": 1, "step": 1 },
+        { "id": "deal-hunter-max-age-hours", "label": "Max age hours", "type": "number", "default": 24, "defaultFromUiSetting": "vinted_deal_hunter_max_age_hours", "min": 1, "step": 1 },
+        { "id": "deal-hunter-loop-seconds", "label": "Loop pause seconds", "type": "number", "default": 5, "defaultFromUiSetting": "vinted_deal_hunter_loop_seconds", "min": 0, "step": 1 },
+        { "id": "auto-submit-offers", "label": "Auto-submit offers", "type": "checkbox", "default": true, "emitFalseFlag": true },
+        { "id": "browser-mode", "label": "Browser mode", "type": "select", "default": "chrome_normale", "defaultFromUiSetting": "browser_mode", "options": [
+          { "value": "chrome_normale", "label": "Chrome normale" },
+          { "value": "sessione_persistente", "label": "Sessione persistente" },
+          { "value": "profilo_personalizzato", "label": "Profilo personalizzato" },
+          { "value": "isolated", "label": "Isolated" }
+        ] },
+        { "id": "browser-user-data-dir", "label": "Browser user data dir", "type": "text", "default": "", "defaultFromUiSetting": "browser_user_data_dir", "placeholder": "/Users/.../Google/Chrome" },
+        { "id": "browser-profile-directory", "label": "Browser profile directory", "type": "text", "default": "Default", "defaultFromUiSetting": "browser_profile_directory", "placeholder": "Default" },
+        { "id": "discord-deal-notifications", "label": "Discord notifications", "type": "checkbox", "default": false, "defaultFromUiSetting": "vinted_discord_notifications_enabled" },
+        { "id": "discord-webhook-url", "label": "Discord webhook", "type": "text", "default": "", "defaultFromUiSetting": "vinted_discord_webhook_url", "placeholder": "https://discord.com/api/webhooks/..." }
+      ]
     },
     "vinted.details": {
       "label": "Estrai dettagli Vinted",
       "risk": "browser-read-write",
       "arguments": ["run", "vinted_descriptions", "--stdout-json", "--quiet"],
-      "parameters": ["links-file", "db-path", "browser-mode", "refresh-browser-profile"]
+      "parameters": [
+        "links-file",
+        "db-path",
+        "browser-mode",
+        { "id": "browser-user-data-dir", "label": "Browser user data dir", "type": "text", "default": "", "defaultFromUiSetting": "browser_user_data_dir", "placeholder": "/Users/.../Google/Chrome" },
+        { "id": "browser-profile-directory", "label": "Browser profile directory", "type": "text", "default": "Default", "defaultFromUiSetting": "browser_profile_directory", "placeholder": "Default" },
+        "refresh-browser-profile"
+      ]
     },
     "subito.search": {
       "label": "Cerca lavori Subito",

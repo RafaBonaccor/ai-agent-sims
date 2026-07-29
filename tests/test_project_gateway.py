@@ -1,12 +1,14 @@
 import json
 import tempfile
 import unittest
+import asyncio
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+from agent_runtime.models import AgentChatMessage
 from agent_runtime.models import ProjectJobPresetCreate
-from agent_runtime.project_gateway import ProjectGateway, ProjectJobCreate
+from agent_runtime.project_gateway import ProjectGateway, ProjectJob, ProjectJobCreate
 from agent_runtime.storage import RuntimeStore
 
 
@@ -69,6 +71,164 @@ class ProjectGatewayTests(unittest.IsolatedAsyncioTestCase):
     async def test_exposes_human_action_labels(self):
         projects = self.gateway.list_projects()
         self.assertEqual("Read demo", projects[0]["actions"][0]["label"])
+
+    async def test_supports_object_parameter_definitions_and_ui_defaults(self):
+        (Path(self.temporary_directory.name) / "projects" / "demo" / "data").mkdir(parents=True, exist_ok=True)
+        (Path(self.temporary_directory.name) / "projects" / "demo" / "data" / "ui_settings.json").write_text(
+            json.dumps({"demo_query": "saved value"}),
+            encoding="utf-8",
+        )
+        (Path(self.temporary_directory.name) / "integrations" / "demo" / "adapter.json").write_text(
+            json.dumps(
+                {
+                    "runtime": {"entrypoint": "main.py", "venvCandidates": []},
+                    "actions": {
+                        "read": {
+                            "label": "Read demo",
+                            "arguments": ["status"],
+                            "parameters": [
+                                {
+                                    "id": "query",
+                                    "label": "Query",
+                                    "type": "text",
+                                    "defaultFromUiSetting": "demo_query",
+                                }
+                            ],
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        projects = self.gateway.list_projects()
+        self.assertEqual("query", projects[0]["actions"][0]["parameters"][0]["id"])
+        self.assertEqual("saved value", projects[0]["actions"][0]["parameters"][0]["default"])
+
+        job = await self.gateway.create_job(
+            ProjectJobCreate(project_id="demo", action="read", parameters={"query": "runtime value"})
+        )
+        self.assertEqual("queued", job.state)
+
+    def test_project_output_alert_detects_vinted_login_required(self):
+        alert = self.gateway._project_output_alert(
+            '__VINTED_LOGIN_REQUIRED__:{"current_url":"https://www.vinted.it/catalog","marker_present":false}'
+        )
+        self.assertIsNotNone(alert)
+        self.assertEqual("vinted_login_required", alert["kind"])
+        self.assertIn("login", alert["summary"].lower())
+
+    def test_project_output_alert_detects_vinted_page_not_found(self):
+        alert = self.gateway._project_output_alert(
+            '__VINTED_ACCESS__:{"current_url":"https://www.vinted.it/items/123","page_not_found":true,"marker_present":false}'
+        )
+        self.assertIsNotNone(alert)
+        self.assertEqual("vinted_page_not_found", alert["kind"])
+
+    async def test_deduplicates_repeated_live_project_alerts_until_state_changes(self):
+        events: list[object] = []
+
+        async def emit(event):
+            events.append(event)
+
+        gateway = ProjectGateway(Path(self.temporary_directory.name), emit, self.store)
+        job = ProjectJob(project_id="demo", action="read", parameters={}, agent_id="specialist")
+        try:
+            await gateway._handle_project_output_line(
+                job,
+                '__VINTED_ACCESS__:{"current_url":"https://www.vinted.it/catalog","marker_present":false,"page_not_found":false}',
+            )
+            await gateway._handle_project_output_line(
+                job,
+                '__VINTED_ACCESS__:{"current_url":"https://www.vinted.it/catalog","marker_present":false,"page_not_found":false}',
+            )
+            await gateway._handle_project_output_line(
+                job,
+                '__VINTED_ACCESS__:{"current_url":"https://www.vinted.it/catalog","marker_present":true,"page_not_found":false}',
+            )
+        finally:
+            await gateway.shutdown()
+
+        self.assertEqual(2, len(events))
+        self.assertEqual("vinted_marker_missing", events[0].data["alert"]["kind"])
+        self.assertEqual("vinted_marker_found", events[1].data["alert"]["kind"])
+        messages = self.store.load_agent_chat_messages("specialist", limit_turns=10)
+        self.assertTrue(any("Vinted account marker missing" in message.content for message in messages))
+
+    async def test_deduplicates_repeated_login_required_alerts_for_same_job_state(self):
+        events: list[object] = []
+
+        async def emit(event):
+            events.append(event)
+
+        gateway = ProjectGateway(Path(self.temporary_directory.name), emit, self.store)
+        job = ProjectJob(project_id="demo", action="read", parameters={}, agent_id="specialist")
+        try:
+            await gateway._handle_project_output_line(
+                job,
+                '__VINTED_LOGIN_REQUIRED__:{"current_url":"https://www.vinted.it/catalog","marker_present":false}',
+            )
+            await gateway._handle_project_output_line(
+                job,
+                '__VINTED_LOGIN_REQUIRED__:{"current_url":"https://www.vinted.it/catalog","marker_present":false}',
+            )
+            await gateway._handle_project_output_line(
+                job,
+                '__VINTED_ACCESS__:{"current_url":"https://www.vinted.it/catalog","marker_present":true,"page_not_found":false}',
+            )
+            await gateway._handle_project_output_line(
+                job,
+                '__VINTED_LOGIN_REQUIRED__:{"current_url":"https://www.vinted.it/catalog","marker_present":false}',
+            )
+        finally:
+            await gateway.shutdown()
+
+        self.assertEqual(3, len(events))
+        self.assertEqual("vinted_login_required", events[0].data["alert"]["kind"])
+        self.assertEqual("vinted_marker_found", events[1].data["alert"]["kind"])
+        self.assertEqual("vinted_login_required", events[2].data["alert"]["kind"])
+        messages = self.store.load_agent_chat_messages("specialist", limit_turns=10)
+        self.assertTrue(any("Vinted login required" in message.content for message in messages))
+
+    async def test_cancel_job_marks_running_job_as_stopped(self):
+        job = ProjectJob(project_id="demo", action="read", parameters={}, agent_id="specialist", state="running")
+        self.gateway.jobs[job.id] = job
+
+        class FakeProcess:
+            def __init__(self):
+                self.returncode = None
+                self.terminated = False
+
+            def terminate(self):
+                self.terminated = True
+                self.returncode = -15
+
+            def kill(self):
+                self.returncode = -9
+
+            async def wait(self):
+                return self.returncode
+
+        fake = FakeProcess()
+        self.gateway.processes[job.id] = fake
+
+        cancelled = await self.gateway.cancel_job(job.id)
+
+        self.assertTrue(fake.terminated)
+        self.assertEqual("failed", cancelled.state)
+        self.assertEqual("Stopped by user.", cancelled.error)
+
+    def test_parameter_arguments_emit_negative_flag_for_explicit_false_checkbox(self):
+        arguments = ProjectGateway._parameter_arguments(
+            {"auto-submit-offers": False, "discord-deal-notifications": True},
+            [
+                {"id": "auto-submit-offers", "type": "checkbox", "emitFalseFlag": True},
+                {"id": "discord-deal-notifications", "type": "checkbox"},
+            ],
+        )
+
+        self.assertIn("--no-auto-submit-offers", arguments)
+        self.assertIn("--discord-deal-notifications", arguments)
 
     async def test_requires_explicit_approval_for_external_action(self):
         with self.assertRaisesRegex(PermissionError, "requires explicit approval"):
@@ -180,6 +340,54 @@ class ProjectGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Terminal", " ".join(command))
         self.assertIn("exec /tmp/python /tmp/main.py gui", " ".join(command))
         self.assertIn("cd '/tmp/demo project'", " ".join(command))
+
+    def test_completed_project_job_output_is_saved_for_agent_chat(self):
+        job = ProjectJob(
+            project_id="demo",
+            action="read",
+            parameters={"query": "example"},
+            agent_id="specialist",
+        )
+        job.state = "completed"
+        job.updated_at = datetime.now(timezone.utc)
+        job.result = {
+            "source": "vinted",
+            "command": "vinted.search",
+            "row_count": 2,
+            "normalized": {
+                "meta_summary": {
+                    "search_term": "charm",
+                    "deal_hunter_enabled": True,
+                    "deal_hunter_matches": 1,
+                },
+                "rows": [
+                    {
+                        "name": "Pandora charm",
+                        "price": "12,00 EUR",
+                        "loaded_at": "2 hours ago",
+                        "deal_hunter_label": "hot listing",
+                        "link": "https://example.test/items/1",
+                    },
+                    {
+                        "name": "Bracelet",
+                        "price": "8,00 EUR",
+                        "link": "https://example.test/items/2",
+                    },
+                ],
+            },
+        }
+
+        self.gateway._store_agent_job_message(job)
+
+        messages = self.store.load_agent_chat_messages("specialist")
+        self.assertTrue(messages)
+        last = messages[-1]
+        self.assertIsInstance(last, AgentChatMessage)
+        self.assertEqual(f"{job.id}-project-output", last.id)
+        self.assertIn("Project job completed.", last.content)
+        self.assertIn("Deal hunter matches: 1", last.content)
+        self.assertIn("Pandora charm", last.content)
+        self.assertEqual("https://example.test/items/1", last.sources[0]["url"])
 
 
 if __name__ == "__main__":

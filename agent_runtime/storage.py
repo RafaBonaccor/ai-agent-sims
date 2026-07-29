@@ -12,6 +12,7 @@ from .models import (
     MemoryRecord,
     ProjectJobPreset,
     RuntimeEvent,
+    SystemSettings,
     TaskRecord,
     WikiRecord,
     utc_now,
@@ -64,9 +65,24 @@ class RuntimeStore:
                     document TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS agent_chat_messages (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    document TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS system_settings (
+                    key TEXT PRIMARY KEY,
+                    document TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 CREATE INDEX IF NOT EXISTS events_created_at_idx ON events(created_at DESC);
                 CREATE INDEX IF NOT EXISTS project_job_presets_project_idx
                     ON project_job_presets(project_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS agent_chat_messages_agent_idx
+                    ON agent_chat_messages(agent_id, created_at DESC);
                 """
             )
 
@@ -211,6 +227,49 @@ class RuntimeStore:
             )
         return cursor.rowcount > 0
 
+    def save_agent_chat_message(self, agent_id: str, message: AgentChatMessage) -> None:
+        with self.lock, self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO agent_chat_messages(id, agent_id, task_id, role, document, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    agent_id=excluded.agent_id,
+                    task_id=excluded.task_id,
+                    role=excluded.role,
+                    document=excluded.document,
+                    created_at=excluded.created_at
+                """,
+                (
+                    message.id,
+                    agent_id,
+                    message.task_id,
+                    message.role,
+                    message.model_dump_json(),
+                    message.created_at.isoformat(),
+                ),
+            )
+
+    def load_system_settings(self) -> SystemSettings:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT document FROM system_settings WHERE key = 'global'"
+            ).fetchone()
+        if row is None:
+            return SystemSettings()
+        return SystemSettings.model_validate_json(row["document"])
+
+    def save_system_settings(self, settings: SystemSettings) -> None:
+        document = settings.model_dump_json()
+        with self.lock, self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO system_settings(key, document) VALUES ('global', ?)
+                ON CONFLICT(key) DO UPDATE SET document=excluded.document, updated_at=CURRENT_TIMESTAMP
+                """,
+                (document,),
+            )
+
     def recent_events(self, limit: int = 100) -> list[RuntimeEvent]:
         with self.lock:
             rows = self.connection.execute(
@@ -222,11 +281,19 @@ class RuntimeStore:
         self, agent_id: str, limit_turns: int = 12, exclude_task_id: str = ""
     ) -> list[AgentChatMessage]:
         with self.lock:
-            rows = self.connection.execute(
+            task_rows = self.connection.execute(
                 "SELECT document FROM tasks ORDER BY updated_at DESC, rowid DESC"
             ).fetchall()
-        turns: list[list[AgentChatMessage]] = []
-        for row in rows:
+            message_rows = self.connection.execute(
+                """
+                SELECT document FROM agent_chat_messages
+                WHERE agent_id = ?
+                ORDER BY created_at DESC, rowid DESC
+                """,
+                (agent_id,),
+            ).fetchall()
+        turns: list[tuple[str, list[AgentChatMessage]]] = []
+        for row in task_rows:
             task = TaskRecord.model_validate_json(row["document"])
             legacy_chat = (
                 task.channel == "task"
@@ -268,11 +335,17 @@ class RuntimeStore:
                         created_at=task.updated_at,
                     )
                 )
-            turns.append(turn)
-            if len(turns) >= limit_turns:
-                break
-        # Select the newest turns first, then expose them chronologically.
-        return [message for turn in reversed(turns) for message in turn]
+            turns.append((max(message.created_at.isoformat() for message in turn), turn))
+        for row in message_rows:
+            message = AgentChatMessage.model_validate_json(row["document"])
+            if message.task_id == exclude_task_id:
+                continue
+            turns.append((message.created_at.isoformat(), [message]))
+        turns.sort(key=lambda item: item[0], reverse=True)
+        if limit_turns > 0:
+            turns = turns[:limit_turns]
+        selected = list(reversed(turns))
+        return [message for _, turn in selected for message in turn]
 
     @staticmethod
     def _chat_assistant_content(task: TaskRecord) -> str:

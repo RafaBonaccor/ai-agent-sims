@@ -6,6 +6,7 @@ from pathlib import Path
 from agent_runtime import server
 from agent_runtime.briefings import MorningBriefingConfig, MorningBriefingScheduler
 from agent_runtime.engine import AgentRuntime
+from agent_runtime.knowledge import KnowledgeWiki
 from agent_runtime.models import AgentDefinition, TaskCreate
 
 
@@ -14,6 +15,9 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         database = Path(self.temporary_directory.name) / "data" / "runtime.db"
         self.runtime = AgentRuntime(database, simulation_delay=0)
+        self.runtime.executor.workspace_root = Path(self.temporary_directory.name)
+        self.runtime.knowledge_wiki = KnowledgeWiki(Path(self.temporary_directory.name) / "data" / "wiki")
+        self.runtime.executor.wiki = self.runtime.knowledge_wiki
         await self.runtime.add_agent(
             AgentDefinition(
                 id="orchestrator",
@@ -106,6 +110,56 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("ai-news-navigator", task.requested_agent_id)
         self.assertEqual("chat", task.channel)
         self.assertEqual("news", task.capability)
+
+    async def test_wiki_proposal_api_handlers(self):
+        proposal = self.runtime.knowledge_wiki.propose(
+            agent_id="specialist",
+            title="Memory retrieval note",
+            content="Use shared wiki retrieval before answering implementation tasks.",
+            source="task-memory",
+        )
+
+        proposals = await server.list_wiki_proposals()
+        self.assertEqual([proposal.name], [item.name for item in proposals])
+
+        resolved = await server.resolve_wiki_proposal(
+            proposal.name,
+            server.WikiProposalResolveRequest(
+                status="approved",
+                reviewer="Rafael",
+                reason="Reviewed and accepted.",
+            ),
+        )
+        self.assertTrue(resolved.name.startswith("approved-"))
+        self.assertIn("Reviewed and accepted.", resolved.content)
+
+    async def test_wiki_page_search_and_maintenance_api_handlers(self):
+        self.runtime.knowledge_wiki.update_page(
+            "knowledge-implementation",
+            "# Implementation\n\n## Memory\nUse canonical wiki pages for reviewed knowledge.",
+            agent_id="specialist",
+            source="test",
+        )
+
+        pages = await server.list_wiki_pages()
+        self.assertIn("knowledge-implementation.md", [page.name for page in pages])
+
+        page = await server.get_wiki_page("knowledge-implementation.md")
+        self.assertIn("reviewed knowledge", page.content)
+
+        result = await server.search_wiki("canonical reviewed knowledge")
+        self.assertTrue(result.pages)
+        self.assertIn("reviewed knowledge", result.pages[0]["content"])
+
+        maintenance = await server.run_wiki_maintenance()
+        self.assertGreaterEqual(maintenance.pages_scanned, 1)
+        self.assertEqual("index.md", maintenance.index_page)
+
+    async def test_wiki_search_route_is_registered_before_page_catchall(self):
+        paths = [getattr(route, "path", "") for route in server.app.routes]
+        search_index = paths.index("/api/wiki/search")
+        catchall_index = paths.index("/api/wiki/pages/{name:path}")
+        self.assertLess(search_index, catchall_index)
 
 
 if __name__ == "__main__":

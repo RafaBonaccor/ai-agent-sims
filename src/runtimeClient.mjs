@@ -69,10 +69,25 @@ export class RuntimeClient {
     });
   }
 
+  listAgents() {
+    return this.request("/api/agents");
+  }
+
   updateAgent(agentId, agent) {
     return this.request(`/api/agents/${encodeURIComponent(agentId)}`, {
       method: "PUT",
       body: JSON.stringify(agent),
+    });
+  }
+
+  getSystemSettings() {
+    return this.request("/api/system-settings");
+  }
+
+  updateSystemSettings(settings) {
+    return this.request("/api/system-settings", {
+      method: "PUT",
+      body: JSON.stringify(settings),
     });
   }
 
@@ -98,11 +113,43 @@ export class RuntimeClient {
     });
   }
 
+  listWikiProposals(limit = 50) {
+    return this.request(`/api/wiki/proposals?limit=${encodeURIComponent(limit)}`);
+  }
+
+  listWikiPages() {
+    return this.request("/api/wiki/pages");
+  }
+
+  getWikiPage(name) {
+    const safePath = String(name).split("/").map(encodeURIComponent).join("/");
+    return this.request(`/api/wiki/pages/${safePath}`);
+  }
+
+  searchWiki(query, limit = 8) {
+    return this.request(`/api/wiki/search?query=${encodeURIComponent(query)}&limit=${encodeURIComponent(limit)}`);
+  }
+
+  runWikiMaintenance() {
+    return this.request("/api/wiki/maintenance/run", { method: "POST" });
+  }
+
+  resolveWikiProposal(name, status, reviewer = "user", reason = "") {
+    return this.request(`/api/wiki/proposals/${encodeURIComponent(name)}/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ status, reviewer, reason }),
+    });
+  }
+
   createTask(task) {
     return this.request("/api/tasks", {
       method: "POST",
       body: JSON.stringify(task),
     });
+  }
+
+  listTasks() {
+    return this.request("/api/tasks");
   }
 
   listBrowserSessions() {
@@ -172,6 +219,12 @@ export class RuntimeClient {
 
   listProjectJobs() {
     return this.request("/api/project-jobs");
+  }
+
+  cancelProjectJob(jobId) {
+    return this.request(`/api/project-jobs/${encodeURIComponent(jobId)}`, {
+      method: "DELETE",
+    });
   }
 
   listProjectPresets(projectId = "") {

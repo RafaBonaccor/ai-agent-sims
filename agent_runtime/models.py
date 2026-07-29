@@ -58,6 +58,18 @@ class ModelSettings(BaseModel):
     temperature: float = Field(default=0.2, ge=0, le=2)
 
 
+class SystemUiSettings(BaseModel):
+    theme: str = Field(default="dark", pattern=r"^(dark|light)$")
+    auto_agents: bool = True
+    simulation_speed: int = Field(default=1, ge=1, le=4)
+
+
+class SystemSettings(BaseModel):
+    configured: bool = False
+    model: ModelSettings = Field(default_factory=ModelSettings)
+    ui: SystemUiSettings = Field(default_factory=SystemUiSettings)
+
+
 class AgentDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -95,6 +107,15 @@ class TaskCreate(BaseModel):
     capability: Optional[str] = Field(default=None, max_length=64)
     priority: int = Field(default=2, ge=1, le=5)
     requested_agent_id: Optional[str] = None
+    source_agent_id: Optional[str] = None
+    consult_agent_id: Optional[str] = None
+    consult_agent_ids: list[str] = Field(default_factory=list)
+    consultation_notes: str = Field(default="", max_length=12_000)
+    clarification_question: str = Field(default="", max_length=2_000)
+    route_reason: str = Field(default="", max_length=500)
+    route_language: str = Field(default="", max_length=32)
+    route_mode: str = Field(default="", max_length=32)
+    discussion_log: list[dict[str, Any]] = Field(default_factory=list)
     channel: str = Field(default="task", pattern=r"^(task|chat)$")
 
 
@@ -183,3 +204,40 @@ class WikiUpdate(BaseModel):
 class WikiRecord(WikiUpdate):
     agent_id: str
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class WikiProposalRecord(BaseModel):
+    name: str
+    content: str
+
+
+class WikiProposalResolveRequest(BaseModel):
+    status: str = Field(pattern=r"^(approved|rejected)$")
+    reviewer: str = Field(min_length=1, max_length=120)
+    reason: str = Field(default="", max_length=2_000)
+
+
+class WikiPageRecord(BaseModel):
+    name: str
+    title: str
+    updated: str = ""
+    kind: str = "page"
+    sections: int = 0
+    characters: int = 0
+
+
+class WikiPageContent(BaseModel):
+    name: str
+    content: str
+
+
+class WikiSearchResult(BaseModel):
+    query: str
+    pages: list[dict[str, str]] = Field(default_factory=list)
+
+
+class WikiMaintenanceResult(BaseModel):
+    pages_scanned: int = 0
+    pages_updated: int = 0
+    duplicate_sections_removed: int = 0
+    index_page: str = ""

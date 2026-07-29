@@ -5,6 +5,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -23,9 +24,16 @@ from .models import (
     RuntimeEvent,
     ProjectJobPreset,
     ProjectJobPresetCreate,
+    SystemSettings,
     TaskCreate,
     TaskRecord,
+    WikiMaintenanceResult,
+    WikiPageContent,
+    WikiPageRecord,
     WikiRecord,
+    WikiProposalRecord,
+    WikiProposalResolveRequest,
+    WikiSearchResult,
     WikiUpdate,
 )
 from .protocols import PROTOCOLS
@@ -34,6 +42,7 @@ from .logging_config import configure_logging
 from .secrets import SecretStore
 from .discord_gateway import DiscordGateway
 from .briefings import MorningBriefingScheduler
+from .vinted_ai import generate_vinted_ai_variants, DEFAULT_VINTED_AI_MODEL, DEFAULT_VINTED_AI_SIZE
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -52,9 +61,13 @@ async def lifespan(app: FastAPI):
     app.state.project_gateway = ProjectGateway(PROJECT_ROOT, runtime.publish, runtime.store)
     app.state.discord_gateway = DiscordGateway(runtime)
     app.state.ai_news_briefing = MorningBriefingScheduler(runtime)
+    app.state.wiki_maintenance_task = _start_wiki_maintenance_task(runtime)
     await app.state.ai_news_briefing.start()
     await app.state.discord_gateway.start()
     yield
+    if app.state.wiki_maintenance_task:
+        app.state.wiki_maintenance_task.cancel()
+        await asyncio.gather(app.state.wiki_maintenance_task, return_exceptions=True)
     await app.state.discord_gateway.shutdown()
     await app.state.ai_news_briefing.shutdown()
     await app.state.project_gateway.shutdown()
@@ -62,6 +75,27 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Agent Protocol Lab Runtime", version="0.1.0", lifespan=lifespan)
+
+
+def _start_wiki_maintenance_task(runtime: AgentRuntime) -> asyncio.Task[None] | None:
+    raw_interval = os.environ.get("AGENT_LAB_WIKI_MAINTENANCE_INTERVAL_SECONDS", "").strip()
+    if not raw_interval:
+        return None
+    try:
+        interval = max(300, int(raw_interval))
+    except ValueError:
+        LOGGER.warning("wiki_maintenance_invalid_interval value=%s", raw_interval)
+        return None
+
+    async def loop() -> None:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await runtime.run_wiki_maintenance()
+            except Exception:
+                LOGGER.exception("wiki_maintenance_failed")
+
+    return asyncio.create_task(loop(), name="wiki-maintenance")
 
 
 class ClientLog(BaseModel):
@@ -89,6 +123,31 @@ class BrowserSessionCreate(BaseModel):
 class BrowserCommandRequest(BaseModel):
     command: str = Field(min_length=1, max_length=80)
     parameters: dict[str, object] = Field(default_factory=dict)
+
+
+class VintedAIGenerationRequest(BaseModel):
+    photo_paths: list[str] = Field(default_factory=list)
+    prompt: str = Field(min_length=1, max_length=8000)
+    output_dir: str = Field(min_length=1, max_length=2000)
+    model: str = Field(default=DEFAULT_VINTED_AI_MODEL, max_length=160)
+    size: str = Field(default=DEFAULT_VINTED_AI_SIZE, max_length=32)
+    variants: int = Field(default=1, ge=1, le=4)
+
+
+class VintedAIGenerationResponse(BaseModel):
+    ok: bool
+    model: str
+    size: str
+    prompt: str
+    source_photo_paths: list[str]
+    generated_photo_paths: list[str]
+    output_dir: str
+    variants: int
+    generated_at: str
+    log_path: str
+    backend: str
+    runtime_url: str
+    request_url: str
 
 
 @app.middleware("http")
@@ -174,6 +233,16 @@ async def list_agents() -> list[AgentSnapshot]:
     return runtime().list_agents()
 
 
+@app.get("/api/system-settings", response_model=SystemSettings)
+async def get_system_settings() -> SystemSettings:
+    return runtime().get_system_settings()
+
+
+@app.put("/api/system-settings", response_model=SystemSettings)
+async def update_system_settings(settings: SystemSettings) -> SystemSettings:
+    return await runtime().update_system_settings(settings)
+
+
 @app.get("/api/secrets/status")
 async def secret_status(agent_id: str = Query(default="", max_length=80)) -> dict[str, object]:
     return secrets().status(agent_id or None)
@@ -215,6 +284,40 @@ async def delete_agent_secret(agent_id: str) -> dict[str, object]:
     secrets().delete_agent(agent_id)
     LOGGER.info("secret_deleted scope=agent agent=%s", agent_id)
     return secrets().status(agent_id)
+
+
+@app.post("/api/vinted-ai/generate", response_model=VintedAIGenerationResponse)
+async def generate_vinted_ai_image_variants(request: VintedAIGenerationRequest) -> VintedAIGenerationResponse:
+    project_key = secrets().get_project()
+    if not project_key:
+        raise HTTPException(status_code=422, detail="Project API key not configured in the game runtime.")
+    system_settings = runtime().get_system_settings()
+    base_url = str(system_settings.model.base_url or "").strip() or None
+    try:
+        result = generate_vinted_ai_variants(
+            api_key=project_key,
+            photo_paths=list(request.photo_paths),
+            prompt=request.prompt,
+            output_dir=request.output_dir,
+            model=request.model,
+            size=request.size,
+            variants=request.variants,
+            base_url=base_url,
+        )
+        LOGGER.info(
+            "vinted_ai_generated output_dir=%s variants=%s model=%s size=%s",
+            result.get("output_dir", ""),
+            result.get("variants", 0),
+            result.get("model", ""),
+            result.get("size", ""),
+        )
+        runtime_url = f"http://{os.environ.get('AGENT_LAB_HOST', '127.0.0.1')}:{int(os.environ.get('AGENT_LAB_PORT', '8000'))}"
+        result["runtime_url"] = runtime_url
+        result["request_url"] = f"{runtime_url}/api/vinted-ai/generate"
+        return VintedAIGenerationResponse.model_validate(result)
+    except Exception as error:
+        LOGGER.exception("vinted_ai_generation_failed")
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.post("/api/agents", response_model=AgentSnapshot, status_code=201)
@@ -278,6 +381,52 @@ async def get_agent_chat(agent_id: str) -> list[AgentChatMessage]:
 @app.get("/api/tasks", response_model=list[TaskRecord])
 async def list_tasks() -> list[TaskRecord]:
     return runtime().list_tasks()
+
+
+@app.get("/api/wiki/proposals", response_model=list[WikiProposalRecord])
+async def list_wiki_proposals(
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+) -> list[WikiProposalRecord]:
+    return runtime().list_wiki_proposals(limit=limit)
+
+
+@app.get("/api/wiki/pages", response_model=list[WikiPageRecord])
+async def list_wiki_pages() -> list[WikiPageRecord]:
+    return runtime().list_wiki_pages()
+
+
+@app.get("/api/wiki/search", response_model=WikiSearchResult)
+async def search_wiki(
+    query: Annotated[str, Query(min_length=1, max_length=500)],
+    limit: Annotated[int, Query(ge=1, le=20)] = 8,
+) -> WikiSearchResult:
+    return runtime().search_wiki(query=query, limit=limit)
+
+
+@app.get("/api/wiki/pages/{name:path}", response_model=WikiPageContent)
+async def get_wiki_page(name: str) -> WikiPageContent:
+    try:
+        return runtime().get_wiki_page(name)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/api/wiki/maintenance/run", response_model=WikiMaintenanceResult)
+async def run_wiki_maintenance() -> WikiMaintenanceResult:
+    return await runtime().run_wiki_maintenance()
+
+
+@app.post("/api/wiki/proposals/{name}/resolve", response_model=WikiProposalRecord)
+async def resolve_wiki_proposal(name: str, request: WikiProposalResolveRequest) -> WikiProposalRecord:
+    try:
+        return await runtime().resolve_wiki_proposal(
+            name=name,
+            status=request.status,
+            reviewer=request.reviewer,
+            reason=request.reason,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.post("/api/tasks", response_model=TaskRecord, status_code=202)
@@ -369,6 +518,14 @@ async def create_project_job(request: ProjectJobCreate) -> ProjectJob:
         raise HTTPException(status_code=403, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.delete("/api/project-jobs/{job_id}", response_model=ProjectJob)
+async def cancel_project_job(job_id: str) -> ProjectJob:
+    try:
+        return await project_gateway().cancel_job(job_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Job not found") from error
 
 
 @app.get("/api/project-presets", response_model=list[ProjectJobPreset])

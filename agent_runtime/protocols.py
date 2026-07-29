@@ -46,6 +46,25 @@ PROTOCOLS = {
             {"memory.recall", "memory.propose", "memory.approve", "memory.commit"}
         ),
     ),
+    "conversation-routing": ProtocolDefinition(
+        id="conversation-routing",
+        message_types=frozenset(
+            {
+                "chat.route",
+                "chat.consult",
+                "chat.strategy",
+                "chat.peer-brief",
+                "chat.peer-request",
+                "chat.reasoning",
+                "chat.plan",
+                "chat.council",
+                "chat.revise",
+                "chat.strategy-update",
+                "chat.accept",
+                "chat.reply",
+            }
+        ),
+    ),
     "tool-execution": ProtocolDefinition(
         id="tool-execution",
         message_types=frozenset(

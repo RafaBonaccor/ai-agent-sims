@@ -63,11 +63,16 @@ const workstationAgentCount = document.querySelector("#workstation-agent-count")
 const addWorkstationButton = document.querySelector("#add-workstation");
 const resetLayoutButton = document.querySelector("#reset-layout");
 const themeToggle = document.querySelector("#theme-toggle");
+const systemSettingsButton = document.querySelector("#system-settings");
 const agentDialog = document.querySelector("#agent-dialog");
 const agentForm = document.querySelector("#agent-form");
 const agentFormError = document.querySelector("#agent-form-error");
 const agentWorkstationPreset = document.querySelector("#agent-workstation-preset");
 const configureAgentButton = document.querySelector("#configure-agent");
+const systemSettingsDialog = document.querySelector("#system-settings-dialog");
+const systemSettingsForm = document.querySelector("#system-settings-form");
+const systemSettingsError = document.querySelector("#system-settings-error");
+const systemProjectKeyStatus = document.querySelector("#system-project-key-status");
 const agentSettingsDialog = document.querySelector("#agent-settings-dialog");
 const agentSettingsForm = document.querySelector("#agent-settings-form");
 const agentSettingsError = document.querySelector("#agent-settings-error");
@@ -76,6 +81,8 @@ const quickChatAgent = document.querySelector("#quick-chat-agent");
 const quickChatInput = document.querySelector("#quick-chat-input");
 const quickChatStatus = document.querySelector("#quick-chat-status");
 const quickChatHistory = document.querySelector("#quick-chat-history");
+const quickChatDiscussion = document.querySelector("#quick-chat-discussion");
+const quickChatTabs = Array.from(document.querySelectorAll("[data-quick-chat-tab]"));
 const projectKeyStatus = document.querySelector("#project-key-status");
 const agentKeyStatus = document.querySelector("#agent-key-status");
 const agentActionDialog = document.querySelector("#agent-action-dialog");
@@ -130,6 +137,21 @@ const jobNotificationCount = document.querySelector("#job-notification-count");
 const projectJobList = document.querySelector("#project-job-list");
 const projectJobFilters = document.querySelector("#project-job-filters");
 const projectJobFilterButtons = Array.from(document.querySelectorAll("[data-job-filter]"));
+const wikiProposalList = document.querySelector("#wiki-proposal-list");
+const wikiProposalCount = document.querySelector("#wiki-proposal-count");
+const memoryCoreChatButton = document.querySelector("#memory-core-chat");
+const memoryCoreSettingsButton = document.querySelector("#memory-core-settings");
+const refreshWikiProposalsButton = document.querySelector("#refresh-wiki-proposals");
+const wikiSearchQuery = document.querySelector("#wiki-search-query");
+const searchWikiPagesButton = document.querySelector("#search-wiki-pages");
+const refreshWikiPagesButton = document.querySelector("#refresh-wiki-pages");
+const runWikiMaintenanceButton = document.querySelector("#run-wiki-maintenance");
+const wikiPageList = document.querySelector("#wiki-page-list");
+const wikiPageContent = document.querySelector("#wiki-page-content");
+const taskThreadCount = document.querySelector("#task-thread-count");
+const refreshTaskThreadsButton = document.querySelector("#refresh-task-threads");
+const taskThreadList = document.querySelector("#task-thread-list");
+const taskThreadContent = document.querySelector("#task-thread-content");
 const projectPanelTabs = Array.from(document.querySelectorAll("[data-panel-tab]"));
 const projectPanels = Array.from(document.querySelectorAll("[data-project-panel]"));
 const projectOutputSummary = document.querySelector("#project-output-summary");
@@ -188,19 +210,25 @@ const agentWorld = new AgentWorld(network);
 agentWorld.restoreAgentTiles(storedLayout.agents ?? {});
 const runtimeClient = new RuntimeClient();
 const runtimeSnapshots = new Map();
+const runtimeTaskCache = new Map();
+const runtimeDiscussionThreads = new Map();
 const agentReplies = new Map();
 const chatMessageIds = new Set();
 const projectJobToasts = new Map();
 const projectJobsCache = new Map();
 const seenCompletedProjectJobs = new Set();
 const taskUiNotices = new Set();
+const threadUiNotices = new Set();
 const projectJobAgentMessages = new Map();
 const projectJobUiNotices = new Set();
+const wikiProposalsCache = new Map();
+const wikiPagesCache = new Map();
 let availableProjects = [];
 let availableProjectPresets = [];
 let projectPanel = "output";
 let projectDialogMode = "gateway";
 let projectJobFilter = "all";
+let selectedTaskThreadId = "";
 let unreadCompletedProjectJobs = 0;
 
 const providerDefaults = {
@@ -372,9 +400,88 @@ let lastFrameAt = 0;
 let quickChatAgentId = null;
 let quickChatFocusTimer = null;
 let quickChatDetached = false;
+let quickChatView = "chat";
 let layoutMode = false;
 let pendingStationPlacementId = null;
 let selectedBrowserSessionId = "";
+const memoryCouncilState = {
+  userSignals: 0,
+  memorySignals: 0,
+  lastStartedAt: 0,
+  lastTaskAt: 0,
+  cooldownMs: 90_000,
+};
+
+function isAutoCouncilTask(task) {
+  return String(task?.title || "").trim() === "Context council";
+}
+
+function queueMemoryCouncilSignal(kind = "memory", weight = 1) {
+  if (!runtimeClient.connected) {
+    return;
+  }
+  if (kind === "user") {
+    memoryCouncilState.userSignals += weight;
+  } else {
+    memoryCouncilState.memorySignals += weight;
+  }
+  void maybeStartMemoryCouncil();
+}
+
+async function maybeStartMemoryCouncil() {
+  if (!runtimeClient.connected) {
+    return;
+  }
+  const now = Date.now();
+  if (now - memoryCouncilState.lastStartedAt < memoryCouncilState.cooldownMs) {
+    return;
+  }
+  const totalSignals = memoryCouncilState.userSignals + memoryCouncilState.memorySignals;
+  const enoughUserContext = memoryCouncilState.userSignals >= 2 && memoryCouncilState.memorySignals >= 1;
+  const enoughMemoryChurn = memoryCouncilState.memorySignals >= 3;
+  if (!enoughUserContext && !enoughMemoryChurn && totalSignals < 4) {
+    return;
+  }
+
+  memoryCouncilState.lastStartedAt = now;
+  memoryCouncilState.userSignals = 0;
+  memoryCouncilState.memorySignals = 0;
+
+  network.triggerIntent("memory-sync");
+  agentWorld.triggerIntent("memory-sync", network, { autoEnabled: autoAgents });
+  network.log("Memory Core started a context council at the sync table.");
+  showGameNotification({
+    title: "Memory Core",
+    subtitle: "Context council",
+    summary: "Agents are gathering at the desk to align on recent user context and memory updates.",
+    tone: "active",
+    key: `memory-council-${now}`,
+  });
+
+  if (now - memoryCouncilState.lastTaskAt < 5 * 60_000) {
+    updateHud();
+    return;
+  }
+
+  memoryCouncilState.lastTaskAt = now;
+  try {
+    await runtimeClient.createTask({
+      title: "Context council",
+      description: [
+        "Review recent user context, memory changes, notifications, and open wiki knowledge.",
+        "Coordinate a short internal council between Memory Core, Orchestrator, Planner, Researcher, Builder, Critic, and Scheduler.",
+        "Summarize the most useful improvements, risks, and next actions for the user.",
+      ].join(" "),
+      capability: "memory",
+      priority: 2,
+      requested_agent_id: "memory",
+    });
+  } catch (error) {
+    setBootMessage(error.message);
+  } finally {
+    updateHud();
+  }
+}
 let pendingAgentQuickChat = null;
 
 const selectableObjects = [];
@@ -2042,11 +2149,42 @@ function appendChatMessage(message) {
   quickChatHistory.scrollTop = quickChatHistory.scrollHeight;
 }
 
+function appendDiscussionMessage(message) {
+  const item = document.createElement("li");
+  item.className = `agent-quick-chat__message agent-quick-chat__message--${message.role}`;
+  item.append(document.createTextNode(String(message.content)));
+  const validSources = (message.sources ?? [])
+    .map((source) => ({ ...source, safeUrl: safeWebUrl(source.url) }))
+    .filter((source) => source.safeUrl);
+  if (validSources.length) {
+    const list = document.createElement("span");
+    list.className = "agent-quick-chat__sources";
+    for (const [index, source] of validSources.entries()) {
+      const link = document.createElement("a");
+      link.href = source.safeUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = `[${index + 1}] ${source.title || source.safeUrl}`;
+      list.append(link);
+    }
+    item.append(list);
+  }
+  quickChatDiscussion.append(item);
+  quickChatDiscussion.scrollTop = quickChatDiscussion.scrollHeight;
+}
+
 function renderChatHistory(messages) {
   quickChatHistory.replaceChildren();
   chatMessageIds.clear();
   for (const message of messages) {
     appendChatMessage(message);
+  }
+}
+
+function renderDiscussionHistory(messages) {
+  quickChatDiscussion.replaceChildren();
+  for (const message of messages) {
+    appendDiscussionMessage(message);
   }
 }
 
@@ -2069,6 +2207,287 @@ function mergeAgentChatHistory(agentId, messages = []) {
     .sort((left, right) => String(left?.created_at ?? "").localeCompare(String(right?.created_at ?? "")));
 }
 
+function cacheRuntimeTask(task) {
+  if (!task?.id) {
+    return;
+  }
+  runtimeTaskCache.set(task.id, task);
+  if (Array.isArray(task.discussion_log) && task.discussion_log.length) {
+    runtimeDiscussionThreads.set(task.id, task.discussion_log);
+  }
+}
+
+function upsertDiscussionEntry(taskId, entry) {
+  if (!taskId || !entry) {
+    return;
+  }
+  const current = runtimeDiscussionThreads.get(taskId) ?? [];
+  if (entry.id && current.some((item) => item?.id === entry.id)) {
+    return;
+  }
+  const next = [...current, entry].sort((left, right) => String(left?.created_at ?? "").localeCompare(String(right?.created_at ?? "")));
+  runtimeDiscussionThreads.set(taskId, next);
+}
+
+function taskInvolvesAgent(task, agentId) {
+  if (!task || !agentId) {
+    return false;
+  }
+  const consultIds = Array.isArray(task.consult_agent_ids) ? task.consult_agent_ids : [];
+  return [
+    task.requested_agent_id,
+    task.source_agent_id,
+    task.assigned_agent_id,
+    task.consult_agent_id,
+    ...consultIds,
+  ].includes(agentId);
+}
+
+function discussionEntryToChatMessage(entry, selectedAgentId) {
+  const senderId = String(entry?.sender || "").trim();
+  const recipientId = String(entry?.recipient || "").trim();
+  const senderLabel = network.getAgent(senderId)?.label || senderId || "Agent";
+  const recipientLabel = network.getAgent(recipientId)?.label || recipientId || "Agent";
+  const content = String(entry?.content || "").trim();
+  const kind = String(entry?.kind || "thread").trim();
+  const role = senderId && senderId === selectedAgentId ? "assistant" : "system";
+  const prefix = `[${kind}] ${senderLabel}${recipientId ? ` → ${recipientLabel}` : ""}`;
+  const extra = entry?.extra && typeof entry.extra === "object" ? entry.extra : null;
+  const routeMode = String(extra?.route_mode || "").trim();
+  const decisionMode = String(extra?.decision_mode || "").trim();
+  const phase = String(extra?.phase || "").trim();
+  const steps = Array.isArray(extra?.steps) ? extra.steps.filter((step) => String(step || "").trim()) : [];
+  const details = [];
+  if (kind === "strategy" || kind === "strategy-update") {
+    if (routeMode) {
+      details.push(`Mode: ${routeMode}`);
+    }
+    if (decisionMode) {
+      details.push(`Decision: ${decisionMode}`);
+    }
+    if (phase) {
+      details.push(`Phase: ${phase}`);
+    }
+    for (const step of steps) {
+      details.push(`- ${String(step).trim()}`);
+    }
+  }
+  return {
+    id: entry?.id || "",
+    task_id: entry?.task_id || "",
+    role,
+    content: [content ? `${prefix}\n${content}` : prefix, ...details].filter(Boolean).join("\n"),
+    sources: Array.isArray(entry?.sources) ? entry.sources : [],
+    created_at: entry?.created_at || new Date().toISOString(),
+  };
+}
+
+function discussionMessagesForAgent(agentId) {
+  const messages = [];
+  for (const [taskId, task] of runtimeTaskCache.entries()) {
+    if (!taskInvolvesAgent(task, agentId)) {
+      continue;
+    }
+    const entries = runtimeDiscussionThreads.get(taskId) ?? [];
+    for (const entry of entries) {
+      messages.push(discussionEntryToChatMessage(entry, agentId));
+    }
+  }
+  return messages;
+}
+
+function taskThreadItems() {
+  return [...runtimeTaskCache.values()]
+    .filter((task) => task?.channel === "chat" && Array.isArray(task?.discussion_log) && task.discussion_log.length)
+    .sort((left, right) => String(right?.updated_at ?? "").localeCompare(String(left?.updated_at ?? "")));
+}
+
+function taskThreadLabel(task) {
+  const title = String(task?.title || task?.id || "Task").trim();
+  const state = String(task?.state || "").trim();
+  const source = network.getAgent(task?.source_agent_id || task?.requested_agent_id || "")?.label
+    || task?.source_agent_id
+    || task?.requested_agent_id
+    || "";
+  const consulted = Array.isArray(task?.consult_agent_ids) ? task.consult_agent_ids.length : 0;
+  const detail = [state, source ? `from ${source}` : "", consulted ? `${consulted} consult${consulted === 1 ? "" : "s"}` : ""]
+    .filter(Boolean)
+    .join(" · ");
+  return { title, detail };
+}
+
+function renderTaskThreadList() {
+  if (!taskThreadList || !taskThreadCount) {
+    return;
+  }
+  const tasks = taskThreadItems();
+  taskThreadCount.textContent = tasks.length
+    ? `${tasks.length} task discussion${tasks.length === 1 ? "" : "s"}`
+    : "No task discussions";
+  taskThreadList.innerHTML = tasks.map((task) => {
+    const { title, detail } = taskThreadLabel(task);
+    const active = task.id === selectedTaskThreadId;
+    return `
+      <button class="wiki-page-item${active ? " wiki-page-item--active" : ""}" type="button" data-task-thread="${escapeHtml(task.id)}">
+        <strong>${escapeHtml(title)}</strong>
+        <small>${escapeHtml(detail || "discussion thread")}</small>
+      </button>
+    `;
+  }).join("");
+  if (!selectedTaskThreadId && tasks[0]?.id) {
+    selectedTaskThreadId = tasks[0].id;
+  }
+}
+
+function formatTaskDiscussionThread(task) {
+  const lines = [];
+  const { title, detail } = taskThreadLabel(task);
+  lines.push(`# ${title}`);
+  if (detail) {
+    lines.push(detail);
+  }
+  lines.push("");
+  for (const entry of task.discussion_log ?? []) {
+    const sender = network.getAgent(entry?.sender || "")?.label || entry?.sender || "Agent";
+    const recipient = network.getAgent(entry?.recipient || "")?.label || entry?.recipient || "Agent";
+    const kind = String(entry?.kind || "thread").trim();
+    const createdAt = String(entry?.created_at || "").trim();
+    const timestamp = createdAt ? createdAt.replace("T", " ").replace(/\.\d+.*$/, "") : "";
+    lines.push(`## ${kind}${timestamp ? ` · ${timestamp}` : ""}`);
+    lines.push(`${sender} -> ${recipient}`);
+    lines.push(String(entry?.content || "").trim() || "(empty)");
+    const extra = entry?.extra && typeof entry.extra === "object" ? entry.extra : null;
+    if (extra) {
+      if (kind === "strategy" || kind === "strategy-update") {
+        const routeMode = String(extra.route_mode || "").trim();
+        const decisionMode = String(extra.decision_mode || "").trim();
+        const phase = String(extra.phase || "").trim();
+        const userFacing = String(extra.user_facing_agent_id || "").trim();
+        const execution = String(extra.execution_agent_id || "").trim();
+        const consulted = Array.isArray(extra.consult_agent_ids) ? extra.consult_agent_ids.join(", ") : "";
+        const clarification = String(extra.clarification_question || "").trim();
+        const steps = Array.isArray(extra.steps) ? extra.steps.filter((step) => String(step || "").trim()) : [];
+        if (routeMode) {
+          lines.push(`Route mode: ${routeMode}`);
+        }
+        if (decisionMode) {
+          lines.push(`Decision mode: ${decisionMode}`);
+        }
+        if (phase) {
+          lines.push(`Phase: ${phase}`);
+        }
+        if (userFacing) {
+          lines.push(`User-facing agent: ${userFacing}`);
+        }
+        if (execution) {
+          lines.push(`Execution agent: ${execution}`);
+        }
+        if (consulted) {
+          lines.push(`Consulted agents: ${consulted}`);
+        }
+        if (clarification) {
+          lines.push(`Clarification: ${clarification}`);
+        }
+        if (steps.length) {
+          lines.push("Steps:");
+          for (const step of steps) {
+            lines.push(`- ${String(step).trim()}`);
+          }
+        }
+      } else if (kind === "council-policy") {
+        const enabled = extra.enabled === true ? "enabled" : "skipped";
+        const participants = Array.isArray(extra.participants) ? extra.participants.join(", ") : "";
+        const maxTurns = Number.isFinite(Number(extra.max_turns)) ? Number(extra.max_turns) : 0;
+        const decisionMode = String(extra.decision_mode || "heuristic").trim();
+        lines.push(`Policy: ${enabled}`);
+        lines.push(`Decision mode: ${decisionMode}`);
+        if (participants) {
+          lines.push(`Participants: ${participants}`);
+        }
+        lines.push(`Turn budget: ${maxTurns}`);
+      } else if (kind === "plan" && extra.specialist_question) {
+        lines.push(`Question: ${String(extra.specialist_question).trim()}`);
+      } else if (kind === "reasoning") {
+        const reasoningType = String(extra.reasoning_type || "").trim();
+        const focus = String(extra.focus || "").trim();
+        const reactingTo = String(extra.reacting_to || "").trim();
+        const concern = String(extra.concern || "").trim();
+        const nextStep = String(extra.next_step || "").trim();
+        if (reasoningType) {
+          lines.push(`Reasoning type: ${reasoningType}`);
+        }
+        if (focus) {
+          lines.push(`Focus: ${focus}`);
+        }
+        if (reactingTo) {
+          lines.push(`Reacting to: ${reactingTo}`);
+        }
+        if (concern) {
+          lines.push(`Concern: ${concern}`);
+        }
+        if (nextStep) {
+          lines.push(`Next step: ${nextStep}`);
+        }
+      } else if (kind === "revise" && extra.previous_summary) {
+        lines.push(`Previous summary: ${String(extra.previous_summary).trim()}`);
+      }
+    }
+    const sources = Array.isArray(entry?.sources) ? entry.sources : [];
+    if (sources.length) {
+      lines.push("");
+      lines.push("Sources:");
+      for (const source of sources) {
+        const url = safeWebUrl(source?.url);
+        if (url) {
+          lines.push(`- ${source?.title || url}: ${url}`);
+        }
+      }
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+}
+
+function renderSelectedTaskThread() {
+  if (!taskThreadContent) {
+    return;
+  }
+  const task = runtimeTaskCache.get(selectedTaskThreadId);
+  if (!task || !Array.isArray(task.discussion_log) || !task.discussion_log.length) {
+    taskThreadContent.textContent = "Select a task discussion thread.";
+    return;
+  }
+  taskThreadContent.textContent = formatTaskDiscussionThread(task);
+}
+
+async function refreshTaskThreads() {
+  try {
+    const tasks = await runtimeClient.listTasks();
+    for (const task of tasks) {
+      cacheRuntimeTask(task);
+    }
+  } catch (error) {
+    runtimeClient.logClient("error", error.message, { operation: "refreshTaskThreads" });
+  }
+  renderTaskThreadList();
+  renderSelectedTaskThread();
+}
+
+function setQuickChatView(view = "chat") {
+  quickChatView = view === "discussion" ? "discussion" : "chat";
+  if (quickChatHistory) {
+    quickChatHistory.hidden = quickChatView !== "chat";
+  }
+  if (quickChatDiscussion) {
+    quickChatDiscussion.hidden = quickChatView !== "discussion";
+  }
+  for (const button of quickChatTabs) {
+    const active = button.dataset.quickChatTab === quickChatView;
+    button.classList.toggle("agent-quick-chat__tab--active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+}
+
 function openQuickChat(agentId) {
   const agent = network.getAgent(agentId);
   if (!agent) {
@@ -2083,7 +2502,9 @@ function openQuickChat(agentId) {
   quickChatStatus.textContent = "";
   quickChatStatus.classList.remove("agent-quick-chat__status--error");
   quickChat.hidden = false;
+  setQuickChatView(quickChatView);
   quickChatHistory.innerHTML = '<li class="agent-quick-chat__message">Caricamento...</li>';
+  quickChatDiscussion.innerHTML = '<li class="agent-quick-chat__message agent-quick-chat__message--system">Loading discussion...</li>';
   chatMessageIds.clear();
   updateQuickChatPosition();
   window.clearTimeout(quickChatFocusTimer);
@@ -2092,13 +2513,41 @@ function openQuickChat(agentId) {
     .then((messages) => {
       if (quickChatAgentId === agentId) {
         renderChatHistory(mergeAgentChatHistory(agentId, messages));
+        renderDiscussionHistory(discussionMessagesForAgent(agentId));
       }
     })
     .catch((error) => {
       if (quickChatAgentId === agentId) {
         renderChatHistory(mergeAgentChatHistory(agentId, [{ role: "system", content: error.message }]));
+        renderDiscussionHistory(discussionMessagesForAgent(agentId));
       }
     });
+}
+
+async function createAgentChatTask(agentId, message, options = {}) {
+  const trimmed = String(message ?? "").trim();
+  if (!trimmed || !agentId) {
+    return null;
+  }
+  const task = await runtimeClient.createTask({
+    title: String(options.title ?? trimmed.slice(0, 160)),
+    description: trimmed,
+    priority: Number(options.priority ?? 3),
+    requested_agent_id: agentId,
+    channel: "chat",
+  });
+  return task;
+}
+
+async function askMemoryCore(message, options = {}) {
+  const task = await createAgentChatTask("memory", message, {
+    title: options.title ?? "Memory Core request",
+    priority: options.priority ?? 2,
+  });
+  if (options.openChat !== false) {
+    openQuickChat("memory");
+  }
+  return task;
 }
 
 function cancelPendingAgentQuickChat() {
@@ -2134,6 +2583,7 @@ function closeQuickChat() {
   quickChatFocusTimer = null;
   quickChatInput.value = "";
   quickChatHistory.replaceChildren();
+  quickChatDiscussion.replaceChildren();
   chatMessageIds.clear();
   quickChatStatus.textContent = "";
   quickChatStatus.classList.remove("agent-quick-chat__status--error");
@@ -2331,6 +2781,10 @@ function setAutoAgents(nextAutoAgents) {
 }
 
 async function triggerIntent(intentId) {
+  if (intentId === "memory-sync" && runtimeClient.connected) {
+    await openProjectGateway({ panel: "memory", mode: "memory" });
+    return;
+  }
   if (runtimeClient.connected) {
     const taskRecipes = {
       task: {
@@ -2347,10 +2801,11 @@ async function triggerIntent(intentId) {
         requested_agent_id: "scheduler",
       },
       "memory-sync": {
-        title: "Synchronize shared runtime context",
-        description: "Review current state and prepare a memory update.",
+        title: "Memory Core review",
+        description: "Review shared context, notifications, wiki proposals, and memory updates through Memory Core.",
         capability: "memory",
         priority: 2,
+        requested_agent_id: "memory",
       },
       review: {
         title: "Review the latest runtime result",
@@ -2394,6 +2849,24 @@ function ensureSupervisorRelation(agentId) {
     protocolId: "contract-net",
     latency: 0.75,
     trust: 0.82,
+    bandwidth: 2,
+    bidirectional: true,
+  });
+  createRelationVisual(relation);
+}
+
+function ensureRuntimeRelation(fromId, toId, protocolId) {
+  if (!fromId || !toId || fromId === toId || network.findRelation(fromId, toId, protocolId)) {
+    return;
+  }
+  const relation = network.registerRelation({
+    id: `runtime-${protocolId}-${fromId}-${toId}`,
+    from: fromId,
+    to: toId,
+    kind: protocolId === "conversation-routing" ? "conversation" : "runtime",
+    protocolId,
+    latency: 0.72,
+    trust: 0.84,
     bandwidth: 2,
     bidirectional: true,
   });
@@ -2462,21 +2935,62 @@ function renderRuntimeMessage(event) {
   if (!message || !network.getAgent(message.sender) || !network.getAgent(message.recipient)) {
     return;
   }
-  const typeMap = {
-    "task.announce": "task.announce",
-    "task.award": "task.award",
-    "task.accept": "task.proposal",
-    "task.progress": "task.status",
-    "task.result": "task.status",
+  const protocolBindings = {
+    "task-contract": {
+      protocolId: "contract-net",
+      typeMap: {
+        "task.announce": "task.announce",
+        "task.award": "task.award",
+        "task.accept": "task.proposal",
+        "task.progress": "task.status",
+        "task.result": "task.status",
+      },
+    },
+    "conversation-routing": {
+      protocolId: "conversation-routing",
+      typeMap: {
+        "chat.route": "chat.route",
+        "chat.consult": "chat.consult",
+        "chat.strategy": "chat.strategy",
+        "chat.peer-brief": "chat.peer-brief",
+        "chat.peer-request": "chat.peer-request",
+        "chat.reasoning": "chat.reasoning",
+        "chat.plan": "chat.plan",
+        "chat.council": "chat.council",
+        "chat.revise": "chat.revise",
+        "chat.strategy-update": "chat.strategy-update",
+        "chat.accept": "chat.accept",
+        "chat.reply": "chat.reply",
+      },
+    },
+    "memory-learning": {
+      protocolId: "blackboard-sync",
+      typeMap: {
+        "memory.recall": "memory.recall",
+        "memory.propose": "memory.propose",
+        "memory.approve": "memory.approve",
+        "memory.commit": "memory.commit",
+      },
+    },
+    "blackboard-sync": {
+      protocolId: "blackboard-sync",
+      typeMap: {
+        "memory.write": "memory.write",
+        "memory.snapshot": "memory.snapshot",
+      },
+    },
   };
-  const type = typeMap[message.type];
-  if (!type) {
+  const binding = protocolBindings[message.protocol] ?? null;
+  const protocolId = binding?.protocolId;
+  const type = binding?.typeMap?.[message.type];
+  if (!protocolId || !type) {
     return;
   }
+  ensureRuntimeRelation(message.sender, message.recipient, protocolId);
   network.enqueue({
     from: message.sender,
     to: message.recipient,
-    protocolId: "contract-net",
+    protocolId,
     type,
     payload: message.payload,
     priority: message.priority,
@@ -2515,6 +3029,15 @@ function rememberTaskUiNotice(taskId, phase) {
     return false;
   }
   taskUiNotices.add(key);
+  return true;
+}
+
+function rememberThreadUiNotice(entryId) {
+  const normalizedEntryId = String(entryId || "").trim();
+  if (!normalizedEntryId || threadUiNotices.has(normalizedEntryId)) {
+    return false;
+  }
+  threadUiNotices.add(normalizedEntryId);
   return true;
 }
 
@@ -2572,6 +3095,378 @@ function showAgentReply(agentId, text, isError = false, sources = [], taskId = "
   if (quickChatAgentId === agentId && !quickChat.hidden) {
     renderQuickChatReply(text, sources, isError, taskId);
   }
+}
+
+function threadEntryUiSummary(entry) {
+  const kind = String(entry?.kind || "").trim();
+  const senderId = String(entry?.sender || "").trim();
+  const recipientId = String(entry?.recipient || "").trim();
+  const senderLabel = network.getAgent(senderId)?.label || senderId || "Agent";
+  const recipientLabel = network.getAgent(recipientId)?.label || recipientId || "Agent";
+  const content = String(entry?.content || "").trim();
+  const extra = entry?.extra && typeof entry.extra === "object" ? entry.extra : null;
+  const phase = String(extra?.phase || "").trim();
+  const routeMode = String(extra?.route_mode || "").trim();
+  const targetKind = String(extra?.target_kind || extra?.followup_target_kind || "").trim();
+  const targetLabel = String(extra?.target_label || extra?.followup_target_label || "").trim();
+  const requestedById = String(extra?.requested_by_agent_id || extra?.followup_requested_by_agent_id || "").trim();
+  const requestedByLabel = network.getAgent(requestedById)?.label || requestedById || "";
+  if (kind === "strategy") {
+    return {
+      bubbleAgentId: senderId,
+      bubbleText: content || `${senderLabel} set the initial strategy.`,
+      notificationTitle: senderLabel,
+      notificationSubtitle: routeMode ? `Strategy · ${routeMode}` : "Strategy",
+      notificationSummary: content || `${senderLabel} set the initial execution strategy.`,
+    };
+  }
+  if (kind === "strategy-update") {
+    const honoredRequestText = requestedByLabel && phase === "memory-followup"
+      ? `${senderLabel} honored ${requestedByLabel}'s request for Memory Core context.`
+      : requestedByLabel && phase === "followup-consult"
+        ? `${senderLabel} honored ${requestedByLabel}'s request and brought in ${targetLabel || "another specialist"}.`
+        : requestedByLabel && phase === "council-request"
+          ? `${senderLabel} honored ${requestedByLabel}'s request and prepared a council step.`
+          : "";
+    return {
+      bubbleAgentId: senderId,
+      bubbleText: content || honoredRequestText || `${senderLabel} updated the strategy.`,
+      notificationTitle: senderLabel,
+      notificationSubtitle: phase ? `Strategy update · ${phase}` : "Strategy update",
+      notificationSummary: content || honoredRequestText || `${senderLabel} updated the execution strategy.`,
+    };
+  }
+  if (kind === "peer-brief") {
+    return {
+      bubbleAgentId: senderId,
+      bubbleText: content || `${senderLabel} briefed ${recipientLabel}.`,
+      notificationTitle: senderLabel,
+      notificationSubtitle: "Peer brief",
+      notificationSummary: content || `${senderLabel} briefed ${recipientLabel}.`,
+    };
+  }
+  if (kind === "peer-request") {
+    const peerRequestText = targetKind === "memory"
+      ? `${senderLabel} asked ${recipientLabel} to query Memory Core.`
+      : targetKind === "council"
+        ? `${senderLabel} asked ${recipientLabel} to run a council step.`
+        : `${senderLabel} asked ${recipientLabel} to bring in ${targetLabel || "another specialist"}.`;
+    return {
+      bubbleAgentId: senderId,
+      bubbleText: content || peerRequestText,
+      notificationTitle: senderLabel,
+      notificationSubtitle: targetKind === "memory" ? "Memory escalation" : targetKind === "council" ? "Council escalation" : "Peer escalation",
+      notificationSummary: content || peerRequestText,
+    };
+  }
+  if (kind === "reasoning") {
+    const focus = String(extra?.focus || "").trim();
+    const concern = String(extra?.concern || "").trim();
+    const nextStep = String(extra?.next_step || "").trim();
+    const reasoningType = String(extra?.reasoning_type || "").trim();
+    const reactingTo = String(extra?.reacting_to || "").trim();
+    const baseText = content || `${senderLabel} shared an internal reasoning note.`;
+    const bubbleText = concern ? `${baseText} Concern: ${concern}` : baseText;
+    return {
+      bubbleAgentId: senderId,
+      bubbleText,
+      notificationTitle: senderLabel,
+      notificationSubtitle: reasoningType === "council" ? "Council reasoning" : "Specialist reasoning",
+      notificationSummary: [
+        focus ? `Focus: ${focus}` : "",
+        baseText,
+        concern ? `Concern: ${concern}` : "",
+        reactingTo ? `Reacting to: ${reactingTo}` : "",
+        nextStep ? `Next: ${nextStep}` : "",
+      ].filter(Boolean).join(" · "),
+    };
+  }
+  if (kind === "revise") {
+    return {
+      bubbleAgentId: recipientId || senderId,
+      bubbleText: content || `${senderLabel} requested a revision.`,
+      notificationTitle: recipientLabel || senderLabel,
+      notificationSubtitle: "Revision request",
+      notificationSummary: content || `${senderLabel} asked for a stronger specialist answer.`,
+    };
+  }
+  if (kind === "revision-result") {
+    return {
+      bubbleAgentId: senderId,
+      bubbleText: content || `${senderLabel} returned a revised answer.`,
+      notificationTitle: senderLabel,
+      notificationSubtitle: "Revision result",
+      notificationSummary: content || `${senderLabel} returned a revised specialist answer.`,
+    };
+  }
+  if (kind === "council-policy") {
+    return {
+      bubbleAgentId: senderId,
+      bubbleText: content || `${senderLabel} decided whether to run a council step.`,
+      notificationTitle: senderLabel,
+      notificationSubtitle: "Council policy",
+      notificationSummary: content || `${senderLabel} decided whether the specialists should run a council step.`,
+    };
+  }
+  if (kind === "council-turn" || kind === "council-turn-request") {
+    return {
+      bubbleAgentId: senderId,
+      bubbleText: content || `${senderLabel} exchanged a council note with ${recipientLabel}.`,
+      notificationTitle: senderLabel,
+      notificationSubtitle: "Council exchange",
+      notificationSummary: content || `${senderLabel} exchanged a council note with ${recipientLabel}.`,
+    };
+  }
+  if (kind === "synthesis") {
+    return {
+      bubbleAgentId: senderId,
+      bubbleText: content || `${senderLabel} is synthesizing the specialist input.`,
+      notificationTitle: senderLabel,
+      notificationSubtitle: "Final synthesis",
+      notificationSummary: content || `${senderLabel} is synthesizing the specialist input.`,
+    };
+  }
+  if (kind === "memory") {
+    return {
+      bubbleAgentId: senderId,
+      bubbleText: content || `${senderLabel} delivered memory context to ${recipientLabel}.`,
+      notificationTitle: senderLabel,
+      notificationSubtitle: "Memory recall",
+      notificationSummary: content || `${senderLabel} delivered memory context to ${recipientLabel}.`,
+    };
+  }
+  return null;
+}
+
+function maybeNotifyDiscussionEntry(task, entry) {
+  if (!task?.id || !entry?.id || !rememberThreadUiNotice(entry.id)) {
+    return;
+  }
+  const summary = threadEntryUiSummary(entry);
+  if (!summary) {
+    return;
+  }
+  if (summary.bubbleAgentId) {
+    showAgentReply(summary.bubbleAgentId, summary.bubbleText, false, Array.isArray(entry.sources) ? entry.sources : [], `${task.id}-${entry.id}`);
+  }
+  showGameNotification({
+    title: summary.notificationTitle,
+    subtitle: `${summary.notificationSubtitle} · ${task.id}`,
+    summary: summary.notificationSummary,
+    tone: "active",
+    key: `${task.id}-${entry.id}`,
+  });
+}
+
+function protocolSpeechText(message, mode = "recipient") {
+  if (!message) {
+    return "";
+  }
+  const payload = message.payload ?? {};
+  const senderLabel = network.getAgent(message.sender)?.label || message.sender;
+  const recipientLabel = network.getAgent(message.recipient)?.label || message.recipient;
+  const title = String(payload.title || "").trim();
+  const capability = String(payload.capability || "").trim();
+  const summary = String(payload.summary || "").trim();
+  const progress = Number(payload.progress);
+  const query = String(payload.query || "").trim();
+  const firstMatch = Array.isArray(payload.matches) ? payload.matches[0] : null;
+  const firstMatchName = String(firstMatch?.name || "").trim();
+  const targetKind = String(payload.target_kind || payload.followup_target_kind || "").trim();
+  const targetLabel = String(payload.target_label || payload.target_specialist || payload.followup_target_label || "").trim();
+  const requestedById = String(payload.requested_by_agent_id || payload.followup_requested_by_agent_id || "").trim();
+  const requestedByLabel = network.getAgent(requestedById)?.label || requestedById || "";
+
+  if (message.protocol === "task-contract") {
+    if (message.type === "task.announce") {
+      return mode === "sender"
+        ? `Assigning ${title || "a task"} to ${recipientLabel}.`
+        : `${senderLabel} assigned ${title || "a task"}${capability ? ` (${capability})` : ""}.`;
+    }
+    if (message.type === "task.award") {
+      return mode === "sender"
+        ? `${recipientLabel} will handle ${title || "the task"}.`
+        : `I got ${title || "the task"}.`;
+    }
+    if (message.type === "task.accept") {
+      return mode === "sender"
+        ? `Accepted by ${recipientLabel}.`
+        : `Accepted. Starting now.`;
+    }
+    if (message.type === "task.progress" && Number.isFinite(progress)) {
+      return mode === "sender"
+        ? `${progress}% done.`
+        : `${senderLabel} is at ${progress}%.`;
+    }
+    if (message.type === "task.result") {
+      return mode === "sender"
+        ? `${summary || "Result is ready."}`
+        : `${senderLabel}: ${summary || "Result is ready."}`;
+    }
+  }
+
+  if (message.protocol === "memory-learning") {
+    if (message.type === "memory.recall") {
+      return mode === "sender"
+        ? `Sending context${firstMatchName ? `: ${firstMatchName}` : ""}.`
+        : `Memory recall${firstMatchName ? `: ${firstMatchName}` : query ? `: ${query.slice(0, 34)}` : ""}.`;
+    }
+    if (message.type === "memory.propose") {
+      return mode === "sender" ? "Proposing a memory update." : `${senderLabel} proposed a memory update.`;
+    }
+    if (message.type === "memory.approve") {
+      return mode === "sender" ? "Approving the memory update." : `${senderLabel} approved the memory update.`;
+    }
+    if (message.type === "memory.commit") {
+      return mode === "sender" ? "Committing the memory update." : `${senderLabel} committed the memory update.`;
+    }
+  }
+
+  if (message.protocol === "blackboard-sync") {
+    if (message.type === "memory.write") {
+      return mode === "sender" ? "Writing to shared memory." : `${senderLabel} updated shared memory.`;
+    }
+    if (message.type === "memory.snapshot") {
+      return mode === "sender" ? "Publishing memory snapshot." : `${senderLabel} sent a memory snapshot.`;
+    }
+  }
+
+  if (message.protocol === "conversation-routing") {
+    if (message.type === "chat.route") {
+      return mode === "sender"
+        ? `Passing this to ${recipientLabel}.`
+        : `${senderLabel} routed this conversation to me.`;
+    }
+    if (message.type === "chat.consult") {
+      return mode === "sender"
+        ? `Consulting ${recipientLabel}.`
+        : `${senderLabel} is asking for my specialist input.`;
+    }
+    if (message.type === "chat.strategy") {
+      const strategySummary = String(payload.summary || payload.strategy_summary || "").trim();
+      return mode === "sender"
+        ? (strategySummary ? `Strategy for ${recipientLabel}: ${strategySummary}` : `Sending the execution strategy to ${recipientLabel}.`)
+        : (strategySummary ? `${senderLabel}'s strategy: ${strategySummary}` : `${senderLabel} sent me the execution strategy.`);
+    }
+    if (message.type === "chat.peer-brief") {
+      const previousSpecialist = String(payload.previous_specialist || "").trim();
+      const previousSummary = String(payload.previous_summary || "").trim();
+      return mode === "sender"
+        ? (previousSummary
+          ? `Briefing ${recipientLabel}${previousSpecialist ? ` about ${previousSpecialist}` : ""}: ${previousSummary}`
+          : `Sending a peer brief to ${recipientLabel}.`)
+        : (previousSummary
+          ? `${senderLabel} briefed me${previousSpecialist ? ` about ${previousSpecialist}` : ""}: ${previousSummary}`
+          : `${senderLabel} sent me a peer brief.`);
+    }
+    if (message.type === "chat.peer-request") {
+      const reason = String(payload.reason || "").trim();
+      if (targetKind === "memory") {
+        return mode === "sender"
+          ? (reason ? `Requesting Memory Core context: ${reason}` : "Requesting Memory Core context before synthesis.")
+          : (reason ? `${senderLabel} requested Memory Core context: ${reason}` : `${senderLabel} requested Memory Core context.`);
+      }
+      if (targetKind === "council") {
+        return mode === "sender"
+          ? (reason ? `Requesting a council step: ${reason}` : "Requesting a council step before synthesis.")
+          : (reason ? `${senderLabel} requested a council step: ${reason}` : `${senderLabel} requested a council step.`);
+      }
+      return mode === "sender"
+        ? (reason
+          ? `Requesting ${targetLabel || recipientLabel}: ${reason}`
+          : `Requesting ${targetLabel || "another specialist"} before synthesis.`)
+        : (reason
+          ? `${senderLabel} requested ${targetLabel || "another specialist"}: ${reason}`
+          : `${senderLabel} requested ${targetLabel || "another specialist"}.`);
+    }
+    if (message.type === "chat.reasoning") {
+      const focus = String(payload.focus || "").trim();
+      const conclusion = String(payload.conclusion || payload.summary || "").trim();
+      const concern = String(payload.concern || "").trim();
+      const nextStep = String(payload.next_step || "").trim();
+      const reactingTo = String(payload.reacting_to || "").trim();
+      const parts = [
+        focus ? `focus ${focus}` : "",
+        conclusion ? `conclusion ${conclusion}` : "",
+        concern ? `concern ${concern}` : "",
+        reactingTo ? `reacting to ${reactingTo}` : "",
+        nextStep ? `next ${nextStep}` : "",
+      ].filter(Boolean);
+      if (!parts.length) {
+        return mode === "sender"
+          ? "Sending an internal reasoning note."
+          : `${senderLabel} sent an internal reasoning note.`;
+      }
+      return mode === "sender"
+        ? `Reasoning note: ${parts.join(" · ")}`
+        : `${senderLabel}'s reasoning: ${parts.join(" · ")}`;
+    }
+    if (message.type === "chat.plan") {
+      const planSummary = String(payload.plan_summary || "").trim();
+      const specialistQuestion = String(payload.specialist_question || "").trim();
+      const consultPosition = String(payload.consult_position || "").trim();
+      if (mode === "sender") {
+        return specialistQuestion
+          ? `Plan for ${recipientLabel}${consultPosition ? ` (${consultPosition})` : ""}: ${specialistQuestion}`
+          : `Sending the delegation plan to ${recipientLabel}.`;
+      }
+      return planSummary
+        ? `${senderLabel}'s plan: ${planSummary}`
+        : `${senderLabel} sent me the delegation plan.`;
+    }
+    if (message.type === "chat.council") {
+      const otherSpecialist = String(payload.other_specialist || "").trim();
+      return mode === "sender"
+        ? `Asking ${recipientLabel} for a council reaction${otherSpecialist ? ` about ${otherSpecialist}` : ""}.`
+        : `${senderLabel} is asking for my council reaction${otherSpecialist ? ` about ${otherSpecialist}` : ""}.`;
+    }
+    if (message.type === "chat.revise") {
+      const followupQuestion = String(payload.followup_question || "").trim();
+      return mode === "sender"
+        ? (followupQuestion ? `Follow-up for ${recipientLabel}: ${followupQuestion}` : `Requesting a revision from ${recipientLabel}.`)
+        : (followupQuestion ? `${senderLabel} asked me to revise: ${followupQuestion}` : `${senderLabel} requested a revision.`);
+    }
+    if (message.type === "chat.strategy-update") {
+      const strategySummary = String(payload.summary || payload.strategy_summary || "").trim();
+      const phase = String(payload.phase || "").trim();
+      if (requestedByLabel && phase === "memory-followup") {
+        return mode === "sender"
+          ? `Honoring ${requestedByLabel}'s memory request.`
+          : `${senderLabel} honored ${requestedByLabel}'s memory request.`;
+      }
+      if (requestedByLabel && phase === "followup-consult") {
+        return mode === "sender"
+          ? `Honoring ${requestedByLabel}'s request and consulting ${targetLabel || recipientLabel}.`
+          : `${senderLabel} honored ${requestedByLabel}'s request and consulted ${targetLabel || recipientLabel}.`;
+      }
+      if (requestedByLabel && phase === "council-request") {
+        return mode === "sender"
+          ? `Honoring ${requestedByLabel}'s request for a council step.`
+          : `${senderLabel} honored ${requestedByLabel}'s request for a council step.`;
+      }
+      return mode === "sender"
+        ? (strategySummary
+          ? `Updating strategy${phase ? ` (${phase})` : ""} for ${recipientLabel}: ${strategySummary}`
+          : `Updating the execution strategy for ${recipientLabel}.`)
+        : (strategySummary
+          ? `${senderLabel} updated the strategy${phase ? ` (${phase})` : ""}: ${strategySummary}`
+          : `${senderLabel} updated the execution strategy.`);
+    }
+    if (message.type === "chat.accept") {
+      return mode === "sender"
+        ? `I will take this conversation.`
+        : `${senderLabel} accepted the handoff.`;
+    }
+    if (message.type === "chat.reply") {
+      return mode === "sender"
+        ? `Sending the reply back.`
+        : `${senderLabel} sent the reply back.`;
+    }
+  }
+
+  return mode === "sender"
+    ? `Sending ${message.type} to ${recipientLabel}.`
+    : `${senderLabel}: ${message.type}`;
 }
 
 function rememberProjectJobUiNotice(jobId, phase = "update") {
@@ -2659,8 +3554,8 @@ function notifyAgentAboutProjectJobDeals(job) {
   const agentLabel = agent?.label || job.agent_id;
   const preview = matches.slice(0, 3).map((row) => formatDealLineForChat(row));
   const summary = preview.length
-    ? `Ho trovato ${matchCount} affari nel procacciatore.\n${preview.map((line, index) => `${index + 1}. ${line}`).join("\n")}`
-    : `Ho trovato ${matchCount} affari nel procacciatore. Apri l'output del job per il dettaglio completo.`;
+    ? `I found ${matchCount} deal-hunter matches.\n${preview.map((line, index) => `${index + 1}. ${line}`).join("\n")}`
+    : `I found ${matchCount} deal-hunter matches. Open the job output for the full detail.`;
   const sources = matches.slice(0, 8)
     .map((row, index) => {
       const url = safeWebUrl(row?.link);
@@ -2685,8 +3580,8 @@ function notifyAgentAboutProjectJobDeals(job) {
   showAgentReply(job.agent_id, summary, false, sources, `${job.id}-deal-hunter`);
   showGameNotification({
     title: agentLabel,
-    subtitle: `Affari trovati · ${job.id}`,
-    summary: `Procacciatore: ${matchCount} affari confermati.`,
+    subtitle: `Deals found · ${job.id}`,
+    summary: `Deal hunter: ${matchCount} confirmed matches.`,
     tone: "success",
     key: `${job.id}-deal-hunter-toast`,
   });
@@ -2722,6 +3617,9 @@ function handleRuntimeEvent(event) {
     for (const agent of event.agents ?? []) {
       ensureRuntimeAgent(agent);
     }
+    for (const task of event.tasks ?? []) {
+      cacheRuntimeTask(task);
+    }
     for (const historicEvent of (event.events ?? []).slice(-8)) {
       network.log(historicEvent.summary);
     }
@@ -2738,6 +3636,15 @@ function handleRuntimeEvent(event) {
   } else if (event.type === "protocol.message") {
     renderRuntimeMessage(event);
     const message = event.data?.message;
+    const senderAgent = network.getAgent(message?.sender);
+    const recipientAgent = network.getAgent(message?.recipient);
+    if (senderAgent && recipientAgent) {
+      showAgentReply(message.sender, protocolSpeechText(message, "sender"), false, [], `${message.id}-sender`);
+      showAgentReply(message.recipient, protocolSpeechText(message, "recipient"), false, [], `${message.id}-recipient`);
+    }
+    if (message?.protocol === "memory-learning" && message?.type === "memory.recall") {
+      queueMemoryCouncilSignal("memory", 1);
+    }
     if (message?.type === "task.result") {
       showAgentReply(
         message.sender,
@@ -2754,8 +3661,95 @@ function handleRuntimeEvent(event) {
         key: `${message.task_id ?? ""}-result`,
       });
     }
+  } else if (event.type === "task.created") {
+    const task = event.data?.task;
+    cacheRuntimeTask(task);
+    if (task?.channel === "chat" && !isAutoCouncilTask(task)) {
+      queueMemoryCouncilSignal("user", 1);
+    }
+  } else if (event.type === "chat.thread.updated") {
+    const task = event.data?.task;
+    const entry = event.data?.entry;
+    cacheRuntimeTask(task);
+    if (task?.id && entry) {
+      upsertDiscussionEntry(task.id, entry);
+      maybeNotifyDiscussionEntry(task, entry);
+    }
+    if (!selectedTaskThreadId && task?.id) {
+      selectedTaskThreadId = task.id;
+    }
+    renderTaskThreadList();
+    if (task?.id === selectedTaskThreadId) {
+      renderSelectedTaskThread();
+    }
+    if (quickChatAgentId && !quickChat.hidden && taskInvolvesAgent(task, quickChatAgentId) && entry) {
+      appendDiscussionMessage(discussionEntryToChatMessage(entry, quickChatAgentId));
+    }
+  } else if (event.type === "chat.routed") {
+    const task = event.data?.task;
+    cacheRuntimeTask(task);
+    const toAgentId = event.data?.to_agent_id || task?.requested_agent_id || "";
+    const fromAgentId = event.data?.from_agent_id || task?.source_agent_id || "";
+    const routeMode = String(event.data?.route_mode || task?.route_mode || "route");
+    if (toAgentId && routeMode === "route") {
+      selectedAgentId = toAgentId;
+      openQuickChat(toAgentId);
+    }
+    showGameNotification({
+      title: network.getAgent(toAgentId)?.label || "Agent",
+      subtitle: routeMode === "consult" ? "Specialist consulted" : "Conversation routed",
+      summary: fromAgentId && toAgentId
+        ? routeMode === "consult"
+          ? `${network.getAgent(fromAgentId)?.label || fromAgentId} is consulting ${network.getAgent(toAgentId)?.label || toAgentId}.`
+          : `${network.getAgent(fromAgentId)?.label || fromAgentId} routed the conversation to ${network.getAgent(toAgentId)?.label || toAgentId}.`
+        : routeMode === "consult"
+          ? "The current agent is consulting a specialist."
+          : "Conversation routed to the best matching agent.",
+      tone: "active",
+      key: `${task?.id ?? ""}-chat-routed`,
+    });
+  } else if (event.type === "chat.consulted") {
+    const task = event.data?.task;
+    cacheRuntimeTask(task);
+    const fromAgentId = event.data?.from_agent_id || task?.source_agent_id || "";
+    const toAgentId = event.data?.to_agent_id || "";
+    const specialistQuestion = String(event.data?.specialist_question || "").trim();
+    const summary = String(event.data?.summary || "").trim();
+    showGameNotification({
+      title: network.getAgent(toAgentId)?.label || "Specialist",
+      subtitle: "Specialist response",
+      summary: specialistQuestion && summary
+        ? `${specialistQuestion}\n\n${summary}`
+        : summary || "A specialist returned their reasoning.",
+      tone: "active",
+      key: `${task?.id ?? ""}-${toAgentId}-consulted`,
+    });
+  } else if (event.type === "chat.returned") {
+    const task = event.data?.task;
+    cacheRuntimeTask(task);
+    const toAgentId = event.data?.to_agent_id || task?.source_agent_id || "";
+    const fromAgentId = event.data?.from_agent_id || task?.assigned_agent_id || "";
+    const summary = String(event.data?.summary || "Reply returned.").trim();
+    const sources = Array.isArray(event.data?.sources) ? event.data.sources : [];
+    if (quickChatAgentId === toAgentId && !quickChat.hidden) {
+      renderQuickChatReply(summary, sources, false, `${task?.id ?? ""}-returned`);
+    }
+    showGameNotification({
+      title: network.getAgent(toAgentId)?.label || "Agent",
+      subtitle: "Consultation returned",
+      summary: fromAgentId && toAgentId
+        ? `${network.getAgent(fromAgentId)?.label || fromAgentId} sent the answer back to ${network.getAgent(toAgentId)?.label || toAgentId}.`
+        : "A routed conversation returned a reply.",
+      tone: "success",
+      key: `${task?.id ?? ""}-chat-returned`,
+    });
   } else if (event.type === "task.state.changed") {
     const task = event.data?.task;
+    cacheRuntimeTask(task);
+    renderTaskThreadList();
+    if (task?.id === selectedTaskThreadId) {
+      renderSelectedTaskThread();
+    }
     if (event.data?.to === "accepted") {
       acknowledgeAgentTask(task, "accepted");
     } else if (event.data?.to === "running") {
@@ -2770,15 +3764,22 @@ function handleRuntimeEvent(event) {
         key: `${task?.id ?? ""}-failed`,
       });
     }
+  } else if (event.type === "memory.updated") {
+    queueMemoryCouncilSignal("memory", 2);
+  } else if (event.type === "wiki.proposal.resolved" || event.type === "wiki.maintenance.completed") {
+    queueMemoryCouncilSignal("memory", 1);
   } else if (event.type?.startsWith("project.job.")) {
     const job = event.data?.job;
     const agent = job?.agent_id ? network.getAgent(job.agent_id) : null;
     if (agent) {
-      const active = event.type === "project.job.queued" || event.type === "project.job.started";
+      const active = event.type === "project.job.queued" || event.type === "project.job.started" || event.type === "project.job.alert";
       agent.runtime.status = active ? "executing" : event.type.endsWith("failed") ? "failed" : "idle";
       agent.runtime.load = active ? 0.82 : 0.08;
     }
     syncProjectJobToast(job, event.type);
+    if (event.type === "project.job.alert") {
+      notifyAgentAboutProjectJobAlert(job, event.data?.alert ?? null);
+    }
     if (event.type === "project.job.completed") {
       notifyAgentAboutProjectJobDeals(job);
     }
@@ -2811,6 +3812,20 @@ function selectedProjectAction() {
   return selectedProject()?.actions.find((action) => action.id === projectAction.value);
 }
 
+function projectParameterDefinitions(action) {
+  return (action?.parameters ?? [])
+    .map((parameter) => {
+      if (typeof parameter === "string") {
+        return { id: parameter };
+      }
+      if (parameter && typeof parameter === "object" && typeof parameter.id === "string" && parameter.id) {
+        return parameter;
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
 function renderProjectActions() {
   const project = selectedProject();
   projectAction.innerHTML = (project?.actions ?? [])
@@ -2822,14 +3837,42 @@ function renderProjectActions() {
 function renderProjectParameters() {
   const action = selectedProjectAction();
   const booleanParameters = new Set(["refresh-browser-profile", "include-details", "llm-screening"]);
-  projectParameters.innerHTML = (action?.parameters ?? [])
-    .map((name) => {
-      const type = booleanParameters.has(name) ? "checkbox" : name.includes("max-") ? "number" : "text";
+  projectParameters.innerHTML = projectParameterDefinitions(action)
+    .map((parameter) => {
+      const id = parameter.id;
+      const label = parameter.label ?? id;
+      const type = parameter.type ?? (booleanParameters.has(id) ? "checkbox" : id.includes("max-") ? "number" : "text");
       const checkedClass = type === "checkbox" ? " project-parameter--check" : "";
-      return `<label class="${checkedClass}"><span>${name}</span><input data-project-parameter="${name}" type="${type}" /></label>`;
+      const min = parameter.min !== undefined ? ` min="${parameter.min}"` : "";
+      const max = parameter.max !== undefined ? ` max="${parameter.max}"` : "";
+      const step = parameter.step !== undefined ? ` step="${parameter.step}"` : "";
+      const placeholder = parameter.placeholder ? ` placeholder="${String(parameter.placeholder).replaceAll('"', "&quot;")}"` : "";
+      if (type === "select") {
+        const options = Array.isArray(parameter.options) ? parameter.options : [];
+        const renderedOptions = options
+          .map((option) => {
+            if (option && typeof option === "object") {
+              const value = String(option.value ?? "");
+              const optionLabel = String(option.label ?? value);
+              const selected = parameter.default !== undefined && String(parameter.default) === value ? " selected" : "";
+              return `<option value="${value}"${selected}>${optionLabel}</option>`;
+            }
+            const value = String(option ?? "");
+            const selected = parameter.default !== undefined && String(parameter.default) === value ? " selected" : "";
+            return `<option value="${value}"${selected}>${value}</option>`;
+          })
+          .join("");
+        return `<label class="${checkedClass}"><span>${label}</span><select data-project-parameter="${id}">${renderedOptions}</select></label>`;
+      }
+      if (type === "checkbox") {
+        const checked = parameter.default ? " checked" : "";
+        return `<label class="${checkedClass}"><span>${label}</span><input data-project-parameter="${id}" type="checkbox"${checked} /></label>`;
+      }
+      const value = parameter.default !== undefined && parameter.default !== null ? ` value="${String(parameter.default).replaceAll('"', "&quot;")}"` : "";
+      return `<label class="${checkedClass}"><span>${label}</span><input data-project-parameter="${id}" type="${type}"${value}${placeholder}${min}${max}${step} /></label>`;
     })
     .join("");
-  projectRisk.textContent = action ? `Rischio: ${action.risk}` : "";
+  projectRisk.textContent = action ? `Risk: ${action.risk}` : "";
   if (action?.description) {
     projectRisk.textContent += ` | ${action.description}`;
   }
@@ -2840,12 +3883,31 @@ function renderProjectParameters() {
 function readProjectParameters() {
   const parameters = {};
   for (const input of projectParameters.querySelectorAll("[data-project-parameter]")) {
-    const value = input.type === "checkbox" ? input.checked : input.value.trim();
-    if (value !== "" && value !== false) {
+    if (input.type === "checkbox") {
+      parameters[input.dataset.projectParameter] = input.checked;
+      continue;
+    }
+    const value = input.value.trim();
+    if (value !== "") {
       parameters[input.dataset.projectParameter] = input.type === "number" ? Number(value) : value;
     }
   }
   return parameters;
+}
+
+function readProjectParameterValue(parameterId, fallback = "") {
+  if (!projectParameters || !parameterId) {
+    return fallback;
+  }
+  const input = projectParameters.querySelector(`[data-project-parameter="${parameterId}"]`);
+  if (!input) {
+    return fallback;
+  }
+  if (input.type === "checkbox") {
+    return input.checked;
+  }
+  const value = String(input.value ?? "").trim();
+  return value === "" ? fallback : value;
 }
 
 async function refreshProjectPresets(selectedId = "") {
@@ -2873,29 +3935,33 @@ function loadSelectedProjectPreset() {
     }
   }
   projectPresetName.value = preset.name;
-  projectResult.textContent = `Preset caricato: ${preset.name}`;
+  projectResult.textContent = `Preset loaded: ${preset.name}`;
 }
 
 async function openProjectGateway(options = {}) {
-  const panel = options.panel === "finished" ? "finished" : "output";
-  projectDialogMode = options.mode === "notifications" ? "notifications" : "gateway";
+  const panel = ["finished", "memory"].includes(options.panel) ? options.panel : "output";
+  projectDialogMode = ["notifications", "memory"].includes(options.mode) ? options.mode : "gateway";
   projectError.textContent = "";
   projectResult.textContent = "Caricamento progetti...";
   try {
     availableProjects = await runtimeClient.listProjects();
     const ready = availableProjects.filter((project) => project.enabled && project.available);
     projectSelect.innerHTML = ready.map((project) => `<option value="${project.id}">${project.name}</option>`).join("");
-    if (!ready.length) {
-      throw new Error("Nessun progetto configurato e disponibile.");
+    if (!ready.length && panel !== "memory") {
+      throw new Error("No configured and available project found.");
     }
-    renderProjectActions();
-    await refreshProjectPresets();
-    refreshProjectScheduleDefaults();
+    if (ready.length) {
+      renderProjectActions();
+      await refreshProjectPresets();
+      refreshProjectScheduleDefaults();
+    }
     setProjectPanel(panel);
     syncProjectDialogMode();
     projectResult.textContent = panel === "finished"
-      ? "Cronologia job caricata."
-      : "Seleziona un'azione da eseguire con l'agente corrente.";
+      ? "Job history loaded."
+      : panel === "memory"
+        ? "Memory proposals loaded."
+        : "Select an action to run with the current agent.";
     projectDialog.showModal();
     await refreshProjectJobHistory(true);
   } catch (error) {
@@ -2910,35 +3976,45 @@ function projectNameFor(job) {
 
 function syncProjectDialogMode() {
   const notificationsMode = projectDialogMode === "notifications";
+  const memoryMode = projectDialogMode === "memory";
+  const compactMode = notificationsMode || memoryMode;
   if (projectDialogKicker) {
-    projectDialogKicker.textContent = notificationsMode ? "Job notifications" : "Project Gateway";
+    projectDialogKicker.textContent = notificationsMode
+      ? "Job notifications"
+      : memoryMode
+        ? "Memory Core"
+        : "Project Gateway";
   }
   if (projectDialogTitle) {
-    projectDialogTitle.textContent = notificationsMode ? "Jobs and notifications" : "The Main Scraper";
+    projectDialogTitle.textContent = notificationsMode
+      ? "Jobs and notifications"
+      : memoryMode
+        ? "Memory Core"
+        : "The Main Scraper";
   }
   if (projectGatewayHeaderGrid) {
-    projectGatewayHeaderGrid.hidden = notificationsMode;
+    projectGatewayHeaderGrid.hidden = compactMode;
   }
   if (projectPresetsSection) {
-    projectPresetsSection.hidden = notificationsMode;
+    projectPresetsSection.hidden = compactMode;
   }
   if (projectParametersSection) {
-    projectParametersSection.hidden = notificationsMode;
+    projectParametersSection.hidden = compactMode;
   }
   if (projectApprovalRow) {
-    projectApprovalRow.hidden = notificationsMode;
+    projectApprovalRow.hidden = compactMode;
   }
   if (projectScheduleSection) {
-    projectScheduleSection.hidden = notificationsMode;
+    projectScheduleSection.hidden = compactMode;
   }
   if (runProjectActionButton) {
-    runProjectActionButton.hidden = notificationsMode;
+    runProjectActionButton.hidden = compactMode;
   }
   if (projectJobFilters) {
     projectJobFilters.hidden = !notificationsMode;
   }
   if (projectDialogActions) {
-    projectDialogActions.classList.toggle("dialog-actions--notifications", notificationsMode);
+    projectDialogActions.classList.toggle("dialog-actions--notifications", compactMode);
   }
 }
 
@@ -3191,7 +4267,7 @@ function renderProjectOutputSummary(job) {
     return;
   }
   if (!job) {
-    projectOutputSummary.textContent = "";
+    projectOutputSummary.innerHTML = "";
     return;
   }
   const parts = [];
@@ -3216,7 +4292,21 @@ function renderProjectOutputSummary(job) {
   if (job.scheduled_for) {
     parts.push(`run_at=${formatProjectJobTime({ created_at: job.scheduled_for })}`);
   }
-  projectOutputSummary.textContent = parts.join(" · ");
+  const active = ["queued", "running", "scheduled"].includes(job.state);
+  const summaryText = parts.join(" · ");
+  projectOutputSummary.innerHTML = `
+    <div class="project-output-summary__row">
+      <span>${escapeHtml(summaryText)}</span>
+      ${active ? `<button class="button button--danger button--compact project-job-stop" type="button" data-project-output-stop="${job.id}">Stop</button>` : ""}
+    </div>
+  `;
+  const stopButton = projectOutputSummary.querySelector("[data-project-output-stop]");
+  if (stopButton) {
+    stopButton.addEventListener("click", async () => {
+      stopButton.disabled = true;
+      await stopProjectJob(job.id, stopButton);
+    });
+  }
 }
 
 function clearProjectOutputView() {
@@ -3452,13 +4542,15 @@ function ensureProjectJobToast(job) {
       </div>
       <div class="job-toast__meta">
         <span class="job-toast__status"></span>
+        <button type="button" class="button button--danger button--compact job-toast__stop" hidden>Stop</button>
         <button type="button" aria-label="Chiudi job">x</button>
       </div>
     </div>
     <p class="job-toast__summary"></p>
     <pre class="job-toast__output"></pre>
   `;
-  const dismissButton = card.querySelector("button");
+  const dismissButton = card.querySelector('[aria-label="Chiudi job"]');
+  const stopButton = card.querySelector(".job-toast__stop");
   const summary = card.querySelector(".job-toast__summary");
   const output = card.querySelector(".job-toast__output");
   const title = card.querySelector(".job-toast__title strong");
@@ -3468,8 +4560,12 @@ function ensureProjectJobToast(job) {
     card.remove();
     projectJobToasts.delete(job.id);
   });
+  stopButton?.addEventListener("click", async () => {
+    stopButton.disabled = true;
+    await stopProjectJob(job.id, stopButton);
+  });
 
-  toast = { card, summary, output, title, subtitle, status };
+  toast = { card, summary, output, title, subtitle, status, stopButton };
   projectJobToasts.set(job.id, toast);
   jobToastStack.prepend(card);
   return toast;
@@ -3486,18 +4582,20 @@ function syncProjectJobToast(job, phase = "") {
   const titleText = `${projectNameFor(job)} · ${projectActionLabelFor(job)}`;
   const subtitleText = `Agente: ${projectAgentLabelFor(job)} · ID: ${job.id}`;
   const summaryText = phase === "project.job.queued"
-    ? "Job ricevuto e messo in coda."
+    ? "Job received and queued."
     : phase === "project.job.scheduled"
-      ? "Job pianificato per l'orario scelto."
+      ? "Job scheduled for the selected time."
     : phase === "project.job.started"
-      ? "Job avviato."
+      ? "Job started."
+      : phase === "project.job.alert"
+        ? "Live job alert."
       : job.state === "scheduled"
-        ? "In attesa dell'orario scelto."
+        ? "Waiting for the selected time."
       : job.state === "completed"
-        ? "Output finale."
+        ? "Final output."
         : job.state === "failed"
-          ? "Esecuzione fallita."
-          : "Job aggiornato.";
+          ? "Execution failed."
+          : "Job updated.";
 
   toast.card.classList.toggle("job-toast--active", job.state === "queued" || job.state === "running" || job.state === "scheduled");
   toast.card.classList.toggle("job-toast--success", job.state === "completed");
@@ -3508,6 +4606,37 @@ function syncProjectJobToast(job, phase = "") {
   toast.status.dataset.tone = jobToastTone(job);
   toast.summary.textContent = summaryText;
   toast.output.textContent = formatProjectJobOutput(job);
+  if (toast.stopButton) {
+    const active = job.state === "queued" || job.state === "running" || job.state === "scheduled";
+    toast.stopButton.hidden = !active;
+    toast.stopButton.disabled = !active;
+  }
+}
+
+function notifyAgentAboutProjectJobAlert(job, alert) {
+  if (!job?.id || !alert) {
+    return;
+  }
+  const title = String(alert.title ?? "Project alert");
+  const summary = String(alert.summary ?? "A live project alert was emitted.");
+  const currentUrl = String(alert.current_url ?? "").trim();
+  const lines = [title, summary];
+  if (currentUrl) {
+    lines.push(currentUrl);
+  }
+  if (job.agent_id) {
+    showAgentReply(job.agent_id, lines.join("\n"), false, [], `${job.id}-${alert.kind ?? "alert"}`);
+  }
+  showGameNotification({
+    title: projectNameFor(job),
+    subtitle: `${projectActionLabelFor(job)} · ${projectAgentLabelFor(job)}`,
+    summary,
+    tone: alert.kind === "vinted_login_required" || alert.kind === "vinted_marker_missing" ? "danger" : "active",
+    key: `${job.id}-${alert.kind ?? "alert"}`,
+  });
+  if (projectDialog.open && projectPanel === "output") {
+    projectResult.textContent = `${title}${currentUrl ? `\n${currentUrl}` : ""}`;
+  }
 }
 
 async function refreshProjectJobToasts() {
@@ -3525,7 +4654,7 @@ async function refreshProjectJobToasts() {
 }
 
 function setProjectPanel(panel) {
-  projectPanel = panel === "finished" ? "finished" : "output";
+  projectPanel = ["finished", "memory", "threads"].includes(panel) ? panel : "output";
   for (const tab of projectPanelTabs) {
     const active = tab.dataset.panelTab === projectPanel;
     tab.classList.toggle("project-panel-tab--active", active);
@@ -3537,7 +4666,12 @@ function setProjectPanel(panel) {
   if (projectPanel === "finished") {
     unreadCompletedProjectJobs = 0;
     renderJobNotificationBadge();
-    refreshProjectJobHistory(true);
+    void refreshProjectJobHistory(true);
+  } else if (projectPanel === "memory") {
+    void refreshWikiProposals();
+    void refreshWikiPages();
+  } else if (projectPanel === "threads") {
+    void refreshTaskThreads();
   }
 }
 
@@ -3623,12 +4757,18 @@ function renderProjectJobHistory(jobs) {
         : (job.state === "completed" ? "project-job-item--completed" : "");
       const summary = formatProjectJobSummary(job);
       const time = formatProjectJobTime(job);
+      const stopButton = ["queued", "running", "scheduled"].includes(job.state)
+        ? `<button class="button button--danger button--compact project-job-stop" type="button" data-job-stop="${job.id}">Stop</button>`
+        : "";
       return `
-        <button class="project-job-item ${tone}" type="button" data-job-id="${job.id}">
-          <strong>${projectNameFor(job)} · ${projectActionLabelFor(job)}</strong>
-          <small>${projectAgentLabelFor(job)} · ${jobToastStatus(job)}${time ? ` · ${time}` : ""}</small>
-          <small>${summary || job.id}</small>
-        </button>
+        <div class="project-job-item ${tone}">
+          <button class="project-job-item__open" type="button" data-job-id="${job.id}">
+            <strong>${projectNameFor(job)} · ${projectActionLabelFor(job)}</strong>
+            <small>${projectAgentLabelFor(job)} · ${jobToastStatus(job)}${time ? ` · ${time}` : ""}</small>
+            <small>${summary || job.id}</small>
+          </button>
+          ${stopButton}
+        </div>
       `;
     })
     .join("");
@@ -3640,6 +4780,41 @@ function renderProjectJobHistory(jobs) {
       }
     });
   });
+  projectJobList.querySelectorAll("[data-job-stop]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const jobId = button.dataset.jobStop;
+      if (!jobId) {
+        return;
+      }
+      button.disabled = true;
+      await stopProjectJob(jobId, button);
+    });
+  });
+}
+
+async function stopProjectJob(jobId, button = null) {
+  if (!jobId) {
+    return;
+  }
+  try {
+    const job = await runtimeClient.cancelProjectJob(jobId);
+    projectJobsCache.set(job.id, job);
+    syncProjectJobToast(job, "project.job.failed");
+    await refreshProjectJobHistory(false);
+    if (projectPanel === "output") {
+      renderProjectJobDetail(job);
+    }
+    setBootMessage(`Stopped job ${job.id}.`);
+    return job;
+  } catch (error) {
+    runtimeClient.logClient("error", error.message, { operation: "cancelProjectJob", jobId });
+    setBootMessage(error.message);
+    if (button) {
+      button.disabled = false;
+    }
+    return null;
+  }
 }
 
 async function refreshProjectJobHistory(markSeen = false) {
@@ -3655,6 +4830,255 @@ async function refreshProjectJobHistory(markSeen = false) {
     }
   } catch (error) {
     runtimeClient.logClient("error", error.message, { operation: "refreshProjectJobHistory" });
+  }
+}
+
+function wikiProposalMeta(content) {
+  const text = String(content ?? "");
+  const meta = {};
+  if (text.startsWith("---\n")) {
+    const closing = text.indexOf("\n---\n", 4);
+    if (closing > 0) {
+      for (const line of text.slice(4, closing).split("\n")) {
+        const separator = line.indexOf(":");
+        if (separator > 0) {
+          meta[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
+        }
+      }
+    }
+  }
+  const body = text.replace(/^---\n[\s\S]*?\n---\n/, "").trim();
+  const heading = body.match(/^#\s+(.+)$/m)?.[1]?.trim();
+  return {
+    title: heading || "Wiki proposal",
+    body,
+    agent: meta.agent || "unknown",
+    source: meta.source || "",
+    targetPage: meta.target_page || "shared-knowledge",
+    conflict: meta.conflict === "true",
+    confidence: meta.confidence || "",
+    created: meta.created || "",
+  };
+}
+
+function renderWikiProposals(proposals) {
+  if (!wikiProposalList || !wikiProposalCount) {
+    return;
+  }
+  wikiProposalsCache.clear();
+  for (const proposal of proposals) {
+    wikiProposalsCache.set(proposal.name, proposal);
+  }
+  wikiProposalCount.textContent = proposals.length
+    ? `${proposals.length} pending proposal${proposals.length === 1 ? "" : "s"}`
+    : "No pending proposals";
+  if (!proposals.length) {
+    wikiProposalList.innerHTML = '<p class="project-job-empty">No wiki proposals are waiting for review.</p>';
+    return;
+  }
+  wikiProposalList.innerHTML = proposals.map((proposal) => {
+    const meta = wikiProposalMeta(proposal.content);
+    const created = meta.created ? formatLocalDateTime(new Date(meta.created)) : "";
+    const tone = meta.conflict ? " wiki-proposal-card--conflict" : "";
+    const badge = [meta.conflict ? "Conflict" : "", meta.confidence, meta.targetPage].filter(Boolean).join(" · ");
+    return `
+      <article class="wiki-proposal-card${tone}" data-wiki-proposal="${escapeHtml(proposal.name)}" data-wiki-conflict="${String(meta.conflict)}">
+        <div class="wiki-proposal-card__heading">
+          <div>
+            <strong>${escapeHtml(meta.title)}</strong>
+            <small>${escapeHtml(meta.agent)}${meta.source ? ` · ${escapeHtml(meta.source)}` : ""}${created ? ` · ${escapeHtml(created)}` : ""}</small>
+          </div>
+          <span>${escapeHtml(badge)}</span>
+        </div>
+        <pre>${escapeHtml(clampText(meta.body, 2600))}</pre>
+        <div class="wiki-proposal-card__actions">
+          <button class="button" type="button" data-wiki-action="memory-review">Review with Memory Core</button>
+          <button class="button" type="button" data-wiki-action="memory-improve">Improve via Memory Core</button>
+          <button class="button button--primary" type="button" data-wiki-action="approved">Approve</button>
+          <button class="button button--danger" type="button" data-wiki-action="rejected">Reject</button>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+async function refreshWikiProposals() {
+  if (!runtimeClient.connected || !wikiProposalList) {
+    return;
+  }
+  wikiProposalList.innerHTML = '<p class="project-job-empty">Loading wiki proposals...</p>';
+  if (wikiProposalCount) {
+    wikiProposalCount.textContent = "Loading...";
+  }
+  try {
+    const proposals = await runtimeClient.listWikiProposals(80);
+    renderWikiProposals(proposals);
+  } catch (error) {
+    if (wikiProposalCount) {
+      wikiProposalCount.textContent = "Could not load proposals";
+    }
+    wikiProposalList.innerHTML = `<p class="project-job-empty">${escapeHtml(error.message)}</p>`;
+    runtimeClient.logClient("error", error.message, { operation: "refreshWikiProposals" });
+  }
+}
+
+function renderWikiPages(pages) {
+  if (!wikiPageList) {
+    return;
+  }
+  wikiPagesCache.clear();
+  for (const page of pages) {
+    wikiPagesCache.set(page.name, page);
+  }
+  if (!pages.length) {
+    wikiPageList.innerHTML = '<p class="project-job-empty">No canonical wiki pages yet.</p>';
+    return;
+  }
+  wikiPageList.innerHTML = pages.map((page) => `
+    <button class="wiki-page-item" type="button" data-wiki-page="${escapeHtml(page.name)}">
+      <strong>${escapeHtml(page.title || page.name)}</strong>
+      <small>${escapeHtml(page.name)} · ${escapeHtml(page.kind)} · ${page.sections} sections · ${page.characters} chars</small>
+    </button>
+  `).join("");
+}
+
+async function refreshWikiPages() {
+  if (!runtimeClient.connected || !wikiPageList) {
+    return;
+  }
+  wikiPageList.innerHTML = '<p class="project-job-empty">Loading wiki pages...</p>';
+  try {
+    renderWikiPages(await runtimeClient.listWikiPages());
+  } catch (error) {
+    wikiPageList.innerHTML = `<p class="project-job-empty">${escapeHtml(error.message)}</p>`;
+    runtimeClient.logClient("error", error.message, { operation: "refreshWikiPages" });
+  }
+}
+
+async function openWikiPage(name) {
+  if (!runtimeClient.connected || !wikiPageContent) {
+    return;
+  }
+  wikiPageContent.textContent = "Loading wiki page...";
+  try {
+    const page = await runtimeClient.getWikiPage(name);
+    wikiPageContent.textContent = page.content || "";
+  } catch (error) {
+    wikiPageContent.textContent = error.message;
+    runtimeClient.logClient("error", error.message, { operation: "openWikiPage", name });
+  }
+}
+
+async function searchWikiPages() {
+  if (!runtimeClient.connected || !wikiPageContent) {
+    return;
+  }
+  const query = wikiSearchQuery?.value.trim() ?? "";
+  if (!query) {
+    await refreshWikiPages();
+    wikiPageContent.textContent = "Select a wiki page or run a search.";
+    return;
+  }
+  wikiPageContent.textContent = "Searching wiki...";
+  try {
+    const result = await runtimeClient.searchWiki(query, 8);
+    wikiPageContent.textContent = result.pages.length
+      ? result.pages.map((page) => `## ${page.name}\n${page.content}`).join("\n\n")
+      : "No matching wiki sections.";
+  } catch (error) {
+    wikiPageContent.textContent = error.message;
+    runtimeClient.logClient("error", error.message, { operation: "searchWikiPages", query });
+  }
+}
+
+async function runWikiMaintenanceFromUi(button) {
+  if (!runtimeClient.connected) {
+    return;
+  }
+  button.disabled = true;
+  projectError.textContent = "";
+  try {
+    const result = await runtimeClient.runWikiMaintenance();
+    await refreshWikiPages();
+    setBootMessage(`Wiki maintenance updated ${result.pages_updated} page(s).`);
+    if (wikiPageContent) {
+      wikiPageContent.textContent = JSON.stringify(result, null, 2);
+    }
+  } catch (error) {
+    projectError.textContent = error.message;
+    runtimeClient.logClient("error", error.message, { operation: "runWikiMaintenance" });
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function resolveWikiProposalFromButton(button) {
+  const card = button.closest("[data-wiki-proposal]");
+  const proposalName = card?.dataset.wikiProposal;
+  const status = button.dataset.wikiAction;
+  if (!proposalName) {
+    return;
+  }
+  if (status === "memory-review" || status === "memory-improve") {
+    const proposal = wikiProposalsCache.get(proposalName);
+    const meta = wikiProposalMeta(proposal?.content ?? "");
+    const request = status === "memory-review"
+      ? `Review this wiki proposal in Memory Core and tell me whether it should be approved or rejected.\n\nProposal: ${proposalName}\nTitle: ${meta.title}\n\n${meta.body}`
+      : `Improve this wiki proposal in Memory Core and suggest the exact canonical version that should be committed.\n\nProposal: ${proposalName}\nTitle: ${meta.title}\n\n${meta.body}`;
+    button.disabled = true;
+    projectError.textContent = "";
+    try {
+      const task = await askMemoryCore(request, {
+        title: status === "memory-review" ? "Memory Core proposal review" : "Memory Core proposal improvement",
+        priority: 2,
+        openChat: true,
+      });
+      setBootMessage(`Sent to Memory Core: ${task?.id ?? proposalName}`);
+    } catch (error) {
+      projectError.textContent = error.message;
+      runtimeClient.logClient("error", error.message, { operation: "memoryCoreProposalRequest", proposalName, status });
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
+  if (!["approved", "rejected"].includes(status)) {
+    return;
+  }
+  const conflict = card?.dataset.wikiConflict === "true";
+  let reason = status === "approved" ? "Approved from game UI." : "Rejected from game UI.";
+  if (status === "approved" && conflict) {
+    const note = window.prompt("This proposal conflicts with existing wiki knowledge. Type an approval reason that includes 'override conflict'.");
+    if (!note) {
+      return;
+    }
+    reason = note;
+  } else if (status === "rejected") {
+    const note = window.prompt("Optional rejection reason:", reason);
+    if (note === null) {
+      return;
+    }
+    reason = note.trim() || reason;
+  }
+  button.disabled = true;
+  projectError.textContent = "";
+  try {
+    await runtimeClient.resolveWikiProposal(
+      proposalName,
+      status,
+      "game-ui",
+      reason,
+    );
+    await refreshWikiProposals();
+    if (status === "approved") {
+      await refreshWikiPages();
+    }
+    setBootMessage(status === "approved" ? "Wiki proposal approved." : "Wiki proposal rejected.");
+  } catch (error) {
+    projectError.textContent = error.message;
+    runtimeClient.logClient("error", error.message, { operation: "resolveWikiProposal", proposalName, status });
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -3757,9 +5181,10 @@ async function openBrowserSessionFromPopup() {
       project_id: "main-scraper",
       backend: browserBackendSelect?.value ?? "botasaurus",
       url: browserUrlInput?.value.trim() ?? "",
-      browser_mode: browserModeSelect?.value ?? "sessione_persistente",
-      browser_user_data_dir: "",
-      browser_profile_directory: "Default",
+      browser_mode: browserModeSelect?.value
+        ?? readProjectParameterValue("browser-mode", "sessione_persistente"),
+      browser_user_data_dir: readProjectParameterValue("browser-user-data-dir", ""),
+      browser_profile_directory: readProjectParameterValue("browser-profile-directory", "Default"),
       refresh_browser_profile: false,
       page_text: "",
       title: "",
@@ -3801,6 +5226,12 @@ async function connectRuntime() {
     await runtimeClient.connect();
     network.autopilotClock = Number.POSITIVE_INFINITY;
     setRuntimeConnection(true);
+    try {
+      const settings = await runtimeClient.getSystemSettings();
+      applySystemSettingsToUi(settings);
+    } catch (_error) {
+      // best effort
+    }
     await refreshProjectJobToasts();
     await refreshProjectJobHistory(true);
   } catch (error) {
@@ -3829,6 +5260,10 @@ function settingsField(name) {
   return agentSettingsForm.elements.namedItem(name);
 }
 
+function systemSettingsField(name) {
+  return systemSettingsForm.elements.namedItem(name);
+}
+
 function modelPickerField() {
   return settingsField("model_picker");
 }
@@ -3837,11 +5272,44 @@ function modelInputField() {
   return settingsField("model");
 }
 
+function systemModelPickerField() {
+  return systemSettingsField("model_picker");
+}
+
+function systemModelInputField() {
+  return systemSettingsField("model");
+}
+
 function renderSecretStatus(status) {
   projectKeyStatus.textContent = `Progetto: ${status.project_configured ? "configurata" : "non configurata"}`;
   agentKeyStatus.textContent = `Agente: ${status.agent_configured ? "configurata" : "non configurata"}`;
   projectKeyStatus.classList.toggle("secret-status--configured", status.project_configured);
   agentKeyStatus.classList.toggle("secret-status--configured", status.agent_configured);
+}
+
+function renderSystemSecretStatus(status) {
+  if (!systemProjectKeyStatus) {
+    return;
+  }
+  systemProjectKeyStatus.textContent = `Project: ${status.project_configured ? "configured" : "not configured"}`;
+  systemProjectKeyStatus.classList.toggle("secret-status--configured", status.project_configured);
+}
+
+async function saveSelectedApiKey(snapshot) {
+  if (!snapshot) {
+    throw new Error("Selected agent is not available.");
+  }
+  const apiKey = String(settingsField("api_key").value ?? "").trim();
+  if (!apiKey) {
+    throw new Error("Enter an API key first.");
+  }
+  const scope = String(settingsField("api_key_scope").value ?? "project").trim();
+  const status = scope === "agent"
+    ? await runtimeClient.setAgentSecret(snapshot.id, apiKey)
+    : await runtimeClient.setProjectSecret(apiKey);
+  settingsField("api_key").value = "";
+  renderSecretStatus(status);
+  return status;
 }
 
 function renderModelPicker(provider, selectedModel = "") {
@@ -3903,6 +5371,62 @@ function renderModelPicker(provider, selectedModel = "") {
     : "Select a built-in model or switch to a custom model ID.";
 }
 
+function renderSystemModelPicker(provider, selectedModel = "") {
+  const picker = systemModelPickerField();
+  const modelInput = systemModelInputField();
+  const help = document.querySelector("#system-model-help");
+  const catalog = MODEL_CATALOGS[provider] ?? [];
+  picker.innerHTML = "";
+
+  if (!catalog.length) {
+    picker.disabled = true;
+    picker.hidden = true;
+    modelInput.hidden = false;
+    modelInput.placeholder = provider === "ollama" ? "llama3.2" : "model-id";
+    help.textContent = provider === "openai-compatible"
+      ? "Enter the exact model ID exposed by your compatible endpoint."
+      : "Enter the exact model ID for this provider.";
+    modelInput.value = selectedModel;
+    return;
+  }
+
+  picker.disabled = false;
+  picker.hidden = false;
+  modelInput.placeholder = "Custom model ID";
+  for (const entry of catalog) {
+    if (entry.group) {
+      const group = document.createElement("optgroup");
+      group.label = entry.group;
+      for (const optionData of entry.options) {
+        const option = document.createElement("option");
+        option.value = optionData.value;
+        option.textContent = optionData.label;
+        group.append(option);
+      }
+      picker.append(group);
+      continue;
+    }
+    const option = document.createElement("option");
+    option.value = entry.value;
+    option.textContent = entry.label;
+    picker.append(option);
+  }
+  const customOption = document.createElement("option");
+  customOption.value = MODEL_PICKER_CUSTOM;
+  customOption.textContent = "Custom model ID";
+  picker.append(customOption);
+  const knownModels = new Set(
+    catalog.flatMap((entry) => entry.group ? entry.options.map((option) => option.value) : [entry.value])
+  );
+  const usingCustom = !selectedModel || !knownModels.has(selectedModel);
+  picker.value = usingCustom ? MODEL_PICKER_CUSTOM : selectedModel;
+  modelInput.hidden = !usingCustom;
+  modelInput.value = usingCustom ? selectedModel : picker.value;
+  help.textContent = provider === "openai"
+    ? "Official OpenAI models as of July 8, 2026, plus custom ID support."
+    : "Select a built-in model or switch to a custom model ID.";
+}
+
 function syncModelFieldFromPicker() {
   const picker = modelPickerField();
   const modelInput = modelInputField();
@@ -3915,6 +5439,20 @@ function syncModelFieldFromPicker() {
       modelInput.value = "";
     }
     modelInput.focus();
+    return;
+  }
+  modelInput.hidden = true;
+  modelInput.value = picker.value;
+}
+
+function syncSystemModelFieldFromPicker() {
+  const picker = systemModelPickerField();
+  const modelInput = systemModelInputField();
+  if (picker.hidden) {
+    return;
+  }
+  if (picker.value === MODEL_PICKER_CUSTOM) {
+    modelInput.hidden = false;
     return;
   }
   modelInput.hidden = true;
@@ -3934,6 +5472,56 @@ function updateProviderControls(resetDefaults = false) {
   const usesLocalRuntime = provider === "ollama";
   settingsField("api_key").disabled = usesLocalRuntime;
   settingsField("api_key_scope").disabled = usesLocalRuntime;
+}
+
+function updateSystemProviderControls(resetDefaults = false) {
+  const provider = systemSettingsField("provider").value;
+  const defaults = providerDefaults[provider];
+  const currentModel = systemModelInputField().value;
+  if (resetDefaults && defaults) {
+    systemModelInputField().value = defaults.model;
+    systemSettingsField("base_url").value = defaults.baseUrl;
+  }
+  renderSystemModelPicker(provider, resetDefaults && defaults ? defaults.model : currentModel);
+  syncSystemModelFieldFromPicker();
+}
+
+async function openSystemSettings() {
+  if (!runtimeClient.connected) {
+    setBootMessage("Start the project runtime first to edit global settings.");
+    return;
+  }
+  systemSettingsError.textContent = "";
+  systemSettingsDialog.showModal();
+  try {
+    const [settings, status] = await Promise.all([
+      runtimeClient.getSystemSettings(),
+      runtimeClient.getSecretStatus(""),
+    ]);
+    systemSettingsField("provider").value = settings.model.provider;
+    systemSettingsField("model").value = settings.model.model;
+    systemSettingsField("base_url").value = settings.model.base_url;
+    systemSettingsField("api_key_env").value = settings.model.api_key_env;
+    systemSettingsField("api_key_scope").value = settings.model.api_key_scope ?? "project";
+    systemSettingsField("temperature").value = settings.model.temperature;
+    systemSettingsField("project_api_key").value = "";
+    systemSettingsField("theme").value = settings.ui.theme;
+    systemSettingsField("auto_agents").value = String(settings.ui.auto_agents);
+    systemSettingsField("simulation_speed").value = String(settings.ui.simulation_speed);
+    updateSystemProviderControls(false);
+    renderSystemSecretStatus(status);
+  } catch (error) {
+    systemSettingsError.textContent = error.message;
+  }
+}
+
+function applySystemSettingsToUi(settings) {
+  if (!settings?.ui) {
+    return;
+  }
+  applyTheme(settings.ui.theme, { persist: true });
+  setAutoAgents(Boolean(settings.ui.auto_agents));
+  setSpeed(Number(settings.ui.simulation_speed) || 1);
 }
 
 async function openAgentSettings() {
@@ -4285,6 +5873,9 @@ canvas.addEventListener("dblclick", (event) => {
 });
 
 document.querySelector("#close-quick-chat").addEventListener("click", closeQuickChat);
+for (const button of quickChatTabs) {
+  button.addEventListener("click", () => setQuickChatView(button.dataset.quickChatTab || "chat"));
+}
 
 quickChat.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -4299,16 +5890,10 @@ quickChat.addEventListener("submit", async (event) => {
   }
   const submitButton = quickChat.querySelector('[type="submit"]');
   submitButton.disabled = true;
-  quickChatStatus.textContent = "Assegnazione...";
+  quickChatStatus.textContent = "Assigning...";
   quickChatStatus.classList.remove("agent-quick-chat__status--error");
   try {
-    const task = await runtimeClient.createTask({
-      title: message.slice(0, 160),
-      description: message,
-      priority: 3,
-      requested_agent_id: agentId,
-      channel: "chat",
-    });
+    const task = await createAgentChatTask(agentId, message, { title: message.slice(0, 160), priority: 3 });
     appendChatMessage({
       id: `${task.id}-user`,
       role: "user",
@@ -4320,7 +5905,7 @@ quickChat.addEventListener("submit", async (event) => {
       state.bubble = message.slice(0, 34);
     }
     quickChatInput.value = "";
-    quickChatStatus.textContent = `Assegnato: ${task.id}`;
+    quickChatStatus.textContent = `Assigned: ${task.id}`;
   } catch (error) {
     quickChatStatus.textContent = error.message;
     quickChatStatus.classList.add("agent-quick-chat__status--error");
@@ -4329,6 +5914,37 @@ quickChat.addEventListener("submit", async (event) => {
     submitButton.disabled = false;
     quickChatInput.focus();
   }
+});
+
+memoryCoreChatButton?.addEventListener("click", () => {
+  if (!runtimeClient.connected) {
+    setBootMessage("Runtime offline.");
+    return;
+  }
+  openQuickChat("memory");
+});
+
+taskThreadList?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-task-thread]");
+  if (!button) {
+    return;
+  }
+  selectedTaskThreadId = button.dataset.taskThread || "";
+  renderTaskThreadList();
+  renderSelectedTaskThread();
+});
+
+refreshTaskThreadsButton?.addEventListener("click", () => {
+  void refreshTaskThreads();
+});
+
+memoryCoreSettingsButton?.addEventListener("click", () => {
+  if (!runtimeClient.connected) {
+    setBootMessage("Runtime offline.");
+    return;
+  }
+  selectedAgentId = "memory";
+  openAgentSettings();
 });
 
 agentActionDialog.querySelectorAll("[data-agent-action-close]").forEach((button) => {
@@ -4461,6 +6077,36 @@ projectJobFilterButtons.forEach((button) => {
     syncProjectJobFilterButtons();
     await refreshProjectJobHistory(false);
   });
+});
+refreshWikiProposalsButton?.addEventListener("click", () => {
+  void refreshWikiProposals();
+});
+wikiProposalList?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-wiki-action]");
+  if (button) {
+    void resolveWikiProposalFromButton(button);
+  }
+});
+refreshWikiPagesButton?.addEventListener("click", () => {
+  void refreshWikiPages();
+});
+searchWikiPagesButton?.addEventListener("click", () => {
+  void searchWikiPages();
+});
+wikiSearchQuery?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    void searchWikiPages();
+  }
+});
+runWikiMaintenanceButton?.addEventListener("click", (event) => {
+  void runWikiMaintenanceFromUi(event.currentTarget);
+});
+wikiPageList?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-wiki-page]");
+  if (button) {
+    void openWikiPage(button.dataset.wikiPage);
+  }
 });
 jobNotificationsButton?.addEventListener("click", async () => {
   if (!projectDialog.open) {
@@ -4596,9 +6242,15 @@ agentForm.addEventListener("submit", async (event) => {
 });
 
 configureAgentButton.addEventListener("click", openAgentSettings);
+systemSettingsButton?.addEventListener("click", () => {
+  void openSystemSettings();
+});
 
 agentSettingsDialog.querySelectorAll("[data-settings-close]").forEach((button) => {
   button.addEventListener("click", () => agentSettingsDialog.close());
+});
+systemSettingsDialog?.querySelectorAll("[data-system-settings-close]").forEach((button) => {
+  button.addEventListener("click", () => systemSettingsDialog.close());
 });
 
 agentSettingsForm.addEventListener("submit", async (event) => {
@@ -4641,14 +6293,8 @@ agentSettingsForm.addEventListener("submit", async (event) => {
         required_for: splitValues(value("approvals")),
       },
     });
-    const apiKey = value("api_key");
-    if (apiKey) {
-      if (value("api_key_scope") === "agent") {
-        await runtimeClient.setAgentSecret(snapshot.id, apiKey);
-      } else {
-        await runtimeClient.setProjectSecret(apiKey);
-      }
-      settingsField("api_key").value = "";
+    if (value("api_key")) {
+      await saveSelectedApiKey(snapshot);
     }
     await runtimeClient.updateAgentMemory(snapshot.id, value("memory"));
     await runtimeClient.updateAgentWiki(snapshot.id, value("wiki"));
@@ -4663,9 +6309,15 @@ agentSettingsForm.addEventListener("submit", async (event) => {
 settingsField("provider").addEventListener("change", () => {
   updateProviderControls(true);
 });
+systemSettingsField("provider")?.addEventListener("change", () => {
+  updateSystemProviderControls(true);
+});
 
 modelPickerField().addEventListener("change", () => {
   syncModelFieldFromPicker();
+});
+systemModelPickerField()?.addEventListener("change", () => {
+  syncSystemModelFieldFromPicker();
 });
 
 document.querySelector("#delete-api-key").addEventListener("click", async () => {
@@ -4683,6 +6335,73 @@ document.querySelector("#delete-api-key").addEventListener("click", async () => 
     renderSecretStatus(status);
   } catch (error) {
     agentSettingsError.textContent = error.message;
+  }
+});
+
+document.querySelector("#save-api-key").addEventListener("click", async () => {
+  const snapshot = runtimeSnapshots.get(selectedAgentId);
+  if (!snapshot) {
+    return;
+  }
+  const saveKeyButton = document.querySelector("#save-api-key");
+  saveKeyButton.disabled = true;
+  agentSettingsError.textContent = "";
+  try {
+    await saveSelectedApiKey(snapshot);
+    setBootMessage(
+      String(settingsField("api_key_scope").value) === "agent"
+        ? `Saved API key for ${snapshot.name}.`
+        : "Saved project API key."
+    );
+  } catch (error) {
+    agentSettingsError.textContent = error.message;
+  } finally {
+    saveKeyButton.disabled = false;
+  }
+});
+
+systemSettingsForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  syncSystemModelFieldFromPicker();
+  const value = (name) => String(systemSettingsField(name).value ?? "").trim();
+  const saveButton = document.querySelector("#save-system-settings");
+  saveButton.disabled = true;
+  systemSettingsError.textContent = "";
+  try {
+    const settings = await runtimeClient.updateSystemSettings({
+      configured: true,
+      model: {
+        provider: value("provider"),
+        model: value("model"),
+        base_url: value("base_url"),
+        api_key_env: value("api_key_env").toUpperCase(),
+        api_key_scope: value("api_key_scope"),
+        temperature: Number(value("temperature")),
+      },
+      ui: {
+        theme: value("theme"),
+        auto_agents: value("auto_agents") === "true",
+        simulation_speed: Number(value("simulation_speed")),
+      },
+    });
+    if (value("project_api_key")) {
+      const status = await runtimeClient.setProjectSecret(value("project_api_key"));
+      renderSystemSecretStatus(status);
+      systemSettingsField("project_api_key").value = "";
+    }
+    applySystemSettingsToUi(settings);
+    const agents = await runtimeClient.listAgents();
+    for (const agent of agents) {
+      ensureRuntimeAgent(agent);
+      runtimeSnapshots.set(agent.id, agent);
+    }
+    renderWorkstationControls();
+    systemSettingsDialog.close();
+    setBootMessage("Global system settings saved and applied to all agents.");
+  } catch (error) {
+    systemSettingsError.textContent = error.message;
+  } finally {
+    saveButton.disabled = false;
   }
 });
 

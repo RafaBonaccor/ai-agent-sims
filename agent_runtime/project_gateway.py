@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shlex
 import sys
 from datetime import datetime
@@ -13,6 +14,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from .models import (
+    AgentChatMessage,
     ProjectJobPreset,
     ProjectJobPresetCreate,
     ProjectRepeatMode,
@@ -79,7 +81,9 @@ class ProjectGateway:
         local_path = self.root / "config" / "projects.local.json"
         self.local = self._read_json(local_path) if local_path.exists() else {"projects": {}}
         self.jobs: dict[str, ProjectJob] = {}
+        self.job_alert_states: dict[str, tuple[str, str, bool, bool]] = {}
         self.semaphores: dict[str, asyncio.Semaphore] = {}
+        self.processes: dict[str, asyncio.subprocess.Process] = {}
         self.logger = logging.getLogger("agent_lab.gateway")
         self.scheduler = ScheduledTaskRunner(self.logger)
         self.running = self.scheduler.running
@@ -93,6 +97,7 @@ class ProjectGateway:
         projects = []
         for entry in self.registry.get("projects", []):
             manifest = self._manifest(entry)
+            ui_settings = self._project_ui_settings(entry)
             projects.append(
                 {
                     "id": entry["id"],
@@ -106,7 +111,10 @@ class ProjectGateway:
                             "description": action.get("description", ""),
                             "risk": action.get("risk", "read"),
                             "requiresApproval": bool(action.get("requiresApproval", False)),
-                            "parameters": action.get("parameters", []),
+                            "parameters": self._resolved_parameter_definitions(
+                                action.get("parameters", []),
+                                ui_settings,
+                            ),
                         }
                         for action_id, action in manifest.get("actions", {}).items()
                     ],
@@ -116,6 +124,32 @@ class ProjectGateway:
 
     def list_jobs(self) -> list[ProjectJob]:
         return sorted(self.jobs.values(), key=lambda job: job.created_at, reverse=True)
+
+    async def cancel_job(self, job_id: str) -> ProjectJob:
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        process = self.processes.pop(job_id, None)
+        if process is not None and process.returncode is None:
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                process.kill()
+                await asyncio.gather(process.wait(), return_exceptions=True)
+        else:
+            pid = int((job.result or {}).get("pid") or 0) if isinstance(job.result, dict) else 0
+            if pid > 0:
+                try:
+                    os.kill(pid, 15)
+                except OSError:
+                    pass
+        job.state = "failed"
+        job.error = "Stopped by user."
+        job.updated_at = utc_now()
+        self._store_agent_job_message(job)
+        await self._publish(job, "failed")
+        return job
 
     def list_presets(self, project_id: Optional[str] = None) -> list[ProjectJobPreset]:
         return self.store.load_project_job_presets(project_id) if self.store else []
@@ -226,10 +260,47 @@ class ProjectGateway:
 
     @staticmethod
     def _validate_parameters(action: dict[str, Any], parameters: dict[str, Any]) -> None:
-        allowed = set(action.get("parameters", []))
+        allowed = {definition["id"] for definition in ProjectGateway._parameter_definitions(action.get("parameters", []))}
         unknown = sorted(set(parameters) - allowed)
         if unknown:
             raise ValueError(f"Unsupported parameters: {', '.join(unknown)}")
+
+    @staticmethod
+    def _parameter_definitions(definitions: list[Any]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for definition in definitions:
+            if isinstance(definition, str):
+                normalized.append({"id": definition})
+            elif isinstance(definition, dict):
+                parameter_id = str(definition.get("id") or "").strip()
+                if parameter_id:
+                    normalized.append({**definition, "id": parameter_id})
+        return normalized
+
+    @classmethod
+    def _resolved_parameter_definitions(
+        cls,
+        definitions: list[Any],
+        ui_settings: Optional[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        resolved: list[dict[str, Any]] = []
+        for definition in cls._parameter_definitions(definitions):
+            item = dict(definition)
+            ui_setting_key = item.get("defaultFromUiSetting")
+            if isinstance(ui_setting_key, str) and ui_settings and ui_setting_key in ui_settings:
+                item["default"] = ui_settings.get(ui_setting_key)
+            resolved.append(item)
+        return resolved
+
+    def _project_ui_settings(self, entry: dict[str, Any]) -> Optional[dict[str, Any]]:
+        path = self._project_root(entry) / "data" / "ui_settings.json"
+        if not path.is_file():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
 
     async def _run(
         self,
@@ -251,7 +322,7 @@ class ProjectGateway:
                     raise FileNotFoundError("Python executable or project entrypoint is missing")
 
                 arguments = [str(executable), str(entrypoint), *action.get("arguments", [])]
-                arguments.extend(self._parameter_arguments(job.parameters))
+                arguments.extend(self._parameter_arguments(job.parameters, action.get("parameters", [])))
                 job.state = "running"
                 job.updated_at = utc_now()
                 await self._publish(job, "started")
@@ -279,6 +350,7 @@ class ProjectGateway:
                         job.result.get("launcher", "subprocess"),
                         job.result.get("pid"),
                     )
+                    self._store_agent_job_message(job)
                     await self._publish(job, "completed")
                     await self._schedule_followup(job, entry, manifest, action)
                     return
@@ -288,16 +360,19 @@ class ProjectGateway:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
+                self.processes[job.id] = process
                 timeout = max(10, int(entry.get("defaultTimeoutSeconds", 900)))
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-                stdout_text = stdout.decode("utf-8", errors="replace").strip()
-                stderr_text = stderr.decode("utf-8", errors="replace").strip()
+                stdout_text, stderr_text = await asyncio.wait_for(
+                    self._communicate_project_process(process, job),
+                    timeout=timeout,
+                )
                 if process.returncode != 0:
                     raise RuntimeError(stderr_text or stdout_text or f"Process exited with {process.returncode}")
                 job.result = self._parse_json_output(stdout_text)
                 job.state = "completed"
                 job.updated_at = utc_now()
                 self.logger.info("job_completed id=%s command=%s", job.id, job.result.get("command"))
+                self._store_agent_job_message(job)
                 await self._publish(job, "completed")
                 await self._schedule_followup(job, entry, manifest, action)
             except Exception as error:
@@ -305,7 +380,131 @@ class ProjectGateway:
                 job.error = str(error)[:4000]
                 job.updated_at = utc_now()
                 self.logger.exception("job_failed id=%s error=%s", job.id, error)
+                self._store_agent_job_message(job)
                 await self._publish(job, "failed")
+            finally:
+                self.processes.pop(job.id, None)
+
+    def _store_agent_job_message(self, job: ProjectJob) -> None:
+        if not self.store or not job.agent_id:
+            return
+        content, sources = self._agent_job_message_content(job)
+        message = AgentChatMessage(
+            id=f"{job.id}-project-output",
+            task_id=job.id,
+            role="assistant" if job.state == "completed" else "system",
+            content=content,
+            sources=sources,
+            created_at=job.updated_at,
+        )
+        self.store.save_agent_chat_message(job.agent_id, message)
+
+    def _agent_job_message_content(self, job: ProjectJob) -> tuple[str, list[dict[str, str]]]:
+        if job.state == "failed":
+            return (
+                f"Project job failed.\nProject: {job.project_id}\nAction: {job.action}\nError: {job.error or 'Unknown error.'}",
+                [],
+            )
+        result = job.result or {}
+        normalized = result.get("normalized") if isinstance(result.get("normalized"), dict) else {}
+        meta = normalized.get("meta_summary") if isinstance(normalized.get("meta_summary"), dict) else {}
+        rows = normalized.get("rows") if isinstance(normalized.get("rows"), list) else result.get("rows")
+        rows = rows if isinstance(rows, list) else []
+        row_count = result.get("row_count")
+        if not isinstance(row_count, int):
+            row_count = normalized.get("row_count")
+        if not isinstance(row_count, int):
+            row_count = meta.get("row_count")
+        if not isinstance(row_count, int):
+            row_count = len(rows)
+        search_term = meta.get("search_term") or normalized.get("search_term") or result.get("search_term") or ""
+        source_name = result.get("source") or job.project_id
+        lines = [
+            "Project job completed.",
+            f"Project: {job.project_id}",
+            f"Action: {job.action}",
+            f"Source: {source_name}",
+            f"Rows: {row_count}",
+        ]
+        if search_term:
+            lines.append(f"Search: {search_term}")
+        if meta.get("deal_hunter_enabled"):
+            lines.append(f"Deal hunter matches: {int(meta.get('deal_hunter_matches', 0) or 0)}")
+        preview_rows = [row for row in rows if isinstance(row, dict)][:5]
+        if preview_rows:
+            lines.append("")
+            lines.append("Row preview:")
+            for index, row in enumerate(preview_rows, start=1):
+                lines.append(f"{index}. {self._format_agent_row_preview(row)}")
+        exported_files = normalized.get("exported_files")
+        if isinstance(exported_files, list) and exported_files:
+            lines.append("")
+            lines.append(
+                "Exported files: " + ", ".join(str(item) for item in exported_files[:5] if str(item).strip())
+            )
+        content = "\n".join(lines).strip()
+        sources = self._agent_job_sources(rows)
+        return content[:6000], sources[:12]
+
+    def _store_agent_job_alert_message(self, job: ProjectJob, alert: dict[str, Any]) -> None:
+        if not self.store or not job.agent_id:
+            return
+        title = str(alert.get("title") or "Project alert").strip()
+        summary = str(alert.get("summary") or "A live project alert was emitted.").strip()
+        current_url = str(alert.get("current_url") or "").strip()
+        content = "\n".join(part for part in (title, summary, current_url) if part).strip()
+        message = AgentChatMessage(
+            id=f"{job.id}-{str(alert.get('kind') or 'alert').strip()}",
+            task_id=job.id,
+            role="system",
+            content=content,
+            sources=[],
+            created_at=utc_now(),
+        )
+        self.store.save_agent_chat_message(job.agent_id, message)
+
+    @staticmethod
+    def _format_agent_row_preview(row: dict[str, Any]) -> str:
+        title = str(
+            row.get("name")
+            or row.get("title")
+            or row.get("item_id")
+            or row.get("id")
+            or "item"
+        ).strip()
+        price = str(
+            row.get("price")
+            or row.get("base_price")
+            or row.get("total_price")
+            or row.get("price_value")
+            or row.get("total_price_value")
+            or ""
+        ).strip()
+        reason = str(row.get("deal_hunter_reason") or row.get("deal_hunter_label") or "").strip()
+        loaded = str(row.get("loaded_at") or row.get("uploaded") or row.get("published") or "").strip()
+        parts = [title]
+        if price:
+            parts.append(price)
+        if loaded:
+            parts.append(loaded)
+        if reason:
+            parts.append(reason)
+        return " | ".join(parts)
+
+    @staticmethod
+    def _agent_job_sources(rows: list[Any]) -> list[dict[str, str]]:
+        sources: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            url = str(row.get("link") or row.get("url") or "").strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            title = str(row.get("name") or row.get("title") or row.get("item_id") or url).strip()
+            sources.append({"title": title, "url": url})
+        return sources
 
     async def _launch_detached_process(
         self,
@@ -444,14 +643,22 @@ class ProjectGateway:
     def _cron_field_values(field: str, minimum: int, maximum: int) -> set[int]:
         return cron_field_values(field, minimum, maximum)
 
-    @staticmethod
-    def _parameter_arguments(parameters: dict[str, Any]) -> list[str]:
+    @classmethod
+    def _parameter_arguments(cls, parameters: dict[str, Any], definitions: list[Any] | None = None) -> list[str]:
         arguments: list[str] = []
+        definition_map = {
+            definition["id"]: definition
+            for definition in cls._parameter_definitions(definitions or [])
+        }
         for name, value in parameters.items():
             flag = f"--{name}"
             if isinstance(value, bool):
                 if value:
                     arguments.append(flag)
+                else:
+                    definition = definition_map.get(name, {})
+                    if bool(definition.get("emitFalseFlag")):
+                        arguments.append(f"--no-{name}")
             elif value is not None and str(value).strip() != "":
                 arguments.extend((flag, str(value)))
         return arguments
@@ -466,6 +673,112 @@ class ProjectGateway:
             if isinstance(payload, dict):
                 return payload
         raise ValueError("Project did not return a JSON object on stdout")
+
+    async def _communicate_project_process(
+        self,
+        process: asyncio.subprocess.Process,
+        job: ProjectJob,
+    ) -> tuple[str, str]:
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+
+        async def read_stream(stream: asyncio.StreamReader | None, sink: list[str], stream_name: str) -> None:
+            if stream is None:
+                return
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace").rstrip("\r\n")
+                sink.append(text)
+                if stream_name == "stdout":
+                    await self._handle_project_output_line(job, text)
+
+        await asyncio.gather(
+            read_stream(process.stdout, stdout_lines, "stdout"),
+            read_stream(process.stderr, stderr_lines, "stderr"),
+        )
+        await process.wait()
+        return "\n".join(stdout_lines).strip(), "\n".join(stderr_lines).strip()
+
+    async def _handle_project_output_line(self, job: ProjectJob, line: str) -> None:
+        alert = self._project_output_alert(line)
+        if alert is None:
+            return
+        signature = self._project_alert_signature(alert)
+        if self.job_alert_states.get(job.id) == signature:
+            return
+        self.job_alert_states[job.id] = signature
+        self._store_agent_job_alert_message(job, alert)
+        await self.emit(
+            RuntimeEvent(
+                type="project.job.alert",
+                entity_id=job.id,
+                agent_id=job.agent_id,
+                summary=str(alert.get("summary") or "Project job alert"),
+                data={
+                    "job": job.model_dump(mode="json"),
+                    "alert": alert,
+                },
+            )
+        )
+
+    @staticmethod
+    def _project_output_alert(line: str) -> Optional[dict[str, Any]]:
+        if line.startswith("__VINTED_LOGIN_REQUIRED__:"):
+            payload = ProjectGateway._parse_project_signal_payload(line)
+            current_url = str(payload.get("current_url", "") or "").strip()
+            return {
+                "kind": "vinted_login_required",
+                "title": "Vinted login required",
+                "summary": "Vinted requires login. Complete the login in the browser to resume the job.",
+                "current_url": current_url,
+                "payload": payload,
+            }
+        if line.startswith("__VINTED_ACCESS__:"):
+            payload = ProjectGateway._parse_project_signal_payload(line)
+            if bool(payload.get("page_not_found")):
+                return {
+                    "kind": "vinted_page_not_found",
+                    "title": "Vinted page not found",
+                    "summary": "The current Vinted page returned Page not found.",
+                    "current_url": str(payload.get("current_url", "") or "").strip(),
+                    "payload": payload,
+                }
+            if bool(payload.get("marker_present")):
+                return {
+                    "kind": "vinted_marker_found",
+                    "title": "Vinted account marker found",
+                    "summary": "The Vinted account marker is present. The session appears logged in.",
+                    "current_url": str(payload.get("current_url", "") or "").strip(),
+                    "payload": payload,
+                }
+            return {
+                "kind": "vinted_marker_missing",
+                "title": "Vinted account marker missing",
+                "summary": "The Vinted account marker is missing. The job may need a manual login.",
+                "current_url": str(payload.get("current_url", "") or "").strip(),
+                "payload": payload,
+            }
+        return None
+
+    @staticmethod
+    def _parse_project_signal_payload(line: str) -> dict[str, Any]:
+        try:
+            payload = json.loads(line.split(":", 1)[1].strip())
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _project_alert_signature(alert: dict[str, Any]) -> tuple[str, str, bool, bool]:
+        payload = alert.get("payload") if isinstance(alert.get("payload"), dict) else {}
+        return (
+            str(alert.get("kind", "") or "").strip(),
+            str(alert.get("current_url", "") or "").strip(),
+            bool(payload.get("marker_present")),
+            bool(payload.get("page_not_found")),
+        )
 
     def _project_entry(self, project_id: str) -> dict[str, Any]:
         for entry in self.registry.get("projects", []):

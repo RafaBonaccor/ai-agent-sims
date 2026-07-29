@@ -21,6 +21,7 @@ Il progetto include:
 - supporto a provider e modelli configurabili
 - editor visuale per stanze, porte, corridoi, agenti e postazioni
 - popup dedicato per l'agente browser con sessioni live e comandi del Main Scraper
+- shared LLM wiki memory with reviewable proposals from completed agent work
 
 ## Stato attuale
 
@@ -46,6 +47,11 @@ Queste sono le cose gia presenti o in corso:
 - popup trascinabili dalla barra superiore
 - chat agente che segue l'agente finche non viene trascinata manualmente, poi diventa detached
 - log e output leggibili anche in light mode con testo nero
+- tab `Memory` in the game UI for reviewing, approving and rejecting shared wiki proposals
+- approved memory proposals are promoted into canonical markdown wiki pages for future prompt retrieval
+- canonical wiki page browser, wiki search and manual maintenance from the same Memory tab
+- conflict/confidence metadata on memory proposals
+- conflicting proposals require an explicit override reason before approval
 
 ### Scheda per il video
 
@@ -63,6 +69,10 @@ Queste sono le cose gia presenti o in corso:
   - workstation dedicate per agente
   - modalita dark e white
   - log leggibili in tema chiaro
+  - Memory tab for pending wiki proposals
+  - approve/reject flow for shared knowledge updates
+  - canonical wiki page search and browsing
+  - wiki maintenance button that deduplicates pages and rebuilds the index
 
 - cosa ho implementato:
   - vista output generica riusabile per piu tipi di risultato
@@ -81,6 +91,13 @@ Queste sono le cose gia presenti o in corso:
   - popup trascinabili per chat, editor e dialog
   - comportamento detached della chat solo dopo un vero drag
   - correzione dei colori log/output in light mode
+  - LLM-wiki style shared memory retrieval
+  - reviewable wiki proposals from completed tasks
+  - promotion of approved proposals into canonical wiki pages
+  - game UI controls to approve or reject memory proposals
+  - local TF-IDF-style section retrieval for shared wiki context
+  - conflict flag and confidence metadata in memory proposals
+  - manual and optional scheduled wiki maintenance
 
 - cosa si vede a schermo:
   - mondo 3D con agenti che si muovono
@@ -95,6 +112,10 @@ Queste sono le cose gia presenti o in corso:
   - mini editor per aggiungere stanze, modellarle, mettere porte e rimuoverle
   - stanze multiple con agenti e tavoli controllabili visivamente
   - log e output scuri/neri quando il tema e chiaro
+  - tab Memory con conteggio delle proposte pendenti
+  - card di proposta con target page, source task e contenuto markdown
+  - browser delle pagine wiki canoniche
+  - search della memoria condivisa e risultato in markdown
 
 - quali agenti esistono:
   - Orchestrator
@@ -120,11 +141,12 @@ Queste sono le cose gia presenti o in corso:
   - alcune risposte e output sono ancora semplificati per UI e test
   - il routing verso progetti esterni sta diventando stabile ma non e ancora definitivo
   - l'editor e funzionante, ma puo ancora evolvere verso strumenti piu avanzati tipo selezione multi-cella/paint
+  - vector embeddings/external semantic memory are not used yet; retrieval is local and deterministic
 
 - prossimo step:
   - rendere i workflow piu espliciti in UI
   - aggiungere preview dedicate per altri tipi di output
-  - rafforzare la memoria condivisa e la wiki per agente
+  - evaluate optional embeddings/vector search only if local retrieval becomes insufficient
   - mostrare meglio lo stato dei job lunghi e dei job schedulati
   - collegare sempre meglio il gioco ai progetti esterni reali
   - migliorare il controllo visuale degli agenti nelle stanze

@@ -984,6 +984,30 @@ h2 {
   scrollbar-color: rgba(141, 155, 176, 0.35) transparent;
 }
 
+.agent-quick-chat__tabs {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.agent-quick-chat__tab {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(15, 23, 38, 0.9);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.agent-quick-chat__tab--active {
+  border-color: rgba(94, 231, 242, 0.4);
+  background: rgba(94, 231, 242, 0.14);
+  color: var(--cyan);
+}
+
 .agent-quick-chat__message {
   max-width: 88%;
   padding: 7px 9px;
@@ -1392,6 +1416,18 @@ noscript {
   overflow-wrap: anywhere;
 }
 
+.project-output-summary__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.project-output-summary__row span {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .project-output-view {
   display: grid;
   gap: 10px;
@@ -1557,6 +1593,20 @@ noscript {
   text-align: left;
 }
 
+.project-job-item__open {
+  display: grid;
+  gap: 4px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+}
+
+.project-job-stop {
+  justify-self: end;
+}
+
 .project-job-item strong {
   font-size: 0.75rem;
 }
@@ -1572,6 +1622,146 @@ noscript {
 
 .project-job-item--completed {
   border-color: rgba(52, 211, 153, 0.22);
+}
+
+.wiki-proposal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: #dbe5f2;
+  font-size: 0.74rem;
+}
+
+.wiki-proposal-list {
+  display: grid;
+  gap: 10px;
+}
+
+.wiki-proposal-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(174, 197, 225, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.wiki-proposal-card--conflict {
+  border-color: rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.07);
+}
+
+.wiki-proposal-card__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wiki-proposal-card__heading strong {
+  display: block;
+  color: #f3f8ff;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.wiki-proposal-card__heading small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.wiki-proposal-card__heading span {
+  flex: 0 0 auto;
+  max-width: 180px;
+  padding: 4px 8px;
+  border: 1px solid rgba(94, 231, 242, 0.22);
+  border-radius: 999px;
+  color: #9ae6f0;
+  font-size: 0.62rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wiki-proposal-card pre {
+  max-height: 260px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid rgba(174, 197, 225, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+  color: #cbd5e1;
+  font: 0.68rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.wiki-proposal-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.wiki-page-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto auto;
+  gap: 8px;
+  margin: 14px 0 10px;
+}
+
+.wiki-page-browser {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(260px, 1.4fr);
+  gap: 10px;
+}
+
+.wiki-page-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.wiki-page-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(174, 197, 225, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #dbe5f2;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wiki-page-item strong {
+  font-size: 0.74rem;
+}
+
+.wiki-page-item small {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.wiki-page-content {
+  min-height: 220px;
+  max-height: 340px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid rgba(174, 197, 225, 0.12);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+  color: #cbd5e1;
+  font: 0.68rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .project-presets__name {
@@ -1619,6 +1809,7 @@ body.theme-light .job-toast__summary,
 body.theme-light .job-toast__output,
 body.theme-light .agent-quick-chat__message,
 body.theme-light .project-output-summary,
+body.theme-light .project-output-summary__row span,
 body.theme-light .project-output-view__heading strong,
 body.theme-light .settings-section__heading strong,
 body.theme-light .project-job-item,
@@ -1656,6 +1847,16 @@ body.theme-light .agent-quick-chat__message {
   background: #f8fafc;
 }
 
+body.theme-light .agent-quick-chat__tab {
+  background: rgba(255, 255, 255, 0.94);
+  color: #475569;
+}
+
+body.theme-light .agent-quick-chat__tab--active {
+  background: rgba(56, 189, 248, 0.16);
+  color: #0369a1;
+}
+
 body.theme-light .agent-quick-chat__message--user {
   border-color: rgba(14, 165, 233, 0.28);
   background: #e0f2fe;
@@ -1686,7 +1887,9 @@ body.theme-light .project-panel-tab,
 body.theme-light .project-presets,
 body.theme-light .settings-section,
 body.theme-light .project-job-filter,
-body.theme-light .project-job-item {
+body.theme-light .project-job-item,
+body.theme-light .wiki-proposal-card,
+body.theme-light .wiki-page-item {
   background: rgba(255, 255, 255, 0.64);
   color: #334155;
 }
@@ -1706,6 +1909,32 @@ body.theme-light .project-job-filter--active {
 body.theme-light .project-output-table th {
   color: #475569;
   background: rgba(224, 242, 254, 0.7);
+}
+
+body.theme-light .wiki-proposal-toolbar,
+body.theme-light .wiki-proposal-card__heading strong {
+  color: #1e293b;
+}
+
+body.theme-light .wiki-proposal-card__heading span {
+  border-color: rgba(14, 165, 233, 0.24);
+  color: #075985;
+  background: rgba(224, 242, 254, 0.72);
+}
+
+body.theme-light .wiki-proposal-card--conflict {
+  border-color: rgba(217, 119, 6, 0.34);
+  background: rgba(254, 243, 199, 0.68);
+}
+
+body.theme-light .wiki-proposal-card pre {
+  background: rgba(241, 245, 249, 0.92);
+  color: #000000;
+}
+
+body.theme-light .wiki-page-content {
+  background: rgba(241, 245, 249, 0.92);
+  color: #000000;
 }
 
 body.theme-light .layout-editor__agent-row {
@@ -1728,6 +1957,11 @@ body.theme-light .notification-badge {
 @media (max-width: 620px) {
   .project-presets {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .wiki-page-toolbar,
+  .wiki-page-browser {
+    grid-template-columns: 1fr;
   }
 
   .model-picker {

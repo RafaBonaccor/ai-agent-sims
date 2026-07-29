@@ -1,5 +1,6 @@
 import unittest
 import tempfile
+import os
 from pathlib import Path
 
 from agent_runtime.execution import ModelExecutor
@@ -50,6 +51,43 @@ class SecretStoreTests(unittest.TestCase):
 
         self.assertEqual("project-secret-key", executor._resolve_api_key(project_agent))
         self.assertEqual("agent-secret-key", executor._resolve_api_key(private_agent))
+
+    def test_executor_falls_back_to_project_key_when_agent_key_is_missing(self):
+        self.secrets.set_project("project-secret-key")
+        executor = ModelExecutor(self.database, self.secrets)
+
+        private_agent = AgentSnapshot(
+            id="analyst",
+            name="Private Agent",
+            role="analyst",
+            model=ModelSettings(api_key_scope="agent"),
+        )
+
+        self.assertEqual("project-secret-key", executor._resolve_api_key(private_agent))
+
+    def test_executor_falls_back_to_project_env_when_agent_env_is_missing(self):
+        previous_project = os.environ.get("OPENAI_API_KEY")
+        previous_agent = os.environ.get("AGENT_ANALYST_KEY")
+        try:
+            os.environ["OPENAI_API_KEY"] = "env-project-secret-key"
+            os.environ.pop("AGENT_ANALYST_KEY", None)
+            executor = ModelExecutor(self.database, self.secrets)
+            private_agent = AgentSnapshot(
+                id="analyst",
+                name="Private Agent",
+                role="analyst",
+                model=ModelSettings(api_key_scope="agent", api_key_env="OPENAI_API_KEY"),
+            )
+            self.assertEqual("env-project-secret-key", executor._resolve_api_key(private_agent))
+        finally:
+            if previous_project is None:
+                os.environ.pop("OPENAI_API_KEY", None)
+            else:
+                os.environ["OPENAI_API_KEY"] = previous_project
+            if previous_agent is None:
+                os.environ.pop("AGENT_ANALYST_KEY", None)
+            else:
+                os.environ["AGENT_ANALYST_KEY"] = previous_agent
 
 
 if __name__ == "__main__":

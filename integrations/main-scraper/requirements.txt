@@ -1,2 +1,3 @@
 botasaurus
 openpyxl
+openai>=1.40,<2

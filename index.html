@@ -29,6 +29,7 @@
       <div class="toolbar" aria-label="Controlli">
         <button id="add-agent" class="button" type="button">+ Agent</button>
         <button id="layout-toggle" class="button" type="button">Editor</button>
+        <button id="system-settings" class="button button--icon" type="button" aria-label="System settings">⚙</button>
         <button id="theme-toggle" class="button" type="button">White</button>
         <button id="run-toggle" class="button button--primary" type="button">Pausa</button>
         <button id="auto-toggle" class="button button--primary" type="button">Auto</button>
@@ -132,7 +133,7 @@
       <div class="command-group">
         <button id="intent-task" class="button button--intent" type="button">New task</button>
         <button id="intent-schedule" class="button button--intent" type="button">Schedule</button>
-        <button id="intent-memory" class="button button--intent" type="button">Sync memory</button>
+        <button id="intent-memory" class="button button--intent" type="button">Memory Core</button>
         <button id="intent-review" class="button button--intent" type="button">Run review</button>
       </div>
       <div class="metrics" id="metrics"></div>
@@ -148,7 +149,12 @@
         <strong id="quick-chat-agent">Agente</strong>
         <button id="close-quick-chat" type="button" aria-label="Chiudi">x</button>
       </div>
+      <div class="agent-quick-chat__tabs" role="tablist" aria-label="Quick chat views">
+        <button class="agent-quick-chat__tab agent-quick-chat__tab--active" id="quick-chat-tab-chat" data-quick-chat-tab="chat" type="button" aria-pressed="true">Chat</button>
+        <button class="agent-quick-chat__tab" id="quick-chat-tab-discussion" data-quick-chat-tab="discussion" type="button" aria-pressed="false">Discussion</button>
+      </div>
       <ol class="agent-quick-chat__history" id="quick-chat-history" aria-live="polite"></ol>
+      <ol class="agent-quick-chat__history" id="quick-chat-discussion" aria-live="polite" hidden></ol>
       <div class="agent-quick-chat__composer">
         <input id="quick-chat-input" required minlength="3" maxlength="1000" autocomplete="off" placeholder="Scrivi un lavoro..." />
         <button type="submit">Invia</button>
@@ -278,6 +284,7 @@
             <div class="secret-status form-grid__wide">
               <span id="project-key-status">Progetto: non configurata</span>
               <span id="agent-key-status">Agente: non configurata</span>
+              <button class="button button--compact button--primary" id="save-api-key" type="button">Save selected key</button>
               <button class="button button--compact" id="delete-api-key" type="button">Rimuovi chiave selezionata</button>
             </div>
             <label><span>Environment fallback</span><input name="api_key_env" placeholder="OPENAI_API_KEY" /></label>
@@ -319,6 +326,98 @@
         <div class="dialog-actions dialog-actions--sticky">
           <button class="button" data-settings-close type="button">Cancel</button>
           <button class="button button--primary" id="save-agent-settings" type="submit">Save settings</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="agent-dialog agent-dialog--wide" id="system-settings-dialog" aria-labelledby="system-settings-title">
+      <form class="agent-form" id="system-settings-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="section-label">System</p>
+            <h2 id="system-settings-title">Global settings</h2>
+          </div>
+          <button class="dialog-close" data-system-settings-close type="button" aria-label="Close">×</button>
+        </div>
+
+        <section class="settings-section">
+          <div class="settings-section__heading">
+            <strong>Global model defaults</strong>
+            <small>Saved once and applied to all current and future agents.</small>
+          </div>
+          <div class="form-grid">
+            <label>
+              <span>Provider</span>
+              <select name="provider">
+                <option value="simulated">Native simulator</option>
+                <option value="openai">OpenAI</option>
+                <option value="openai-compatible">OpenAI-compatible</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="gemini">Google Gemini</option>
+                <option value="ollama">Ollama locale</option>
+              </select>
+            </label>
+            <label class="form-grid__wide">
+              <span>Model</span>
+              <div class="model-picker">
+                <select name="model_picker"></select>
+                <input name="model" required placeholder="gpt-5.5" />
+              </div>
+              <small id="system-model-help">Pick a recommended model or enter a custom model ID.</small>
+            </label>
+            <label class="form-grid__wide"><span>Base URL</span><input name="base_url" placeholder="https://api.example.com/v1" /></label>
+            <label>
+              <span>API key assignment</span>
+              <select name="api_key_scope">
+                <option value="project">Whole project</option>
+                <option value="agent">Agent fallback to project</option>
+              </select>
+            </label>
+            <label><span>Project API key</span><input name="project_api_key" type="password" autocomplete="new-password" placeholder="Leave empty to keep current key" /></label>
+            <div class="secret-status form-grid__wide">
+              <span id="system-project-key-status">Project: not configured</span>
+              <small>Agents without a personal key will use the project key automatically.</small>
+            </div>
+            <label><span>Environment fallback</span><input name="api_key_env" placeholder="OPENAI_API_KEY" /></label>
+            <label><span>Temperature</span><input name="temperature" type="number" min="0" max="2" step="0.1" /></label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="settings-section__heading">
+            <strong>System UI defaults</strong>
+            <small>Saved globally and restored when the runtime reconnects.</small>
+          </div>
+          <div class="form-grid">
+            <label>
+              <span>Theme</span>
+              <select name="theme">
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+              </select>
+            </label>
+            <label>
+              <span>Auto agents</span>
+              <select name="auto_agents">
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+            </label>
+            <label>
+              <span>Simulation speed</span>
+              <select name="simulation_speed">
+                <option value="1">1x</option>
+                <option value="2">2x</option>
+                <option value="4">4x</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <p class="form-error" id="system-settings-error" role="alert"></p>
+        <div class="dialog-actions dialog-actions--sticky">
+          <button class="button" data-system-settings-close type="button">Cancel</button>
+          <button class="button button--primary" id="save-system-settings" type="submit">Save global settings</button>
         </div>
       </form>
     </dialog>
@@ -489,7 +588,9 @@
 
         <div class="project-panel-tabs" role="tablist" aria-label="Project output views">
           <button class="project-panel-tab project-panel-tab--active" id="project-tab-output" type="button" data-panel-tab="output" aria-selected="true">Output</button>
-          <button class="project-panel-tab" id="project-tab-finished" type="button" data-panel-tab="finished" aria-selected="false">Job finiti</button>
+          <button class="project-panel-tab" id="project-tab-finished" type="button" data-panel-tab="finished" aria-selected="false">Jobs</button>
+          <button class="project-panel-tab" id="project-tab-memory" type="button" data-panel-tab="memory" aria-selected="false">Memory</button>
+          <button class="project-panel-tab" id="project-tab-threads" type="button" data-panel-tab="threads" aria-selected="false">Threads</button>
         </div>
         <div class="project-panel" data-project-panel="output">
           <div class="project-output-summary" id="project-output-summary"></div>
@@ -517,6 +618,35 @@
             <button class="project-job-filter" type="button" data-job-filter="failed">Failed</button>
           </div>
           <div class="project-job-list" id="project-job-list"></div>
+        </div>
+        <div class="project-panel" data-project-panel="memory" hidden>
+          <div class="wiki-proposal-toolbar">
+            <span id="wiki-proposal-count">No pending proposals</span>
+            <button class="button" id="memory-core-chat" type="button">Talk to Memory Core</button>
+            <button class="button" id="memory-core-settings" type="button">Memory settings</button>
+            <button class="button" id="refresh-wiki-proposals" type="button">Refresh</button>
+          </div>
+          <div class="wiki-proposal-list" id="wiki-proposal-list"></div>
+          <div class="wiki-page-toolbar">
+            <input id="wiki-search-query" type="search" maxlength="500" placeholder="Search canonical wiki pages" />
+            <button class="button" id="search-wiki-pages" type="button">Search</button>
+            <button class="button" id="refresh-wiki-pages" type="button">Pages</button>
+            <button class="button" id="run-wiki-maintenance" type="button">Maintain</button>
+          </div>
+          <div class="wiki-page-browser">
+            <div class="wiki-page-list" id="wiki-page-list"></div>
+            <pre class="wiki-page-content" id="wiki-page-content">Select a wiki page or run a search.</pre>
+          </div>
+        </div>
+        <div class="project-panel" data-project-panel="threads" hidden>
+          <div class="wiki-page-toolbar">
+            <span id="task-thread-count">No task discussions</span>
+            <button class="button" id="refresh-task-threads" type="button">Refresh</button>
+          </div>
+          <div class="wiki-page-browser">
+            <div class="wiki-page-list" id="task-thread-list"></div>
+            <pre class="wiki-page-content" id="task-thread-content">Select a task discussion thread.</pre>
+          </div>
         </div>
         <p class="form-error" id="project-error" role="alert"></p>
         <div class="dialog-actions">

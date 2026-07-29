@@ -36,6 +36,44 @@ alla postazione `Schedule Desk`; nella UI puoi premere `Schedule` per chiedergli
 di proporre orari, cron e follow-up. L'agente decide e spiega lo schedule, mentre
 il timer effettivo resta nel runtime nativo.
 
+## Shared LLM Wiki Memory
+
+The runtime now has a wiki-style shared memory path inspired by the `llm wiki`
+pattern. Agent prompts can retrieve relevant markdown sections from
+`data/wiki`, while private facts and preferences stay in each agent's SQLite
+memory.
+
+Completed non-chat tasks create reviewable markdown proposals in
+`data/wiki/proposals`. Each proposal includes the source task, agent, target
+page, confidence score, conflict flag and proposed durable knowledge. From the
+game UI, click `Sync memory` to open the `Memory` tab, review pending proposals,
+then approve or reject them.
+If a proposal is marked as conflicting, approval requires an explicit reviewer
+reason containing `override conflict`; this prevents accidental promotion of
+contradictory project knowledge.
+
+When a proposal is approved, it is archived under
+`data/wiki/proposals/reviewed` and appended into its canonical target page, for
+example `data/wiki/knowledge-analysis.md`. Rejected proposals are archived only,
+so they do not affect future agent prompts.
+
+The same `Memory` tab can browse canonical wiki pages, search reviewed wiki
+sections and run maintenance. Maintenance deduplicates repeated sections and
+regenerates `data/wiki/index.md`. You can also run it through:
+
+```bash
+curl -X POST http://localhost:8000/api/wiki/maintenance/run
+```
+
+For long-running sessions, optional scheduled maintenance is available:
+
+```bash
+AGENT_LAB_WIKI_MAINTENANCE_INTERVAL_SECONDS=3600 ./run.command --no-browser
+```
+
+Retrieval is local and deterministic: it uses section-level TF-IDF-style scoring
+with phrase boosts, so it works offline without vector database or embedding API.
+
 ## Layout del gioco
 
 La barra superiore include il pulsante `Editor`. Quando lo premi, la UI passa a
