@@ -8,12 +8,16 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
+from .discord_projects import DiscordAttachment, DiscordProjectBridge, PendingDiscordProjectJob
 from .engine import AgentRuntime
+from .models import SystemSettings
 from .models import RuntimeEvent, TaskCreate
+from .project_gateway import ProjectGateway
 
 
 LOGGER = logging.getLogger("agent_lab.discord")
 SendMessage = Callable[[str], Awaitable[None]]
+DiscordAttachmentType = Any
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,21 @@ class DiscordGatewayConfig:
             allowed_channel_ids=parse_id_set(os.environ.get("AGENT_LAB_DISCORD_ALLOWED_CHANNELS", "")),
             enable_message_content=parse_bool(os.environ.get("AGENT_LAB_DISCORD_MESSAGE_CONTENT", "")),
             sync_commands=not parse_bool(os.environ.get("AGENT_LAB_DISCORD_SKIP_COMMAND_SYNC", "")),
+        )
+
+    @classmethod
+    def from_system_settings(cls, settings: SystemSettings, token: str) -> "DiscordGatewayConfig":
+        discord = getattr(settings, "discord", None)
+        if not discord or not bool(getattr(discord, "enabled", False)):
+            return cls()
+        return cls(
+            token=str(token or "").strip(),
+            command_prefix=str(getattr(discord, "command_prefix", "!") or "!").strip() or "!",
+            default_agent_id=str(getattr(discord, "default_agent_id", "") or "").strip(),
+            allowed_guild_ids={int(item) for item in list(getattr(discord, "allowed_guild_ids", []) or []) if int(item) > 0},
+            allowed_channel_ids={int(item) for item in list(getattr(discord, "allowed_channel_ids", []) or []) if int(item) > 0},
+            enable_message_content=bool(getattr(discord, "message_content", False)),
+            sync_commands=bool(getattr(discord, "sync_commands", True)),
         )
 
 
@@ -63,13 +82,22 @@ class DiscordGateway:
     def __init__(
         self,
         runtime: AgentRuntime,
+        project_gateway: Optional[ProjectGateway] = None,
+        project_bridge: Optional[DiscordProjectBridge] = None,
         config: Optional[DiscordGatewayConfig] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
+        self.project_gateway = project_gateway
         self.config = config or DiscordGatewayConfig.from_env()
         self.logger = logger or LOGGER
+        self.project_bridge = project_bridge
+        if self.project_bridge is None and self.project_gateway is not None:
+            from pathlib import Path
+
+            self.project_bridge = DiscordProjectBridge(Path(__file__).resolve().parent.parent, self.project_gateway)
         self.pending: dict[str, PendingDiscordTask] = {}
+        self.pending_project_jobs: dict[str, tuple[PendingDiscordProjectJob, SendMessage]] = {}
         self.channel_defaults: dict[str, str] = {}
         self.connected = False
         self.enabled = bool(self.config.token)
@@ -85,6 +113,7 @@ class DiscordGateway:
             "enabled": self.enabled,
             "connected": self.connected,
             "pendingTasks": len(self.pending),
+            "pendingProjectJobs": len(self.pending_project_jobs),
             "messageContent": self.config.enable_message_content,
             "allowedGuilds": sorted(self.config.allowed_guild_ids),
             "allowedChannels": sorted(self.config.allowed_channel_ids),
@@ -108,6 +137,7 @@ class DiscordGateway:
             return
 
         self._discord = discord
+        globals()["DiscordAttachmentType"] = discord.Attachment
         intents = discord.Intents.none()
         intents.guilds = True
         if self.config.enable_message_content:
@@ -196,8 +226,127 @@ class DiscordGateway:
                 allowed_mentions=discord.AllowedMentions.none(),
             )
 
+        @bot.tree.command(name="chat", description="Chat with the default Agent Lab agent for this channel")
+        @app_commands.describe(prompt="Message for the default agent")
+        async def chat_command(interaction: Any, prompt: str) -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            agent_id = gateway.channel_defaults.get(str(interaction.channel_id), gateway.config.default_agent_id).strip()
+            if not agent_id:
+                await interaction.response.send_message(
+                    "No default agent is configured for this channel. Use `/use agent:<id>` first or run `/ask agent:<id> prompt:<message>`.",
+                    ephemeral=True,
+                )
+                return
+            await interaction.response.defer(thinking=True)
+
+            async def send(content: str) -> None:
+                for chunk in chunk_discord_message(content):
+                    await interaction.followup.send(chunk, allowed_mentions=discord.AllowedMentions.none())
+
+            try:
+                task = await gateway.submit_chat(agent_id, prompt, send)
+            except ValueError as error:
+                await interaction.followup.send(str(error), ephemeral=True)
+                return
+            await interaction.followup.send(
+                f"Queued `{task.id}` for `{agent_id}`. I will post the answer here.",
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+
+        @bot.tree.command(name="vinted_upload", description="Prepare or publish a Vinted upload job from Discord")
+        @app_commands.describe(
+            title="Listing title",
+            description="Listing description",
+            category="Vinted category label",
+            brand="Brand label",
+            condition="Condition label",
+            material="Material label",
+            price="Listing price. Leave empty to take it from a metadata attachment.",
+            photo1="First product photo",
+            photo2="Optional second product photo",
+            photo3="Optional third product photo",
+            photo4="Optional fourth product photo",
+            metadata="Optional text/JSON attachment with fields like price/category/brand",
+            submit="Publish instead of prepare only",
+            enhance_photos="Improve attached photos with OpenAI before uploading to Vinted",
+            agent="Optional agent id to attribute the job to",
+        )
+        async def vinted_upload_command(
+            interaction: Any,
+            title: str,
+            description: str,
+            category: str,
+            brand: str,
+            condition: str,
+            material: str,
+            photo1: DiscordAttachmentType,
+            price: str = "",
+            photo2: Optional[DiscordAttachmentType] = None,
+            photo3: Optional[DiscordAttachmentType] = None,
+            photo4: Optional[DiscordAttachmentType] = None,
+            metadata: Optional[DiscordAttachmentType] = None,
+            submit: bool = False,
+            enhance_photos: bool = False,
+            agent: str = "",
+        ) -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            if gateway.project_bridge is None:
+                await interaction.response.send_message("Project upload bridge is not configured.", ephemeral=True)
+                return
+            await interaction.response.defer(thinking=True)
+
+            async def send(content: str) -> None:
+                for chunk in chunk_discord_message(content):
+                    await interaction.followup.send(chunk, allowed_mentions=discord.AllowedMentions.none())
+
+            attachments = [
+                DiscordAttachment(
+                    url=str(getattr(item, "url", "") or "").strip(),
+                    filename=str(getattr(item, "filename", "") or "").strip(),
+                    content_type=str(getattr(item, "content_type", "") or "").strip(),
+                )
+                for item in (photo1, photo2, photo3, photo4, metadata)
+                if item is not None
+            ]
+            requested_agent = agent.strip() or gateway.channel_defaults.get(str(interaction.channel_id), gateway.config.default_agent_id)
+            try:
+                job = await gateway.project_bridge.submit_vinted_upload_payload(
+                    payload={
+                        "title": title,
+                        "description": description,
+                        "price": price,
+                        "category": category,
+                        "brand": brand,
+                        "condition": condition,
+                        "material": material,
+                        "submit": submit,
+                        "enhance_photos": enhance_photos,
+                    },
+                    attachments=attachments,
+                    agent_id=requested_agent,
+                )
+            except ValueError as error:
+                await interaction.followup.send(str(error), ephemeral=True)
+                return
+            gateway.pending_project_jobs[job.id] = (
+                PendingDiscordProjectJob(
+                    job_id=job.id,
+                    project_id=job.project_id,
+                    action=job.action,
+                    agent_id=requested_agent,
+                ),
+                send,
+            )
+            await interaction.followup.send(
+                gateway.project_bridge.format_job_queued(job),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+
         ask_command.autocomplete("agent")(agent_autocomplete)
         use_command.autocomplete("agent")(agent_autocomplete)
+        vinted_upload_command.autocomplete("agent")(agent_autocomplete)
 
         self._event_queue = self.runtime.subscribe()
         self._event_task = asyncio.create_task(self._event_loop(), name="discord-runtime-events")
@@ -246,14 +395,22 @@ class DiscordGateway:
         return task
 
     async def _event_loop(self) -> None:
-        assert self._event_queue is not None
+        queue = self._event_queue
+        if queue is None:
+            return
         while True:
-            event = await self._event_queue.get()
+            event = await queue.get()
             await self._handle_runtime_event(event)
 
     async def _handle_runtime_event(self, event: RuntimeEvent) -> None:
         task_id = event.task_id or ""
         if not task_id or task_id not in self.pending:
+            job_id = event.entity_id or ""
+            if job_id and job_id in self.pending_project_jobs:
+                pending, send = self.pending_project_jobs[job_id]
+                if event.type in {"project.job.completed", "project.job.failed"}:
+                    self.pending_project_jobs.pop(job_id, None)
+                await send(DiscordProjectBridge.format_job_event(event.type, event.data.get("job", {})))
             return
 
         if event.type == "protocol.message":
@@ -312,17 +469,52 @@ class DiscordGateway:
             return
 
         content = str(getattr(message, "content", "") or "").strip()
-        if not content:
-            return
         mentioned = self._bot is not None and self._bot.user in getattr(message, "mentions", [])
         content = self._strip_bot_mention(content).strip() if mentioned else content
         default_agent = self.channel_defaults.get(str(channel_id), self.config.default_agent_id)
         parsed = parse_text_command(content, self.config.command_prefix, default_agent, mentioned)
-        if parsed is None:
-            return
-
         async def send(reply: str) -> None:
             await self._send_channel_message(channel, reply)
+
+        if (content or getattr(message, "attachments", None)) and parsed is None and self.project_bridge is not None:
+            project_command = self.project_bridge.parse_vinted_upload_text_command(
+                content,
+                prefix=self.config.command_prefix,
+                default_agent_id=default_agent,
+                mentioned=mentioned,
+            )
+            if project_command is not None:
+                try:
+                    job = await self.project_bridge.submit_vinted_upload(
+                        content=str((project_command.payload or {}).get("body", "") or ""),
+                        attachments=[
+                            DiscordAttachment(
+                                url=str(getattr(item, "url", "") or "").strip(),
+                                filename=str(getattr(item, "filename", "") or "").strip(),
+                                content_type=str(getattr(item, "content_type", "") or "").strip(),
+                            )
+                            for item in list(getattr(message, "attachments", []) or [])
+                        ],
+                        agent_id=project_command.agent_id or default_agent,
+                        enhance_photos=bool((project_command.payload or {}).get("enhance_photos", False)),
+                    )
+                except ValueError as error:
+                    await send(str(error))
+                    return
+                self.pending_project_jobs[job.id] = (
+                    PendingDiscordProjectJob(
+                        job_id=job.id,
+                        project_id=job.project_id,
+                        action=job.action,
+                        agent_id=project_command.agent_id or default_agent,
+                    ),
+                    send,
+                )
+                await send(self.project_bridge.format_job_queued(job))
+                return
+
+        if parsed is None:
+            return
 
         if parsed.action == "agents":
             await send(self.format_agents())
@@ -341,6 +533,20 @@ class DiscordGateway:
                 await send(str(error))
                 return
             await send(f"Queued `{task.id}` for `{parsed.agent_id}`. I will post the answer here.")
+            return
+        if parsed.action == "chat":
+            agent_id = self.channel_defaults.get(str(channel_id), self.config.default_agent_id).strip()
+            if not agent_id:
+                await send(
+                    "No default agent is configured for this channel. Use `!use <agent_id>` first or send `!ask <agent_id> <message>`."
+                )
+                return
+            try:
+                task = await self.submit_chat(agent_id, parsed.prompt, send)
+            except ValueError as error:
+                await send(str(error))
+                return
+            await send(f"Queued `{task.id}` for `{agent_id}`. I will post the answer here.")
 
     async def _send_channel_message(self, channel: Any, content: str) -> None:
         if channel is None:
@@ -371,7 +577,8 @@ class DiscordGateway:
                 f"({agent.model.provider}:{agent.model.model})"
             )
         lines.append("")
-        lines.append("Use `/ask agent:<id> prompt:<message>` to talk with one agent.")
+        lines.append("Use `/chat prompt:<message>` to talk with the default agent for this channel.")
+        lines.append("Use `/ask agent:<id> prompt:<message>` to talk with one specific agent.")
         return "\n".join(lines)
 
     def format_task_result(self, task_id: str, agent_id: str, payload: Any) -> str:
@@ -413,6 +620,17 @@ def parse_text_command(
 
     if text == f"{prefix}agents" or (mentioned and text == "agents"):
         return ParsedDiscordCommand(action="agents")
+
+    if text == f"{prefix}chat" or text.startswith(f"{prefix}chat "):
+        body = text[len(f"{prefix}chat") :].strip()
+        if body:
+            return ParsedDiscordCommand(action="chat", prompt=body)
+        return None
+    if mentioned and (text == "chat" or text.startswith("chat ")):
+        body = text[4:].strip()
+        if body:
+            return ParsedDiscordCommand(action="chat", prompt=body)
+        return None
 
     use_prefix = f"{prefix}use "
     if text.startswith(use_prefix):
