@@ -9,6 +9,7 @@ from typing import Any
 
 DEFAULT_VINTED_AI_MODEL = "gpt-image-2"
 DEFAULT_VINTED_AI_SIZE = "1024x1536"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 VINTED_AI_SUPPORTED_SIZES = (
     "1024x1024",
     "1024x1536",
@@ -86,7 +87,7 @@ def generate_vinted_ai_variants(
                 b64_payload = item.get("b64_json")
             if not b64_payload:
                 raise RuntimeError("Missing b64_json in OpenAI image response")
-            image_bytes = base64.b64decode(str(b64_payload))
+            image_bytes = _strip_png_metadata(base64.b64decode(str(b64_payload)))
             output_path = target_dir / f"ai_variant_{index:02d}.png"
             output_path.write_bytes(image_bytes)
             generated_paths.append(str(output_path.resolve()))
@@ -173,3 +174,37 @@ def _build_openai_client(*, api_key: str, base_url: str | None) -> Any:
     if base_url:
         client_kwargs["base_url"] = base_url
     return OpenAI(**client_kwargs)
+
+
+def _strip_png_metadata(image_bytes: bytes) -> bytes:
+    if not image_bytes.startswith(PNG_SIGNATURE):
+        return image_bytes
+    offset = len(PNG_SIGNATURE)
+    chunks: list[bytes] = [PNG_SIGNATURE]
+    data_length = len(image_bytes)
+    while offset + 8 <= data_length:
+        length = int.from_bytes(image_bytes[offset:offset + 4], "big")
+        offset += 4
+        chunk_type = image_bytes[offset:offset + 4]
+        offset += 4
+        chunk_data = image_bytes[offset:offset + length]
+        offset += length
+        chunk_crc = image_bytes[offset:offset + 4]
+        offset += 4
+        if len(chunk_type) < 4 or len(chunk_data) != length or len(chunk_crc) != 4:
+            break
+        if _should_keep_png_chunk(chunk_type):
+            chunks.append(length.to_bytes(4, "big"))
+            chunks.append(chunk_type)
+            chunks.append(chunk_data)
+            chunks.append(chunk_crc)
+        if chunk_type == b"IEND":
+            break
+    return b"".join(chunks)
+
+
+def _should_keep_png_chunk(chunk_type: bytes) -> bool:
+    if len(chunk_type) != 4:
+        return False
+    # Ancillary chunks carry metadata; keep only critical chunks such as IHDR, IDAT, PLTE and IEND.
+    return not bool(chunk_type[0] & 0x20)

@@ -40,9 +40,10 @@ from .protocols import PROTOCOLS
 from .project_gateway import ProjectGateway, ProjectJob, ProjectJobCreate
 from .logging_config import configure_logging
 from .secrets import SecretStore
-from .discord_gateway import DiscordGateway
+from .discord_gateway import DiscordGateway, DiscordGatewayConfig
 from .briefings import MorningBriefingScheduler
 from .vinted_ai import generate_vinted_ai_variants, DEFAULT_VINTED_AI_MODEL, DEFAULT_VINTED_AI_SIZE
+from .error_reporting import RuntimeErrorReporter
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -56,10 +57,14 @@ async def lifespan(app: FastAPI):
     runtime = AgentRuntime(
         DATA_DIR / "runtime.db", PROJECT_ROOT / "config" / "agents.json", secrets=secrets
     )
+    error_reporter = RuntimeErrorReporter(PROJECT_ROOT, runtime.get_system_settings)
     app.state.runtime = runtime
     app.state.secrets = secrets
-    app.state.project_gateway = ProjectGateway(PROJECT_ROOT, runtime.publish, runtime.store)
-    app.state.discord_gateway = DiscordGateway(runtime)
+    app.state.error_reporter = error_reporter
+    app.state.project_gateway = ProjectGateway(
+        PROJECT_ROOT, runtime.publish, runtime.store, error_reporter=error_reporter
+    )
+    app.state.discord_gateway = build_discord_gateway()
     app.state.ai_news_briefing = MorningBriefingScheduler(runtime)
     app.state.wiki_maintenance_task = _start_wiki_maintenance_task(runtime)
     await app.state.ai_news_briefing.start()
@@ -102,6 +107,13 @@ class ClientLog(BaseModel):
     level: str = Field(default="error", pattern=r"^(info|warning|error)$")
     message: str = Field(min_length=1, max_length=4000)
     context: dict[str, object] = Field(default_factory=dict)
+
+
+class ErrorReportRequest(BaseModel):
+    source: str = Field(min_length=2, max_length=120)
+    message: str = Field(min_length=1, max_length=4000)
+    context: dict[str, object] = Field(default_factory=dict)
+    screenshot_data_url: str = Field(default="", max_length=20_000_000)
 
 
 class SecretValue(BaseModel):
@@ -157,6 +169,20 @@ async def log_http_request(request: Request, call_next):
         response = await call_next(request)
     except Exception:
         LOGGER.exception("http_failed method=%s path=%s", request.method, request.url.path)
+        reporter = error_reporter()
+        if reporter and request.url.path != "/api/diagnostics/report-error":
+            try:
+                await reporter.report(
+                    source="runtime.http",
+                    message="Unhandled runtime exception",
+                    context={
+                        "method": request.method,
+                        "path": request.url.path,
+                        "phase": "middleware",
+                    },
+                )
+            except Exception:
+                LOGGER.exception("http_failure_report_failed path=%s", request.url.path)
         raise
     elapsed_ms = (time.perf_counter() - started) * 1000
     LOGGER.info(
@@ -189,6 +215,26 @@ def discord_gateway() -> DiscordGateway | None:
 
 def ai_news_briefing() -> MorningBriefingScheduler | None:
     return getattr(app.state, "ai_news_briefing", None)
+
+
+def error_reporter() -> RuntimeErrorReporter | None:
+    return getattr(app.state, "error_reporter", None)
+
+
+def build_discord_gateway() -> DiscordGateway:
+    settings = runtime().get_system_settings()
+    token = str(secrets().get_discord_bot_token() or "").strip()
+    config = DiscordGatewayConfig.from_system_settings(settings, token)
+    return DiscordGateway(runtime(), project_gateway=project_gateway(), config=config)
+
+
+async def reload_discord_gateway() -> DiscordGateway:
+    current = discord_gateway()
+    if current is not None:
+        await current.shutdown()
+    app.state.discord_gateway = build_discord_gateway()
+    await app.state.discord_gateway.start()
+    return app.state.discord_gateway
 
 
 @app.get("/api/health")
@@ -228,6 +274,21 @@ async def client_log(entry: ClientLog) -> dict[str, bool]:
     return {"accepted": True}
 
 
+@app.post("/api/diagnostics/report-error", status_code=202)
+async def report_client_error(entry: ErrorReportRequest) -> dict[str, object]:
+    LOGGER.error("client_error_report source=%s message=%s context=%s", entry.source, entry.message, entry.context)
+    reporter = error_reporter()
+    if reporter is None:
+        return {"accepted": False, "reason": "reporter_unavailable"}
+    result = await reporter.report(
+        source=entry.source,
+        message=entry.message,
+        context=entry.context,
+        screenshot_data_url=entry.screenshot_data_url,
+    )
+    return {"accepted": True, "report": result}
+
+
 @app.get("/api/agents", response_model=list[AgentSnapshot])
 async def list_agents() -> list[AgentSnapshot]:
     return runtime().list_agents()
@@ -240,7 +301,9 @@ async def get_system_settings() -> SystemSettings:
 
 @app.put("/api/system-settings", response_model=SystemSettings)
 async def update_system_settings(settings: SystemSettings) -> SystemSettings:
-    return await runtime().update_system_settings(settings)
+    updated = await runtime().update_system_settings(settings)
+    await reload_discord_gateway()
+    return updated
 
 
 @app.get("/api/secrets/status")
@@ -284,6 +347,25 @@ async def delete_agent_secret(agent_id: str) -> dict[str, object]:
     secrets().delete_agent(agent_id)
     LOGGER.info("secret_deleted scope=agent agent=%s", agent_id)
     return secrets().status(agent_id)
+
+
+@app.put("/api/secrets/discord-bot")
+async def set_discord_bot_secret(value: SecretValue) -> dict[str, object]:
+    try:
+        secrets().set_discord_bot_token(value.api_key)
+        await reload_discord_gateway()
+        LOGGER.info("secret_updated scope=discord-bot")
+        return secrets().status()
+    except (RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.delete("/api/secrets/discord-bot")
+async def delete_discord_bot_secret() -> dict[str, object]:
+    secrets().delete_discord_bot_token()
+    await reload_discord_gateway()
+    LOGGER.info("secret_deleted scope=discord-bot")
+    return secrets().status()
 
 
 @app.post("/api/vinted-ai/generate", response_model=VintedAIGenerationResponse)

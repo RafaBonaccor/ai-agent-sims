@@ -64,10 +64,27 @@ class SystemUiSettings(BaseModel):
     simulation_speed: int = Field(default=1, ge=1, le=4)
 
 
+class DiagnosticsSettings(BaseModel):
+    discord_error_notifications: bool = False
+    discord_webhook_url: str = Field(default="", max_length=2000)
+
+
+class DiscordBotSettings(BaseModel):
+    enabled: bool = False
+    command_prefix: str = Field(default="!", min_length=1, max_length=8)
+    default_agent_id: str = Field(default="", max_length=80)
+    allowed_guild_ids: list[int] = Field(default_factory=list)
+    allowed_channel_ids: list[int] = Field(default_factory=list)
+    message_content: bool = False
+    sync_commands: bool = True
+
+
 class SystemSettings(BaseModel):
     configured: bool = False
     model: ModelSettings = Field(default_factory=ModelSettings)
     ui: SystemUiSettings = Field(default_factory=SystemUiSettings)
+    diagnostics: DiagnosticsSettings = Field(default_factory=DiagnosticsSettings)
+    discord: DiscordBotSettings = Field(default_factory=DiscordBotSettings)
 
 
 class AgentDefinition(BaseModel):

@@ -226,6 +226,7 @@ class DiscordGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(parsed)
         self.assertEqual("vinted.upload", parsed.action)
         self.assertEqual("researcher", parsed.agent_id)
+        self.assertTrue(bool(parsed.payload["enhance_photos"]))
 
     def test_parse_codex_model_text_command(self):
         parsed = parse_text_command("!codex-model set gpt-5.1-codex")

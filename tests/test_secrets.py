@@ -23,13 +23,21 @@ class SecretStoreTests(unittest.TestCase):
     def test_encrypts_and_recovers_project_and_agent_keys(self):
         self.secrets.set_project("project-secret-key")
         self.secrets.set_agent("analyst", "agent-secret-key")
+        self.secrets.set_discord_bot_token("discord-bot-token-1234567890")
 
         self.assertEqual("project-secret-key", self.secrets.get_project())
         self.assertEqual("agent-secret-key", self.secrets.get_agent("analyst"))
+        self.assertEqual("discord-bot-token-1234567890", self.secrets.get_discord_bot_token())
         stored = (self.root / "secrets.json").read_text(encoding="utf-8")
         self.assertNotIn("project-secret-key", stored)
         self.assertNotIn("agent-secret-key", stored)
+        self.assertNotIn("discord-bot-token-1234567890", stored)
         self.assertIn("local-test", stored)
+
+    def test_status_reports_discord_bot_token(self):
+        self.assertFalse(self.secrets.status().get("discord_bot_configured"))
+        self.secrets.set_discord_bot_token("discord-bot-token-1234567890")
+        self.assertTrue(self.secrets.status().get("discord_bot_configured"))
 
     def test_executor_resolves_selected_key_scope(self):
         self.secrets.set_project("project-secret-key")

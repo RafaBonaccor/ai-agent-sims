@@ -191,8 +191,19 @@ export class RuntimeClient {
     });
   }
 
+  setDiscordBotSecret(apiKey) {
+    return this.request("/api/secrets/discord-bot", {
+      method: "PUT",
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+  }
+
   deleteProjectSecret() {
     return this.request("/api/secrets/project", { method: "DELETE" });
+  }
+
+  deleteDiscordBotSecret() {
+    return this.request("/api/secrets/discord-bot", { method: "DELETE" });
   }
 
   setAgentSecret(agentId, apiKey) {
@@ -252,6 +263,17 @@ export class RuntimeClient {
       body: JSON.stringify({ level, message: String(message), context }),
       keepalive: true,
     }).catch(() => undefined);
+  }
+
+  reportError(payload) {
+    return fetch("/api/diagnostics/report-error", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? {}),
+      keepalive: true,
+    })
+      .then((response) => response.json().catch(() => ({ accepted: response.ok })))
+      .catch(() => undefined);
   }
 }
 

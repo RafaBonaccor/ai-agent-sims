@@ -2,12 +2,15 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 from agent_runtime import server
 from agent_runtime.briefings import MorningBriefingConfig, MorningBriefingScheduler
 from agent_runtime.engine import AgentRuntime
 from agent_runtime.knowledge import KnowledgeWiki
-from agent_runtime.models import AgentDefinition, TaskCreate
+from agent_runtime.models import AgentDefinition, DiscordBotSettings, SystemSettings, TaskCreate
+from agent_runtime.project_gateway import ProjectGateway
+from agent_runtime.secrets import SecretStore
 
 
 class ServerTests(unittest.IsolatedAsyncioTestCase):
@@ -45,12 +48,18 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         server.app.state.runtime = self.runtime
+        server.app.state.secrets = SecretStore(Path(self.temporary_directory.name) / "data" / "secrets.json", backend="local-test")
+        server.app.state.project_gateway = ProjectGateway(Path("/Users/rafael/Documents/Personal_workspace/ai-agent-sims"), self.runtime.publish, self.runtime.store)
+        server.app.state.error_reporter = None
         server.app.state.ai_news_briefing = MorningBriefingScheduler(
             self.runtime,
             MorningBriefingConfig(enabled=True, agent_id="ai-news-navigator"),
         )
+        server.app.state.discord_gateway = server.build_discord_gateway()
 
     async def asyncTearDown(self):
+        await server.app.state.discord_gateway.shutdown()
+        await server.app.state.project_gateway.shutdown()
         await server.app.state.ai_news_briefing.shutdown()
         await self.runtime.shutdown()
         self.temporary_directory.cleanup()
@@ -160,6 +169,47 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         search_index = paths.index("/api/wiki/search")
         catchall_index = paths.index("/api/wiki/pages/{name:path}")
         self.assertLess(search_index, catchall_index)
+
+    async def test_report_client_error_uses_runtime_error_reporter(self):
+        reported: list[dict] = []
+
+        class FakeReporter:
+            async def report(self, **payload):
+                reported.append(payload)
+                return {"ok": True}
+
+        server.app.state.error_reporter = FakeReporter()
+        result = await server.report_client_error(
+            server.ErrorReportRequest(
+                source="ui.window.error",
+                message="Unhandled browser error",
+                context={"phase": "ui"},
+                screenshot_data_url="data:image/png;base64,ZmFrZQ==",
+            )
+        )
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(1, len(reported))
+        self.assertEqual("ui.window.error", reported[0]["source"])
+        self.assertEqual("Unhandled browser error", reported[0]["message"])
+
+    async def test_set_discord_bot_secret_reloads_gateway_and_persists_token(self):
+        await server.update_system_settings(
+            SystemSettings(discord=DiscordBotSettings(enabled=True, message_content=True))
+        )
+        mocked_reload = AsyncMock()
+        original_reload = server.reload_discord_gateway
+        server.reload_discord_gateway = mocked_reload
+        try:
+            result = await server.set_discord_bot_secret(
+                server.SecretValue(api_key="discord-bot-token-1234567890")
+            )
+        finally:
+            server.reload_discord_gateway = original_reload
+
+        self.assertTrue(result["discord_bot_configured"])
+        self.assertEqual("discord-bot-token-1234567890", server.app.state.secrets.get_discord_bot_token())
+        mocked_reload.assert_awaited_once()
 
 
 if __name__ == "__main__":

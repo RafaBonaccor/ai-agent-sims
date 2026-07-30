@@ -31,6 +31,7 @@ class SecretStore:
         return {
             "project_configured": bool(self.data.get("project")),
             "agent_configured": bool(agent_id and agents.get(agent_id)),
+            "discord_bot_configured": bool(self.data.get("discord_bot")),
             "backend": self.backend,
         }
 
@@ -40,11 +41,17 @@ class SecretStore:
     def get_agent(self, agent_id: str) -> Optional[str]:
         return self._decrypt_optional(self.data.get("agents", {}).get(agent_id))
 
+    def get_discord_bot_token(self) -> Optional[str]:
+        return self._decrypt_optional(self.data.get("discord_bot"))
+
     def set_project(self, value: str) -> None:
         self._set("project", None, value)
 
     def set_agent(self, agent_id: str, value: str) -> None:
         self._set("agents", agent_id, value)
+
+    def set_discord_bot_token(self, value: str) -> None:
+        self._set_named("discord_bot", value, label="Discord bot token", minimum_length=20, maximum_length=4096)
 
     def delete_project(self) -> None:
         with self.lock:
@@ -56,6 +63,12 @@ class SecretStore:
         with self.lock:
             stored = self.data.setdefault("agents", {}).pop(agent_id, None)
             self._delete_stored(stored)
+            self._save()
+
+    def delete_discord_bot_token(self) -> None:
+        with self.lock:
+            self._delete_stored(self.data.get("discord_bot"))
+            self.data["discord_bot"] = ""
             self._save()
 
     def _set(self, section: str, agent_id: Optional[str], value: str) -> None:
@@ -70,14 +83,24 @@ class SecretStore:
                 self.data.setdefault(section, {})[agent_id] = encrypted
             self._save()
 
+    def _set_named(self, key: str, value: str, *, label: str, minimum_length: int, maximum_length: int) -> None:
+        value = value.strip()
+        if len(value) < minimum_length or len(value) > maximum_length:
+            raise ValueError(f"{label} must contain between {minimum_length} and {maximum_length} characters")
+        encrypted = self._protect(value, key)
+        with self.lock:
+            self.data[key] = encrypted
+            self._save()
+
     def _load(self) -> dict:
         if not self.path.exists():
-            return {"version": 2, "project": "", "agents": {}}
+            return {"version": 3, "project": "", "agents": {}, "discord_bot": ""}
         payload = json.loads(self.path.read_text(encoding="utf-8"))
         return {
-            "version": int(payload.get("version", 1) or 1),
+            "version": int(payload.get("version", 3) or 3),
             "project": payload.get("project", ""),
             "agents": payload.get("agents", {}),
+            "discord_bot": payload.get("discord_bot", ""),
         }
 
     def _save(self) -> None:

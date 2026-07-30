@@ -711,18 +711,18 @@ class DiscordGateway:
         return await self.codex_bridge.ask(channel_key, prompt)
 
     async def send_codex_result(self, send: SendMessage, result: Any) -> None:
-        messages = list(getattr(result, "messages", []) or [])
         final_response = str(getattr(result, "final_response", "") or "").strip()
-        if messages:
-            for message in messages:
-                formatted = self._format_codex_message(str(message))
-                for chunk in chunk_discord_message(formatted):
-                    await send(chunk)
-            return
         if final_response:
             for chunk in chunk_discord_message(final_response):
                 await send(chunk)
             return
+        messages = list(getattr(result, "messages", []) or [])
+        if messages:
+            fallback = str(messages[-1] or "").strip()
+            if fallback:
+                for chunk in chunk_discord_message(self._format_codex_message(fallback)):
+                    await send(chunk)
+                return
         await send("(empty)")
 
     @staticmethod

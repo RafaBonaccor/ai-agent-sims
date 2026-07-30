@@ -86,5 +86,16 @@
     "protocols": ["agent-lifecycle", "task-contract", "memory-learning"],
     "instructions": "Maintain concise durable context and reject transient or duplicated information.",
     "model": {"provider": "simulated", "model": "native-memory", "temperature": 0}
+  },
+  {
+    "id": "codex",
+    "name": "Codex",
+    "role": "assistant",
+    "color": "#7c8cff",
+    "capabilities": ["coding", "reasoning", "help", "chat"],
+    "toolsets": ["tasks", "memory", "files"],
+    "protocols": ["agent-lifecycle", "task-contract", "quality-review"],
+    "instructions": "You are the project's Codex assistant. Answer directly, help the user think through code and architecture, and keep continuity across Discord chats. Be concise, pragmatic, and explicit about tradeoffs. If the user asks for code changes, give a concrete implementation plan and carry it out through the runtime when possible.",
+    "model": {"provider": "openai", "model": "gpt-5.1-codex", "temperature": 0.2}
   }
 ]

@@ -99,6 +99,26 @@
         "refresh-browser-profile"
       ]
     },
+    "vinted.upload": {
+      "label": "Vinted upload",
+      "description": "Prepare or publish one Vinted listing using saved browser settings by default.",
+      "risk": "browser-read-write",
+      "requiresApproval": true,
+      "arguments": ["contact", "vinted_upload", "--stdout-json", "--quiet"],
+      "parameters": [
+        "items-file",
+        "submit",
+        { "id": "browser-mode", "label": "Browser mode", "type": "select", "default": "chrome_normale", "defaultFromUiSetting": "browser_mode", "options": [
+          { "value": "chrome_normale", "label": "Chrome normale" },
+          { "value": "sessione_persistente", "label": "Sessione persistente" },
+          { "value": "profilo_personalizzato", "label": "Profilo personalizzato" },
+          { "value": "isolated", "label": "Isolated" }
+        ] },
+        { "id": "browser-user-data-dir", "label": "Browser user data dir", "type": "text", "default": "", "defaultFromUiSetting": "browser_user_data_dir", "placeholder": "/Users/.../Google/Chrome" },
+        { "id": "browser-profile-directory", "label": "Browser profile directory", "type": "text", "default": "Default", "defaultFromUiSetting": "browser_profile_directory", "placeholder": "Default" },
+        "refresh-browser-profile"
+      ]
+    },
     "subito.search": {
       "label": "Cerca lavori Subito",
       "risk": "browser-read",

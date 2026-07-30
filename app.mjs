@@ -73,6 +73,7 @@ const systemSettingsDialog = document.querySelector("#system-settings-dialog");
 const systemSettingsForm = document.querySelector("#system-settings-form");
 const systemSettingsError = document.querySelector("#system-settings-error");
 const systemProjectKeyStatus = document.querySelector("#system-project-key-status");
+const systemDiscordBotStatus = document.querySelector("#system-discord-bot-status");
 const agentSettingsDialog = document.querySelector("#agent-settings-dialog");
 const agentSettingsForm = document.querySelector("#agent-settings-form");
 const agentSettingsError = document.querySelector("#agent-settings-error");
@@ -5220,6 +5221,56 @@ function setRuntimeConnection(connected) {
   runtimeStatus.classList.toggle("live-status--offline", !connected);
 }
 
+function visibleDialogIds() {
+  return Array.from(document.querySelectorAll("dialog[open]"))
+    .map((dialog) => dialog.id)
+    .filter(Boolean);
+}
+
+function captureGameScreenshotDataUrl() {
+  try {
+    if (!canvas || typeof canvas.toDataURL !== "function") {
+      return "";
+    }
+    return canvas.toDataURL("image/png");
+  } catch (_error) {
+    return "";
+  }
+}
+
+let reportingUiError = false;
+
+function reportUiError(source, errorOrMessage, context = {}) {
+  if (reportingUiError) {
+    return;
+  }
+  reportingUiError = true;
+  const message = typeof errorOrMessage === "string"
+    ? errorOrMessage
+    : (errorOrMessage?.message || String(errorOrMessage || "Unknown browser error"));
+  const payload = {
+    source,
+    message,
+    context: {
+      ...context,
+      selected_agent_id: selectedAgentId || "",
+      selected_station_id: selectedStationId || "",
+      selected_room_id: selectedRoomId || "",
+      active_dialogs: visibleDialogIds(),
+      project_dialog_open: Boolean(projectDialog?.open),
+      project_dialog_mode: projectDialogMode,
+      project_panel: projectPanel,
+      runtime_connected: Boolean(runtimeClient.connected),
+    },
+    screenshot_data_url: captureGameScreenshotDataUrl(),
+  };
+  Promise.resolve(runtimeClient.reportError(payload))
+    .catch(() => undefined)
+    .finally(() => {
+      reportingUiError = false;
+    });
+}
+
 async function connectRuntime() {
   runtimeClient.onEvent(handleRuntimeEvent);
   try {
@@ -5288,11 +5339,22 @@ function renderSecretStatus(status) {
 }
 
 function renderSystemSecretStatus(status) {
-  if (!systemProjectKeyStatus) {
+  if (!systemProjectKeyStatus || !systemDiscordBotStatus) {
     return;
   }
   systemProjectKeyStatus.textContent = `Project: ${status.project_configured ? "configured" : "not configured"}`;
+  systemDiscordBotStatus.textContent = `Discord bot token: ${status.discord_bot_configured ? "configured" : "not configured"}`;
   systemProjectKeyStatus.classList.toggle("secret-status--configured", status.project_configured);
+  systemDiscordBotStatus.classList.toggle("secret-status--configured", status.discord_bot_configured);
+}
+
+function splitNumericIds(value) {
+  return String(value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => Number(item))
+    .filter((item) => Number.isInteger(item) && item > 0);
 }
 
 async function saveSelectedApiKey(snapshot) {
@@ -5508,6 +5570,16 @@ async function openSystemSettings() {
     systemSettingsField("theme").value = settings.ui.theme;
     systemSettingsField("auto_agents").value = String(settings.ui.auto_agents);
     systemSettingsField("simulation_speed").value = String(settings.ui.simulation_speed);
+    systemSettingsField("discord_enabled").value = String(Boolean(settings.discord?.enabled));
+    systemSettingsField("discord_message_content").value = String(Boolean(settings.discord?.message_content));
+    systemSettingsField("discord_sync_commands").value = String(settings.discord?.sync_commands !== false);
+    systemSettingsField("discord_command_prefix").value = settings.discord?.command_prefix ?? "!";
+    systemSettingsField("discord_default_agent_id").value = settings.discord?.default_agent_id ?? "";
+    systemSettingsField("discord_allowed_guild_ids").value = (settings.discord?.allowed_guild_ids ?? []).join(", ");
+    systemSettingsField("discord_allowed_channel_ids").value = (settings.discord?.allowed_channel_ids ?? []).join(", ");
+    systemSettingsField("discord_bot_token").value = "";
+    systemSettingsField("discord_error_notifications").value = String(Boolean(settings.diagnostics?.discord_error_notifications));
+    systemSettingsField("discord_webhook_url").value = settings.diagnostics?.discord_webhook_url ?? "";
     updateSystemProviderControls(false);
     renderSystemSecretStatus(status);
   } catch (error) {
@@ -6383,11 +6455,29 @@ systemSettingsForm?.addEventListener("submit", async (event) => {
         auto_agents: value("auto_agents") === "true",
         simulation_speed: Number(value("simulation_speed")),
       },
+      discord: {
+        enabled: value("discord_enabled") === "true",
+        command_prefix: value("discord_command_prefix") || "!",
+        default_agent_id: value("discord_default_agent_id"),
+        allowed_guild_ids: splitNumericIds(value("discord_allowed_guild_ids")),
+        allowed_channel_ids: splitNumericIds(value("discord_allowed_channel_ids")),
+        message_content: value("discord_message_content") === "true",
+        sync_commands: value("discord_sync_commands") === "true",
+      },
+      diagnostics: {
+        discord_error_notifications: value("discord_error_notifications") === "true",
+        discord_webhook_url: value("discord_webhook_url"),
+      },
     });
     if (value("project_api_key")) {
       const status = await runtimeClient.setProjectSecret(value("project_api_key"));
       renderSystemSecretStatus(status);
       systemSettingsField("project_api_key").value = "";
+    }
+    if (value("discord_bot_token")) {
+      const status = await runtimeClient.setDiscordBotSecret(value("discord_bot_token"));
+      renderSystemSecretStatus(status);
+      systemSettingsField("discord_bot_token").value = "";
     }
     applySystemSettingsToUi(settings);
     const agents = await runtimeClient.listAgents();
@@ -6400,6 +6490,7 @@ systemSettingsForm?.addEventListener("submit", async (event) => {
     setBootMessage("Global system settings saved and applied to all agents.");
   } catch (error) {
     systemSettingsError.textContent = error.message;
+    reportUiError("ui.system-settings.save", error, { phase: "save-system-settings" });
   } finally {
     saveButton.disabled = false;
   }
@@ -6412,9 +6503,17 @@ window.addEventListener("error", (event) => {
     line: event.lineno,
     column: event.colno,
   });
+  reportUiError("ui.window.error", event.error || event.message || "Unhandled browser error", {
+    source_file: event.filename || "",
+    line: event.lineno || 0,
+    column: event.colno || 0,
+  });
 });
 window.addEventListener("unhandledrejection", (event) => {
   runtimeClient.logClient("error", event.reason?.message ?? String(event.reason), {
+    operation: "unhandledrejection",
+  });
+  reportUiError("ui.unhandledrejection", event.reason?.message ?? String(event.reason), {
     operation: "unhandledrejection",
   });
 });

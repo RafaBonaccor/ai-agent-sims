@@ -97,6 +97,7 @@ Comandi supportati:
 - `/agents`: lista agenti runtime.
 - `/ask agent:<id> prompt:<testo>`: crea un task chat per l'agente.
 - `/chat prompt:<testo>`: crea un task chat usando l'agente predefinito del canale.
+- `/codex prompt:<testo>`: parla con il bridge locale Codex CLI, che conserva il contesto del canale Discord.
 - `/use agent:<id>`: imposta un default in memoria per quel canale Discord.
 
 Il supporto ai messaggi prefissati (`!agents`, `!use`, `!ask`) e disabilitato di

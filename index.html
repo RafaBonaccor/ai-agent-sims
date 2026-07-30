@@ -414,6 +414,81 @@
           </div>
         </section>
 
+        <section class="settings-section">
+          <div class="settings-section__heading">
+            <strong>Discord bot integration</strong>
+            <small>Configure the bot used to talk to agents and launch Vinted upload jobs from Discord.</small>
+          </div>
+          <div class="form-grid">
+            <label>
+              <span>Discord bot</span>
+              <select name="discord_enabled">
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+            </label>
+            <label>
+              <span>Message content intent</span>
+              <select name="discord_message_content">
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+            </label>
+            <label>
+              <span>Sync slash commands</span>
+              <select name="discord_sync_commands">
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+            </label>
+            <label>
+              <span>Command prefix</span>
+              <input name="discord_command_prefix" placeholder="!" maxlength="8" />
+            </label>
+            <label>
+              <span>Default agent</span>
+              <input name="discord_default_agent_id" placeholder="researcher" />
+            </label>
+            <label class="form-grid__wide">
+              <span>Discord bot token</span>
+              <input name="discord_bot_token" type="password" autocomplete="new-password" placeholder="Leave empty to keep current token" />
+            </label>
+            <div class="secret-status form-grid__wide">
+              <span id="system-discord-bot-status">Discord bot token: not configured</span>
+              <small>Stored in the system secret store. Saving updates the runtime bot configuration immediately.</small>
+            </div>
+            <label class="form-grid__wide">
+              <span>Allowed guild IDs</span>
+              <input name="discord_allowed_guild_ids" placeholder="123456789012345678, 987654321098765432" />
+            </label>
+            <label class="form-grid__wide">
+              <span>Allowed channel IDs</span>
+              <input name="discord_allowed_channel_ids" placeholder="123456789012345678, 987654321098765432" />
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="settings-section__heading">
+            <strong>Error reporting</strong>
+            <small>Global diagnostics for browser, runtime, and project job failures.</small>
+          </div>
+          <div class="form-grid">
+            <label>
+              <span>Discord error notifications</span>
+              <select name="discord_error_notifications">
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+            </label>
+            <label class="form-grid__wide">
+              <span>Discord webhook URL</span>
+              <input name="discord_webhook_url" placeholder="https://discord.com/api/webhooks/..." />
+              <small>Used for game errors, runtime crashes, blocked jobs, and screenshots when available.</small>
+            </label>
+          </div>
+        </section>
+
         <p class="form-error" id="system-settings-error" role="alert"></p>
         <div class="dialog-actions dialog-actions--sticky">
           <button class="button" data-system-settings-close type="button">Cancel</button>

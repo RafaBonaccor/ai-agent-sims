@@ -22,6 +22,7 @@ from .models import (
     RuntimeEvent,
     utc_now,
 )
+from .error_reporting import RuntimeErrorReporter, recent_project_screenshot_paths
 from .scheduler import (
     ScheduledTaskRunner,
     cron_field_matches,
@@ -74,7 +75,13 @@ class ProjectJob(BaseModel):
 
 
 class ProjectGateway:
-    def __init__(self, root: Path, emit: EventSink, store: Optional[RuntimeStore] = None):
+    def __init__(
+        self,
+        root: Path,
+        emit: EventSink,
+        store: Optional[RuntimeStore] = None,
+        error_reporter: Optional[RuntimeErrorReporter] = None,
+    ):
         self.root = root.resolve()
         self.emit = emit
         self.registry = self._read_json(self.root / "config" / "projects.json")
@@ -88,6 +95,7 @@ class ProjectGateway:
         self.scheduler = ScheduledTaskRunner(self.logger)
         self.running = self.scheduler.running
         self.store = store
+        self.error_reporter = error_reporter
 
     @staticmethod
     def _read_json(path: Path) -> dict[str, Any]:
@@ -185,14 +193,16 @@ class ProjectGateway:
             raise ValueError(f"Action is not registered: {request.action}")
         if action.get("requiresApproval") and not request.approved:
             raise PermissionError(f"Action requires explicit approval: {request.action}")
-        self._validate_parameters(action, request.parameters)
+        resolved_parameters = self._resolved_job_parameters(entry, action, request.parameters)
+        self._validate_parameters(action, resolved_parameters)
         scheduled_for = self._resolve_schedule(request)
         weekdays = self._normalize_weekdays(request.weekdays)
 
         job = ProjectJob(
             **request.model_dump(
-                exclude={"approved", "scheduled_for", "cron_expression", "schedule_mode", "repeat_mode", "weekdays"}
+                exclude={"approved", "parameters", "scheduled_for", "cron_expression", "schedule_mode", "repeat_mode", "weekdays"}
             ),
+            parameters=resolved_parameters,
             schedule_mode=request.schedule_mode,
             scheduled_for=scheduled_for,
             cron_expression=request.cron_expression.strip(),
@@ -302,6 +312,22 @@ class ProjectGateway:
             return None
         return payload if isinstance(payload, dict) else None
 
+    def _resolved_job_parameters(
+        self,
+        entry: dict[str, Any],
+        action: dict[str, Any],
+        provided: dict[str, Any],
+    ) -> dict[str, Any]:
+        resolved = dict(provided)
+        ui_settings = self._project_ui_settings(entry)
+        for definition in self._resolved_parameter_definitions(action.get("parameters", []), ui_settings):
+            parameter_id = str(definition.get("id") or "").strip()
+            if not parameter_id or parameter_id in resolved:
+                continue
+            if "default" in definition:
+                resolved[parameter_id] = definition.get("default")
+        return resolved
+
     async def _run(
         self,
         job: ProjectJob,
@@ -380,6 +406,7 @@ class ProjectGateway:
                 job.error = str(error)[:4000]
                 job.updated_at = utc_now()
                 self.logger.exception("job_failed id=%s error=%s", job.id, error)
+                await self._report_job_failure(job, entry, error)
                 self._store_agent_job_message(job)
                 await self._publish(job, "failed")
             finally:
@@ -710,6 +737,7 @@ class ProjectGateway:
             return
         self.job_alert_states[job.id] = signature
         self._store_agent_job_alert_message(job, alert)
+        await self._report_job_alert(job, alert)
         await self.emit(
             RuntimeEvent(
                 type="project.job.alert",
@@ -761,6 +789,45 @@ class ProjectGateway:
                 "payload": payload,
             }
         return None
+
+    async def _report_job_alert(self, job: ProjectJob, alert: dict[str, Any]) -> None:
+        if self.error_reporter is None:
+            return
+        kind = str(alert.get("kind") or "").strip()
+        if kind not in {"vinted_login_required", "vinted_marker_missing", "vinted_page_not_found"}:
+            return
+        project_root = self._project_root(self._project_entry(job.project_id))
+        await self.error_reporter.report(
+            source="project.job.blocked",
+            message=str(alert.get("summary") or kind),
+            context={
+                "project_id": job.project_id,
+                "job_id": job.id,
+                "agent_id": job.agent_id or "",
+                "current_url": str(alert.get("current_url") or "").strip(),
+                "kind": kind,
+                "phase": "alert",
+            },
+            attachment_paths=recent_project_screenshot_paths(project_root),
+        )
+
+    async def _report_job_failure(self, job: ProjectJob, entry: dict[str, Any], error: Exception) -> None:
+        if self.error_reporter is None:
+            return
+        project_root = self._project_root(entry)
+        await self.error_reporter.report(
+            source="project.job.failed",
+            message=str(error),
+            context={
+                "project_id": job.project_id,
+                "job_id": job.id,
+                "agent_id": job.agent_id or "",
+                "action": job.action,
+                "phase": "failed",
+                "parameters": job.parameters,
+            },
+            attachment_paths=recent_project_screenshot_paths(project_root),
+        )
 
     @staticmethod
     def _parse_project_signal_payload(line: str) -> dict[str, Any]:

@@ -110,6 +110,35 @@ class ProjectGatewayTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual("queued", job.state)
 
+    async def test_create_job_applies_ui_default_parameters_when_omitted(self):
+        (Path(self.temporary_directory.name) / "projects" / "demo" / "data").mkdir(parents=True, exist_ok=True)
+        (Path(self.temporary_directory.name) / "projects" / "demo" / "data" / "ui_settings.json").write_text(
+            json.dumps({"demo_query": "saved value"}),
+            encoding="utf-8",
+        )
+        (Path(self.temporary_directory.name) / "integrations" / "demo" / "adapter.json").write_text(
+            json.dumps(
+                {
+                    "runtime": {"entrypoint": "main.py", "venvCandidates": []},
+                    "actions": {
+                        "read": {
+                            "arguments": ["status"],
+                            "parameters": [
+                                {
+                                    "id": "query",
+                                    "defaultFromUiSetting": "demo_query",
+                                }
+                            ],
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        job = await self.gateway.create_job(ProjectJobCreate(project_id="demo", action="read", parameters={}))
+        self.assertEqual("saved value", job.parameters["query"])
+
     def test_project_output_alert_detects_vinted_login_required(self):
         alert = self.gateway._project_output_alert(
             '__VINTED_LOGIN_REQUIRED__:{"current_url":"https://www.vinted.it/catalog","marker_present":false}'
@@ -217,6 +246,63 @@ class ProjectGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(fake.terminated)
         self.assertEqual("failed", cancelled.state)
         self.assertEqual("Stopped by user.", cancelled.error)
+
+    async def test_report_job_failure_uses_error_reporter(self):
+        reported: list[dict] = []
+
+        class FakeReporter:
+            async def report(self, **payload):
+                reported.append(payload)
+                return {"ok": True}
+
+        gateway = ProjectGateway(
+            Path(self.temporary_directory.name),
+            self.gateway.emit,
+            self.store,
+            error_reporter=FakeReporter(),
+        )
+        entry = gateway._project_entry("demo")
+        job = ProjectJob(project_id="demo", action="read", parameters={"query": "example"}, agent_id="specialist")
+        try:
+            await gateway._report_job_failure(job, entry, RuntimeError("boom"))
+        finally:
+            await gateway.shutdown()
+
+        self.assertEqual(1, len(reported))
+        self.assertEqual("project.job.failed", reported[0]["source"])
+        self.assertEqual("demo", reported[0]["context"]["project_id"])
+        self.assertEqual(job.id, reported[0]["context"]["job_id"])
+
+    async def test_blocking_alert_reports_once_through_error_reporter(self):
+        reported: list[dict] = []
+
+        class FakeReporter:
+            async def report(self, **payload):
+                reported.append(payload)
+                return {"ok": True}
+
+        gateway = ProjectGateway(
+            Path(self.temporary_directory.name),
+            self.gateway.emit,
+            self.store,
+            error_reporter=FakeReporter(),
+        )
+        job = ProjectJob(project_id="demo", action="read", parameters={}, agent_id="specialist")
+        try:
+            await gateway._handle_project_output_line(
+                job,
+                '__VINTED_LOGIN_REQUIRED__:{"current_url":"https://www.vinted.it/catalog","marker_present":false}',
+            )
+            await gateway._handle_project_output_line(
+                job,
+                '__VINTED_LOGIN_REQUIRED__:{"current_url":"https://www.vinted.it/catalog","marker_present":false}',
+            )
+        finally:
+            await gateway.shutdown()
+
+        self.assertEqual(1, len(reported))
+        self.assertEqual("project.job.blocked", reported[0]["source"])
+        self.assertEqual("alert", reported[0]["context"]["phase"])
 
     def test_parameter_arguments_emit_negative_flag_for_explicit_false_checkbox(self):
         arguments = ProjectGateway._parameter_arguments(
