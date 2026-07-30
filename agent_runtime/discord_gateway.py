@@ -4,10 +4,12 @@ import asyncio
 import logging
 import os
 import re
+from pathlib import Path
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
+from .codex_bridge import CodexCliBridge
 from .discord_projects import DiscordAttachment, DiscordProjectBridge, PendingDiscordProjectJob
 from .engine import AgentRuntime
 from .models import SystemSettings
@@ -93,9 +95,8 @@ class DiscordGateway:
         self.logger = logger or LOGGER
         self.project_bridge = project_bridge
         if self.project_bridge is None and self.project_gateway is not None:
-            from pathlib import Path
-
             self.project_bridge = DiscordProjectBridge(Path(__file__).resolve().parent.parent, self.project_gateway)
+        self.codex_bridge = CodexCliBridge(Path(__file__).resolve().parent.parent, logger=self.logger)
         self.pending: dict[str, PendingDiscordTask] = {}
         self.pending_project_jobs: dict[str, tuple[PendingDiscordProjectJob, SendMessage]] = {}
         self.channel_defaults: dict[str, str] = {}
@@ -114,6 +115,7 @@ class DiscordGateway:
             "connected": self.connected,
             "pendingTasks": len(self.pending),
             "pendingProjectJobs": len(self.pending_project_jobs),
+            "codexBridge": self.codex_bridge.status() if self.codex_bridge else {"enabled": False},
             "messageContent": self.config.enable_message_content,
             "allowedGuilds": sorted(self.config.allowed_guild_ids),
             "allowedChannels": sorted(self.config.allowed_channel_ids),
@@ -252,6 +254,62 @@ class DiscordGateway:
             await interaction.followup.send(
                 f"Queued `{task.id}` for `{agent_id}`. I will post the answer here.",
                 allowed_mentions=discord.AllowedMentions.none(),
+            )
+
+        @bot.tree.command(name="codex", description="Talk to the Codex assistant agent")
+        @app_commands.describe(prompt="Message for Codex")
+        async def codex_command(interaction: Any, prompt: str) -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            await interaction.response.defer(thinking=True)
+
+            async def send(content: str) -> None:
+                for chunk in chunk_discord_message(content):
+                    await interaction.followup.send(chunk, allowed_mentions=discord.AllowedMentions.none())
+
+            try:
+                result = await gateway.send_codex_prompt(str(interaction.channel_id), prompt)
+            except ValueError as error:
+                await interaction.followup.send(str(error), ephemeral=True)
+                return
+            except RuntimeError as error:
+                await interaction.followup.send(f"Codex bridge failed: {error}", ephemeral=True)
+                return
+            await gateway.send_codex_result(send, result)
+
+        @bot.tree.command(name="codex_model", description="View or change the Codex model used by the Discord bridge")
+        @app_commands.describe(
+            action="show the current model, set a per-channel override, or clear the override",
+            model="Codex model name, for example gpt-5.1-codex",
+        )
+        async def codex_model_command(interaction: Any, action: str, model: str = "") -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            action_normalized = str(action or "").strip().lower()
+            channel_key = str(interaction.channel_id)
+            if action_normalized == "show":
+                await interaction.response.send_message(
+                    gateway.format_codex_model_status(channel_key),
+                    ephemeral=True,
+                )
+                return
+            if action_normalized == "set":
+                model_name = gateway.codex_bridge.set_channel_model(channel_key, model)
+                await interaction.response.send_message(
+                    gateway.format_codex_model_status(channel_key, override=model_name),
+                    ephemeral=True,
+                )
+                return
+            if action_normalized == "clear":
+                gateway.codex_bridge.clear_channel_model(channel_key)
+                await interaction.response.send_message(
+                    gateway.format_codex_model_status(channel_key),
+                    ephemeral=True,
+                )
+                return
+            await interaction.response.send_message(
+                "Invalid action. Use `show`, `set`, or `clear`.",
+                ephemeral=True,
             )
 
         @bot.tree.command(name="vinted_upload", description="Prepare or publish a Vinted upload job from Discord")
@@ -534,6 +592,33 @@ class DiscordGateway:
                 return
             await send(f"Queued `{task.id}` for `{parsed.agent_id}`. I will post the answer here.")
             return
+        if parsed.action == "codex":
+            try:
+                result = await self.send_codex_prompt(str(channel_id), parsed.prompt)
+            except ValueError as error:
+                await send(str(error))
+                return
+            except RuntimeError as error:
+                await send(f"Codex bridge failed: {error}")
+                return
+            await self.send_codex_result(send, result)
+            return
+        if parsed.action == "codex_model":
+            action = str(parsed.agent_id or "").strip().lower()
+            model = str(parsed.prompt or "").strip()
+            if action == "show":
+                await send(self.format_codex_model_status(str(channel_id)))
+                return
+            if action == "set":
+                self.codex_bridge.set_channel_model(str(channel_id), model)
+                await send(self.format_codex_model_status(str(channel_id), override=model))
+                return
+            if action == "clear":
+                self.codex_bridge.clear_channel_model(str(channel_id))
+                await send(self.format_codex_model_status(str(channel_id)))
+                return
+            await send("Invalid action. Use `show`, `set`, or `clear`.")
+            return
         if parsed.action == "chat":
             agent_id = self.channel_defaults.get(str(channel_id), self.config.default_agent_id).strip()
             if not agent_id:
@@ -581,6 +666,20 @@ class DiscordGateway:
         lines.append("Use `/ask agent:<id> prompt:<message>` to talk with one specific agent.")
         return "\n".join(lines)
 
+    def format_codex_model_status(self, channel_key: str, override: str = "") -> str:
+        effective_override = str(override or self.codex_bridge.get_channel_model(channel_key)).strip()
+        default_model = str(self.codex_bridge.status().get("defaultModel", "") or "").strip()
+        if effective_override:
+            return (
+                f"Codex model for this channel: `{effective_override}`\n"
+                f"Default Codex model: `{default_model or 'not set'}`\n"
+                "Use `set` to change it or `clear` to fall back to the default."
+            )
+        return (
+            f"Codex model for this channel: `{default_model or 'not set'}`\n"
+            "No per-channel override is configured."
+        )
+
     def format_task_result(self, task_id: str, agent_id: str, payload: Any) -> str:
         summary = "Task completed."
         sources: list[dict[str, str]] = []
@@ -606,6 +705,38 @@ class DiscordGateway:
         ids = ", ".join(f"`{agent.id}`" for agent in self.runtime.list_agents()) or "none"
         return f"Unknown agent `{agent_id}`. Available agents: {ids}."
 
+    async def send_codex_prompt(self, channel_key: str, prompt: str) -> Any:
+        if self.codex_bridge is None:
+            raise RuntimeError("Codex bridge is not available.")
+        return await self.codex_bridge.ask(channel_key, prompt)
+
+    async def send_codex_result(self, send: SendMessage, result: Any) -> None:
+        messages = list(getattr(result, "messages", []) or [])
+        final_response = str(getattr(result, "final_response", "") or "").strip()
+        if messages:
+            for message in messages:
+                formatted = self._format_codex_message(str(message))
+                for chunk in chunk_discord_message(formatted):
+                    await send(chunk)
+            return
+        if final_response:
+            for chunk in chunk_discord_message(final_response):
+                await send(chunk)
+            return
+        await send("(empty)")
+
+    @staticmethod
+    def _format_codex_message(message: str) -> str:
+        text = str(message or "").strip()
+        if not text:
+            return "(empty)"
+        if text.startswith("```"):
+            return text
+        if text.startswith("🧠 "):
+            quoted_lines = "\n".join(f"> {line}" if line else ">" for line in text.splitlines())
+            return quoted_lines
+        return text
+
 
 def parse_text_command(
     content: str,
@@ -620,6 +751,35 @@ def parse_text_command(
 
     if text == f"{prefix}agents" or (mentioned and text == "agents"):
         return ParsedDiscordCommand(action="agents")
+
+    if text == f"{prefix}codex" or text.startswith(f"{prefix}codex "):
+        body = text[len(f"{prefix}codex") :].strip()
+        if body:
+            return ParsedDiscordCommand(action="codex", prompt=body)
+        return None
+    if mentioned and (text == "codex" or text.startswith("codex ")):
+        body = text[5:].strip()
+        if body:
+            return ParsedDiscordCommand(action="codex", prompt=body)
+        return None
+
+    codex_model_prefix = f"{prefix}codex-model "
+    if text.startswith(codex_model_prefix):
+        body = text[len(codex_model_prefix) :].strip().split(maxsplit=1)
+        if not body:
+            return None
+        action = body[0]
+        model = body[1] if len(body) > 1 else ""
+        return ParsedDiscordCommand(action="codex_model", agent_id=action, prompt=model)
+    if text == f"{prefix}codex-model":
+        return None
+    if mentioned and text.startswith("codex-model "):
+        body = text[len("codex-model ") :].strip().split(maxsplit=1)
+        if not body:
+            return None
+        action = body[0]
+        model = body[1] if len(body) > 1 else ""
+        return ParsedDiscordCommand(action="codex_model", agent_id=action, prompt=model)
 
     if text == f"{prefix}chat" or text.startswith(f"{prefix}chat "):
         body = text[len(f"{prefix}chat") :].strip()
