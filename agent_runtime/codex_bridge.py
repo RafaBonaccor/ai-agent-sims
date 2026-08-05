@@ -66,6 +66,7 @@ class CodexCliBridge:
             "codexBinary": self.codex_binary or "",
             "codexHome": str(self.codex_home),
             "defaultModel": self._default_model(),
+            "sandboxMode": self._sandbox_mode(),
             "channels": len(self._state.get("channels", {})),
         }
 
@@ -207,6 +208,13 @@ class CodexCliBridge:
     def _default_model() -> str:
         return str(os.environ.get("AGENT_LAB_CODEX_MODEL", "") or "").strip()
 
+    @staticmethod
+    def _sandbox_mode() -> str:
+        value = str(os.environ.get("AGENT_LAB_CODEX_SANDBOX", "") or "").strip().lower()
+        if value in {"read-only", "workspace-write", "danger-full-access"}:
+            return value
+        return "workspace-write"
+
     def _invoke_session(
         self,
         session_id: str,
@@ -215,6 +223,7 @@ class CodexCliBridge:
         env: dict[str, str],
         model: str,
     ) -> subprocess.CompletedProcess[str]:
+        sandbox_mode = self._sandbox_mode()
         if session_id:
             args = [
                 self.codex_binary or "codex",
@@ -224,7 +233,7 @@ class CodexCliBridge:
                 str(last_message_path),
                 "--skip-git-repo-check",
                 "--sandbox",
-                "read-only",
+                sandbox_mode,
                 session_id,
                 prompt,
             ]
@@ -238,7 +247,7 @@ class CodexCliBridge:
                 "--ephemeral",
                 "--skip-git-repo-check",
                 "--sandbox",
-                "read-only",
+                sandbox_mode,
             ]
             if model:
                 args.extend(["-m", model])

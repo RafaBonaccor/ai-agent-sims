@@ -42,7 +42,12 @@ from .logging_config import configure_logging
 from .secrets import SecretStore
 from .discord_gateway import DiscordGateway, DiscordGatewayConfig
 from .briefings import MorningBriefingScheduler
-from .vinted_ai import generate_vinted_ai_variants, DEFAULT_VINTED_AI_MODEL, DEFAULT_VINTED_AI_SIZE
+from .vinted_ai import (
+    generate_vinted_ai_variants,
+    DEFAULT_VINTED_AI_MODEL,
+    DEFAULT_VINTED_AI_QUALITY,
+    DEFAULT_VINTED_AI_SIZE,
+)
 from .error_reporting import RuntimeErrorReporter
 
 
@@ -143,6 +148,7 @@ class VintedAIGenerationRequest(BaseModel):
     output_dir: str = Field(min_length=1, max_length=2000)
     model: str = Field(default=DEFAULT_VINTED_AI_MODEL, max_length=160)
     size: str = Field(default=DEFAULT_VINTED_AI_SIZE, max_length=32)
+    quality: str = Field(default=DEFAULT_VINTED_AI_QUALITY, max_length=32)
     variants: int = Field(default=1, ge=1, le=4)
 
 
@@ -150,6 +156,7 @@ class VintedAIGenerationResponse(BaseModel):
     ok: bool
     model: str
     size: str
+    quality: str
     prompt: str
     source_photo_paths: list[str]
     generated_photo_paths: list[str]
@@ -383,6 +390,7 @@ async def generate_vinted_ai_image_variants(request: VintedAIGenerationRequest) 
             output_dir=request.output_dir,
             model=request.model,
             size=request.size,
+            quality=request.quality,
             variants=request.variants,
             base_url=base_url,
         )

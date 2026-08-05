@@ -359,31 +359,24 @@ class DiscordGateway:
                 for chunk in chunk_discord_message(content):
                     await interaction.followup.send(chunk, allowed_mentions=discord.AllowedMentions.none())
 
-            attachments = [
-                DiscordAttachment(
-                    url=str(getattr(item, "url", "") or "").strip(),
-                    filename=str(getattr(item, "filename", "") or "").strip(),
-                    content_type=str(getattr(item, "content_type", "") or "").strip(),
-                )
-                for item in (photo1, photo2, photo3, photo4, metadata)
-                if item is not None
-            ]
-            requested_agent = agent.strip() or gateway.channel_defaults.get(str(interaction.channel_id), gateway.config.default_agent_id)
             try:
-                job = await gateway.project_bridge.submit_vinted_upload_payload(
-                    payload={
-                        "title": title,
-                        "description": description,
-                        "price": price,
-                        "category": category,
-                        "brand": brand,
-                        "condition": condition,
-                        "material": material,
-                        "submit": submit,
-                        "enhance_photos": enhance_photos,
-                    },
-                    attachments=attachments,
-                    agent_id=requested_agent,
+                job, requested_agent = await gateway._submit_vinted_upload_interaction(
+                    interaction=interaction,
+                    title=title,
+                    description=description,
+                    category=category,
+                    brand=brand,
+                    condition=condition,
+                    material=material,
+                    photo1=photo1,
+                    price=price,
+                    photo2=photo2,
+                    photo3=photo3,
+                    photo4=photo4,
+                    metadata=metadata,
+                    submit=submit,
+                    enhance_photos=enhance_photos,
+                    agent=agent,
                 )
             except ValueError as error:
                 await interaction.followup.send(str(error), ephemeral=True)
@@ -402,9 +395,86 @@ class DiscordGateway:
                 allowed_mentions=discord.AllowedMentions.none(),
             )
 
+        @bot.tree.command(name="upload_ai_photo", description="Generate AI Vinted photos and prepare or publish the upload job")
+        @app_commands.describe(
+            title="Listing title",
+            description="Listing description",
+            category="Vinted category label",
+            brand="Brand label",
+            condition="Condition label",
+            material="Material label",
+            price="Listing price. Leave empty to take it from a metadata attachment.",
+            photo1="First product photo",
+            photo2="Optional second product photo",
+            photo3="Optional third product photo",
+            photo4="Optional fourth product photo",
+            metadata="Optional text/JSON attachment with fields like price/category/brand",
+            submit="Publish instead of prepare only",
+            agent="Optional agent id to attribute the job to",
+        )
+        async def upload_ai_photo_command(
+            interaction: Any,
+            title: str,
+            description: str,
+            category: str,
+            brand: str,
+            condition: str,
+            material: str,
+            photo1: DiscordAttachmentType,
+            price: str = "",
+            photo2: Optional[DiscordAttachmentType] = None,
+            photo3: Optional[DiscordAttachmentType] = None,
+            photo4: Optional[DiscordAttachmentType] = None,
+            metadata: Optional[DiscordAttachmentType] = None,
+            submit: bool = False,
+            agent: str = "",
+        ) -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            if gateway.project_bridge is None:
+                await interaction.response.send_message("Project upload bridge is not configured.", ephemeral=True)
+                return
+            await interaction.response.defer(thinking=True)
+            try:
+                job, requested_agent = await gateway._submit_vinted_upload_interaction(
+                    interaction=interaction,
+                    title=title,
+                    description=description,
+                    category=category,
+                    brand=brand,
+                    condition=condition,
+                    material=material,
+                    photo1=photo1,
+                    price=price,
+                    photo2=photo2,
+                    photo3=photo3,
+                    photo4=photo4,
+                    metadata=metadata,
+                    submit=submit,
+                    enhance_photos=True,
+                    agent=agent,
+                )
+            except ValueError as error:
+                await interaction.followup.send(str(error), ephemeral=True)
+                return
+            gateway.pending_project_jobs[job.id] = (
+                PendingDiscordProjectJob(
+                    job_id=job.id,
+                    project_id=job.project_id,
+                    action=job.action,
+                    agent_id=requested_agent,
+                ),
+                lambda content: interaction.followup.send(content, allowed_mentions=discord.AllowedMentions.none()),
+            )
+            await interaction.followup.send(
+                gateway.project_bridge.format_job_queued(job),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+
         ask_command.autocomplete("agent")(agent_autocomplete)
         use_command.autocomplete("agent")(agent_autocomplete)
         vinted_upload_command.autocomplete("agent")(agent_autocomplete)
+        upload_ai_photo_command.autocomplete("agent")(agent_autocomplete)
 
         self._event_queue = self.runtime.subscribe()
         self._event_task = asyncio.create_task(self._event_loop(), name="discord-runtime-events")
@@ -542,6 +612,14 @@ class DiscordGateway:
                 mentioned=mentioned,
             )
             if project_command is not None:
+                self.logger.info(
+                    "discord_text_project_command action=%s agent_id=%s enhance_photos=%s attachments=%s channel_id=%s",
+                    project_command.action,
+                    project_command.agent_id or default_agent or "-",
+                    bool((project_command.payload or {}).get("enhance_photos", False)),
+                    len(list(getattr(message, "attachments", []) or [])),
+                    channel_id,
+                )
                 try:
                     job = await self.project_bridge.submit_vinted_upload(
                         content=str((project_command.payload or {}).get("body", "") or ""),
@@ -639,6 +717,55 @@ class DiscordGateway:
         allowed_mentions = self._discord.AllowedMentions.none() if self._discord else None
         for chunk in chunk_discord_message(content):
             await channel.send(chunk, allowed_mentions=allowed_mentions)
+
+    async def _submit_vinted_upload_interaction(
+        self,
+        *,
+        interaction: Any,
+        title: str,
+        description: str,
+        category: str,
+        brand: str,
+        condition: str,
+        material: str,
+        photo1: Any,
+        price: str = "",
+        photo2: Any = None,
+        photo3: Any = None,
+        photo4: Any = None,
+        metadata: Any = None,
+        submit: bool = False,
+        enhance_photos: bool = False,
+        agent: str = "",
+    ) -> tuple[ProjectJob, str]:
+        if self.project_bridge is None:
+            raise ValueError("Project upload bridge is not configured.")
+        attachments = [
+            DiscordAttachment(
+                url=str(getattr(item, "url", "") or "").strip(),
+                filename=str(getattr(item, "filename", "") or "").strip(),
+                content_type=str(getattr(item, "content_type", "") or "").strip(),
+            )
+            for item in (photo1, photo2, photo3, photo4, metadata)
+            if item is not None
+        ]
+        requested_agent = agent.strip() or self.channel_defaults.get(str(interaction.channel_id), self.config.default_agent_id)
+        job = await self.project_bridge.submit_vinted_upload_payload(
+            payload={
+                "title": title,
+                "description": description,
+                "price": price,
+                "category": category,
+                "brand": brand,
+                "condition": condition,
+                "material": material,
+                "submit": submit,
+                "enhance_photos": enhance_photos,
+            },
+            attachments=attachments,
+            agent_id=requested_agent,
+        )
+        return job, requested_agent
 
     def _is_allowed(self, guild_id: int, channel_id: int) -> bool:
         if self.config.allowed_guild_ids and guild_id not in self.config.allowed_guild_ids:

@@ -307,8 +307,12 @@ class DiscordProjectBridgeTests(unittest.IsolatedAsyncioTestCase):
     async def test_submit_vinted_upload_can_enhance_photos_with_ai(self):
         photo = Path(self.temporary_directory.name) / "photo.png"
         photo.write_bytes(b"photo")
-        enhanced = Path(self.temporary_directory.name) / "photo_ai.png"
-        enhanced.write_bytes(b"photo-ai")
+        enhanced_flatlay = Path(self.temporary_directory.name) / "photo_ai_flatlay.png"
+        enhanced_worn = Path(self.temporary_directory.name) / "photo_ai_worn.png"
+        enhanced_hand = Path(self.temporary_directory.name) / "photo_ai_hand.png"
+        enhanced_flatlay.write_bytes(b"photo-ai-flatlay")
+        enhanced_worn.write_bytes(b"photo-ai-worn")
+        enhanced_hand.write_bytes(b"photo-ai-hand")
 
         async def fake_collect(_attachments):
             return (
@@ -326,10 +330,20 @@ class DiscordProjectBridgeTests(unittest.IsolatedAsyncioTestCase):
 
         async def fake_enhance(paths):
             self.assertEqual([str(photo.resolve())], paths)
-            return [str(enhanced.resolve())]
+            return [
+                str(enhanced_flatlay.resolve()),
+                str(enhanced_worn.resolve()),
+                str(enhanced_hand.resolve()),
+            ]
 
         self.bridge._collect_attachment_inputs = fake_collect
         self.bridge._enhance_vinted_upload_photos_with_ai = fake_enhance
+        self.bridge._structure_vinted_upload_payload_from_photos_with_ai = lambda _paths, price_hint="": {
+            "title": "Charm",
+            "description": "Test",
+            "category": "Braccialetti",
+            "model": "gpt-4.1-mini",
+        }
 
         await self.bridge.submit_vinted_upload(
             content="",
@@ -340,7 +354,14 @@ class DiscordProjectBridgeTests(unittest.IsolatedAsyncioTestCase):
 
         manifest_path = Path(self.bridge.project_gateway.request.parameters["items-file"])
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        self.assertEqual([str(enhanced.resolve())], manifest["items"][0]["photo_paths"])
+        self.assertEqual(
+            [
+                str(enhanced_flatlay.resolve()),
+                str(enhanced_worn.resolve()),
+                str(enhanced_hand.resolve()),
+            ],
+            manifest["items"][0]["photo_paths"],
+        )
         self.assertTrue(bool(manifest["items"][0]["openai_used"]))
         self.assertIn("gpt-image-2", manifest["items"][0]["openai_model"])
 

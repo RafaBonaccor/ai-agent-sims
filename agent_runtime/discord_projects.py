@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -18,6 +20,8 @@ from .vinted_ai import (
     _build_openai_client,
     generate_vinted_ai_variants,
 )
+
+LOGGER = logging.getLogger("agent_lab.discord.project_bridge")
 
 
 TEXT_ATTACHMENT_SUFFIXES = {
@@ -61,8 +65,42 @@ FIELD_ALIASES = {
 
 VINTED_AI_STANDARD_PROMPT = (
     "Create a cleaner marketplace-ready product photo for Vinted. "
-    "Keep the item identity accurate, improve lighting, remove distractions, "
-    "use a neutral background, and keep the framing suitable for a vertical fashion listing."
+    "Keep the item identity accurate, with true colors, materials, and details. If the photo "
+    "contains packaging, boxes, bags, tags, wrapping, branded packaging, shipping materials, or "
+    "display supports, remove them completely unless they are physically part of the product. "
+    "Only the product for sale must remain visible. Improve lighting and clarity while keeping "
+    "the image realistic. Use a simple home-style background that is not empty, softly matched "
+    "to the item, minimal, believable, and not studio-like. Remove distractions, keep the "
+    "framing natural and vertical, and make the result look authentic and ready for sale on "
+    "Vinted."
+)
+
+VINTED_AI_UPLOAD_VARIANT_PROMPTS: tuple[tuple[str, str], ...] = (
+    (
+        "flatlay",
+        VINTED_AI_STANDARD_PROMPT,
+    ),
+    (
+        "worn",
+        "Create a cleaner marketplace-ready product photo for Vinted. Keep the item identity accurate, "
+        "with true colors, materials, and details. Show the item being worn by a woman in a realistic way, "
+        "but do not show her face. Only show the relevant body area where the item naturally belongs, such "
+        "as the neck, wrist, hand, or ear depending on the product. Keep the composition natural, believable, "
+        "and suitable for a second-hand listing. Use a simple home-style setting, soft light, minimal "
+        "distractions, and a vertical framing. If the photo contains packaging, boxes, bags, tags, wrapping, "
+        "branded packaging, shipping materials, or display supports, remove them completely unless they are "
+        "physically part of the product. Only the product for sale must remain visible.",
+    ),
+    (
+        "hand",
+        "Create a cleaner marketplace-ready product photo for Vinted. Keep the item identity accurate, "
+        "with true colors, materials, and details. Show the item resting naturally on the open palm of a hand "
+        "in a realistic home-style photo. Keep the hand natural and believable, with the item clearly visible "
+        "and centered. Use a simple but not empty background, soft light, minimal distractions, and vertical "
+        "framing suitable for a resale listing. If the photo contains packaging, boxes, bags, tags, wrapping, "
+        "branded packaging, shipping materials, or display supports, remove them completely unless they are "
+        "physically part of the product. Only the product for sale must remain visible.",
+    ),
 )
 
 VINTED_LISTING_SCHEMA: dict[str, Any] = {
@@ -91,6 +129,43 @@ Rules:
 - choose a plausible Vinted category;
 - keep the description more complete than the title;
 - do not invent critical details unsupported by the text.
+"""
+
+VINTED_PHOTO_ANALYSIS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "title": {"type": "string"},
+        "description": {"type": "string"},
+        "category": {
+            "type": "string",
+            "enum": ["Charm e ciondoli", "Collane", "Braccialetti", "Anelli", "Orecchini"],
+        },
+    },
+    "required": ["title", "description", "category"],
+}
+
+VINTED_PHOTO_ANALYSIS_SYSTEM_PROMPT = """You analyze marketplace product photos for a Vinted upload draft.
+
+Return valid JSON only.
+
+Goals:
+- infer a concise Italian title from the jewelry shown in the photo;
+- infer an Italian description suitable for a Vinted draft;
+- choose exactly one category from:
+  - Charm e ciondoli
+  - Collane
+  - Braccialetti
+  - Anelli
+  - Orecchini
+
+Rules:
+- use only what is visually supported by the photo;
+- do not mention a price;
+- do not invent brand names;
+- keep the title short and marketplace-friendly;
+- keep the description practical and neutral;
+- if uncertain, choose the most visually likely category from the allowed list.
 """
 
 
@@ -142,40 +217,93 @@ class DiscordProjectBridge:
         photo_paths, attachment_fields = await self._collect_attachment_inputs(attachments)
         merged_payload = self._merge_payload_with_attachment_fields(payload, attachment_fields)
         merged_payload["enhance_photos"] = bool(merged_payload.get("enhance_photos", False) or enhance_photos)
+        LOGGER.info(
+            "discord_vinted_upload_start agent_id=%s content_chars=%s attachments_photos=%s attachment_fields=%s enhance_photos=%s",
+            str(agent_id or "").strip() or "-",
+            len(cleaned_content),
+            len(photo_paths),
+            sorted(str(key) for key in attachment_fields.keys()),
+            bool(merged_payload.get("enhance_photos", False)),
+        )
+        if photo_paths:
+            try:
+                vision_payload = self._structure_vinted_upload_payload_from_photos_with_ai(
+                    photo_paths,
+                    price_hint=str(merged_payload.get("price", "") or "").strip(),
+                )
+            except Exception as exc:
+                LOGGER.exception("discord_vinted_upload_photo_analysis_failed")
+                raise ValueError(f"Discord photo analysis failed: {exc}") from exc
+            merged_payload["title"] = str(vision_payload.get("title", "") or "").strip()
+            merged_payload["description"] = str(vision_payload.get("description", "") or "").strip()
+            merged_payload["category"] = str(vision_payload.get("category", "") or "").strip()
+            ai_used = True
+            ai_model = self._append_model_label(ai_model, str(vision_payload.get("model", "") or ""))
+            LOGGER.info(
+                "discord_vinted_upload_photo_analysis_ok title=%s category=%s model=%s",
+                merged_payload["title"],
+                merged_payload["category"],
+                str(vision_payload.get("model", "") or "").strip() or "-",
+            )
         missing_before_ai = self._missing_vinted_fields(merged_payload)
-        if should_prefer_ai_structuring or missing_before_ai:
+        if (not photo_paths) and (should_prefer_ai_structuring or missing_before_ai):
             try:
                 ai_payload = self._structure_vinted_upload_payload_with_ai(cleaned_content)
             except Exception as exc:
+                LOGGER.exception("discord_vinted_upload_text_ai_failed")
                 raise ValueError(f"Discord AI structuring failed: {exc}") from exc
             merged_payload = self._merge_vinted_payloads(merged_payload, ai_payload)
             ai_used = True
             ai_model = str(ai_payload.get("model", "") or "").strip()
+            LOGGER.info(
+                "discord_vinted_upload_text_ai_ok title=%s category=%s model=%s",
+                str(merged_payload.get("title", "") or "").strip(),
+                str(merged_payload.get("category", "") or "").strip(),
+                ai_model or "-",
+            )
         explicit_photo_urls = self._normalize_photo_urls(merged_payload.get("photo_urls", []))
         if explicit_photo_urls:
             photo_paths.extend(await self._download_url_list(explicit_photo_urls, bucket="vinted_upload_urls"))
+            LOGGER.info("discord_vinted_upload_downloaded_photo_urls count=%s", len(explicit_photo_urls))
         if not photo_paths:
+            LOGGER.warning("discord_vinted_upload_no_photos")
             raise ValueError("Attach at least one photo in Discord or provide photo URLs in the payload.")
         if bool(merged_payload.get("enhance_photos", False)):
+            LOGGER.info("discord_vinted_upload_enhance_start source_photo_count=%s", len(photo_paths))
             photo_paths = await self._enhance_vinted_upload_photos_with_ai(photo_paths)
             ai_used = True
             ai_model = self._append_model_label(ai_model, DEFAULT_VINTED_AI_MODEL)
+            LOGGER.info(
+                "discord_vinted_upload_enhance_done generated_photo_count=%s generated_photo_paths=%s",
+                len(photo_paths),
+                [Path(path).name for path in photo_paths],
+            )
+        else:
+            LOGGER.info("discord_vinted_upload_enhance_skipped")
         item = {
             "title": str(merged_payload.get("title", "") or "").strip(),
             "description": str(merged_payload.get("description", "") or "").strip(),
             "price": str(merged_payload.get("price", "") or "").strip(),
             "category": str(merged_payload.get("category", "") or "").strip(),
-            "brand": str(merged_payload.get("brand", "") or "").strip(),
-            "condition": str(merged_payload.get("condition", "") or "").strip(),
-            "material": str(merged_payload.get("material", "") or "").strip(),
+            "brand": str(merged_payload.get("brand", "") or "No Label").strip() or "No Label",
+            "condition": str(merged_payload.get("condition", "") or "Ottime").strip() or "Ottime",
+            "material": str(merged_payload.get("material", "") or "Altro").strip() or "Altro",
             "photo_paths": photo_paths,
             "openai_used": ai_used,
             "openai_model": ai_model,
         }
         missing = self._missing_vinted_fields(item)
         if missing:
+            LOGGER.warning("discord_vinted_upload_missing_fields fields=%s", ",".join(missing))
             raise ValueError(f"Missing Vinted upload fields: {', '.join(missing)}")
         items_file = self._write_items_file([item], openai_used=ai_used, openai_model=ai_model)
+        LOGGER.info(
+            "discord_vinted_upload_manifest_ready path=%s photo_paths=%s openai_used=%s openai_model=%s",
+            str(items_file),
+            [Path(path).name for path in photo_paths],
+            ai_used,
+            ai_model or "-",
+        )
         return await self.project_gateway.create_job(
             ProjectJobCreate(
                 project_id="main-scraper",
@@ -436,7 +564,7 @@ class DiscordProjectBridge:
     @staticmethod
     def _missing_vinted_fields(payload: dict[str, Any]) -> list[str]:
         return [
-            key for key in ("title", "description", "price", "category", "brand", "condition", "material")
+            key for key in ("title", "description", "price", "category")
             if not str(payload.get(key, "") or "").strip()
         ]
 
@@ -565,32 +693,126 @@ class DiscordProjectBridge:
         normalized["model"] = "gpt-4.1-nano"
         return normalized
 
+    def _structure_vinted_upload_payload_from_photos_with_ai(
+        self,
+        photo_paths: list[str],
+        *,
+        price_hint: str = "",
+    ) -> dict[str, Any]:
+        if not photo_paths:
+            raise ValueError("At least one photo is required for photo analysis.")
+        api_key = self._resolve_openai_api_key()
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY not found in the environment or project secret store.")
+        client = _build_openai_client(api_key=api_key, base_url=None)
+        user_content: list[dict[str, Any]] = [
+            {
+                "type": "input_text",
+                "text": (
+                    "Analyze the attached jewelry photo(s) and return title, description, and category. "
+                    f"Price is provided separately by the user as: {price_hint or '(missing)'}."
+                ),
+            }
+        ]
+        for photo_path in photo_paths[:4]:
+            user_content.append(
+                {
+                    "type": "input_image",
+                    "image_url": _file_path_to_data_url(Path(photo_path)),
+                }
+            )
+        response = client.responses.create(
+            model="gpt-4.1-mini",
+            store=False,
+            temperature=0.2,
+            text={
+                "verbosity": "medium",
+                "format": {
+                    "type": "json_schema",
+                    "name": "vinted_photo_analysis_payload",
+                    "strict": True,
+                    "schema": VINTED_PHOTO_ANALYSIS_SCHEMA,
+                },
+            },
+            input=[
+                {"role": "system", "content": [{"type": "input_text", "text": VINTED_PHOTO_ANALYSIS_SYSTEM_PROMPT}]},
+                {"role": "user", "content": user_content},
+            ],
+        )
+        output_text = str(getattr(response, "output_text", "") or "").strip()
+        if not output_text:
+            payload = response.model_dump() if hasattr(response, "model_dump") else {}
+            for item in payload.get("output", []) or []:
+                if str(item.get("type", "") or "") != "message":
+                    continue
+                for content_item in item.get("content", []) or []:
+                    if str(content_item.get("type", "") or "") == "output_text":
+                        output_text = str(content_item.get("text", "") or "").strip()
+                        if output_text:
+                            break
+                if output_text:
+                    break
+        if not output_text:
+            raise ValueError("OpenAI returned an empty photo-analysis response.")
+        parsed = json.loads(output_text)
+        if not isinstance(parsed, dict):
+            raise ValueError("OpenAI returned an invalid photo-analysis payload.")
+        normalized = {
+            "title": str(parsed.get("title", "") or "").strip(),
+            "description": str(parsed.get("description", "") or "").strip(),
+            "category": str(parsed.get("category", "") or "").strip(),
+            "model": "gpt-4.1-mini",
+        }
+        return normalized
+
     async def _enhance_vinted_upload_photos_with_ai(self, photo_paths: list[str]) -> list[str]:
         api_key = self._resolve_openai_api_key()
         if not api_key:
             raise ValueError("OPENAI_API_KEY not found in the environment or project secret store.")
 
-        async def enhance_single(photo_path: str) -> list[str]:
+        async def enhance_single_variant(photo_path: str, variant_name: str, prompt: str) -> list[str]:
             def worker() -> list[str]:
+                LOGGER.info(
+                    "discord_vinted_ai_variant_start variant=%s source=%s",
+                    variant_name,
+                    str(Path(photo_path).name),
+                )
                 result = generate_vinted_ai_variants(
                     api_key=api_key,
                     photo_paths=[photo_path],
-                    prompt=VINTED_AI_STANDARD_PROMPT,
-                    output_dir=self.storage_root / "vinted_ai_photos",
+                    prompt=prompt,
+                    output_dir=self.storage_root / "vinted_ai_photos" / variant_name,
                     model=DEFAULT_VINTED_AI_MODEL,
                     size=DEFAULT_VINTED_AI_SIZE,
                     variants=1,
                 )
-                return [str(path) for path in list(result.get("generated_photo_paths", []) or []) if str(path).strip()]
+                generated_paths = [str(path) for path in list(result.get("generated_photo_paths", []) or []) if str(path).strip()]
+                LOGGER.info(
+                    "discord_vinted_ai_variant_done variant=%s generated=%s",
+                    variant_name,
+                    [Path(path).name for path in generated_paths],
+                )
+                return generated_paths
 
             return await _run_blocking(worker)
 
         enhanced_paths: list[str] = []
         for photo_path in photo_paths:
-            generated = await enhance_single(photo_path)
-            if not generated:
-                raise RuntimeError(f"OpenAI returned no enhanced photo for: {photo_path}")
-            enhanced_paths.extend(generated[:1])
+            per_photo_generated: list[str] = []
+            for variant_name, prompt in VINTED_AI_UPLOAD_VARIANT_PROMPTS:
+                try:
+                    generated = await enhance_single_variant(photo_path, variant_name, prompt)
+                except Exception:
+                    LOGGER.exception(
+                        "discord_vinted_ai_variant_failed variant=%s source=%s",
+                        variant_name,
+                        str(Path(photo_path).name),
+                    )
+                    raise
+                if not generated:
+                    raise RuntimeError(f"OpenAI returned no enhanced photo for: {photo_path} [{variant_name}]")
+                per_photo_generated.extend(generated[:1])
+            enhanced_paths.extend(per_photo_generated)
         return enhanced_paths
 
     @staticmethod
@@ -728,3 +950,10 @@ async def _run_blocking(func):
         import asyncio
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, func)
+
+
+def _file_path_to_data_url(path: Path) -> str:
+    file_path = path.expanduser().resolve()
+    mime_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+    encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"

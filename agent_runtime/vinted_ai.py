@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any
 
 DEFAULT_VINTED_AI_MODEL = "gpt-image-2"
 DEFAULT_VINTED_AI_SIZE = "1024x1536"
+DEFAULT_VINTED_AI_QUALITY = "high"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 VINTED_AI_SUPPORTED_SIZES = (
     "1024x1024",
@@ -16,6 +18,8 @@ VINTED_AI_SUPPORTED_SIZES = (
     "1536x1024",
     "auto",
 )
+
+LOGGER = logging.getLogger("agent_lab.vinted_ai")
 
 
 def generate_vinted_ai_variants(
@@ -26,6 +30,7 @@ def generate_vinted_ai_variants(
     output_dir: str | Path,
     model: str = DEFAULT_VINTED_AI_MODEL,
     size: str = DEFAULT_VINTED_AI_SIZE,
+    quality: str = DEFAULT_VINTED_AI_QUALITY,
     variants: int = 1,
     base_url: str | None = None,
 ) -> dict[str, object]:
@@ -45,6 +50,7 @@ def generate_vinted_ai_variants(
         "started_at": datetime.now().isoformat(timespec="seconds"),
         "model": str(model or DEFAULT_VINTED_AI_MODEL).strip() or DEFAULT_VINTED_AI_MODEL,
         "size": str(size or DEFAULT_VINTED_AI_SIZE).strip() or DEFAULT_VINTED_AI_SIZE,
+        "quality": str(quality or DEFAULT_VINTED_AI_QUALITY).strip() or DEFAULT_VINTED_AI_QUALITY,
         "variants_requested": variant_count,
         "prompt": cleaned_prompt,
         "source_photo_paths": [str(path.resolve()) for path in resolved_paths],
@@ -72,9 +78,26 @@ def generate_vinted_ai_variants(
             normalized_size = str(size or DEFAULT_VINTED_AI_SIZE).strip() or DEFAULT_VINTED_AI_SIZE
             if normalized_size.lower() != "auto":
                 request_kwargs["size"] = normalized_size
+            normalized_quality = str(quality or DEFAULT_VINTED_AI_QUALITY).strip() or DEFAULT_VINTED_AI_QUALITY
+            if normalized_quality.lower() != "auto":
+                request_kwargs["quality"] = normalized_quality
+            LOGGER.info(
+                "vinted_ai_openai_request_start model=%s size=%s quality=%s variants=%s source_count=%s output_dir=%s",
+                request_kwargs.get("model", ""),
+                request_kwargs.get("size", "auto"),
+                request_kwargs.get("quality", "auto"),
+                request_kwargs.get("n", 1),
+                len(resolved_paths),
+                str(target_dir),
+            )
             response = client.images.edit(**request_kwargs)
 
         data = list(getattr(response, "data", []) or [])
+        LOGGER.info(
+            "vinted_ai_openai_request_ok candidates=%s output_dir=%s",
+            len(data),
+            str(target_dir),
+        )
         log_payload["steps"] = list(log_payload.get("steps", [])) + [
             {"at": datetime.now().isoformat(timespec="seconds"), "message": f"OpenAI response received with {len(data)} candidate(s)."}
         ]
@@ -96,6 +119,7 @@ def generate_vinted_ai_variants(
             "ok": True,
             "model": str(model or DEFAULT_VINTED_AI_MODEL).strip() or DEFAULT_VINTED_AI_MODEL,
             "size": str(size or DEFAULT_VINTED_AI_SIZE).strip() or DEFAULT_VINTED_AI_SIZE,
+            "quality": str(quality or DEFAULT_VINTED_AI_QUALITY).strip() or DEFAULT_VINTED_AI_QUALITY,
             "prompt": cleaned_prompt,
             "source_photo_paths": [str(path.resolve()) for path in resolved_paths],
             "generated_photo_paths": generated_paths,
@@ -117,10 +141,24 @@ def generate_vinted_ai_variants(
         log_payload["steps"] = list(log_payload.get("steps", [])) + [
             {"at": result["generated_at"], "message": f"Saved {len(generated_paths)} image(s) to disk."}
         ]
+        LOGGER.info(
+            "vinted_ai_generate_done generated=%s files=%s output_dir=%s",
+            len(generated_paths),
+            [Path(path).name for path in generated_paths],
+            str(target_dir),
+        )
         _write_log(log_path, log_payload)
         return result
     except Exception as exc:
         failed_at = datetime.now().isoformat(timespec="seconds")
+        LOGGER.exception(
+            "vinted_ai_openai_request_failed model=%s size=%s quality=%s variants=%s output_dir=%s",
+            str(model or DEFAULT_VINTED_AI_MODEL).strip() or DEFAULT_VINTED_AI_MODEL,
+            str(size or DEFAULT_VINTED_AI_SIZE).strip() or DEFAULT_VINTED_AI_SIZE,
+            str(quality or DEFAULT_VINTED_AI_QUALITY).strip() or DEFAULT_VINTED_AI_QUALITY,
+            variant_count,
+            str(target_dir),
+        )
         log_payload.update(
             {
                 "ok": False,
