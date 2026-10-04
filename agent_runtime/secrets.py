@@ -32,6 +32,7 @@ class SecretStore:
             "project_configured": bool(self.data.get("project")),
             "agent_configured": bool(agent_id and agents.get(agent_id)),
             "discord_bot_configured": bool(self.data.get("discord_bot")),
+            "accordi_admin_configured": bool(self.data.get("accordi_admin")),
             "backend": self.backend,
         }
 
@@ -44,6 +45,9 @@ class SecretStore:
     def get_discord_bot_token(self) -> Optional[str]:
         return self._decrypt_optional(self.data.get("discord_bot"))
 
+    def get_accordi_admin_token(self) -> Optional[str]:
+        return self._decrypt_optional(self.data.get("accordi_admin"))
+
     def set_project(self, value: str) -> None:
         self._set("project", None, value)
 
@@ -52,6 +56,9 @@ class SecretStore:
 
     def set_discord_bot_token(self, value: str) -> None:
         self._set_named("discord_bot", value, label="Discord bot token", minimum_length=20, maximum_length=4096)
+
+    def set_accordi_admin_token(self, value: str) -> None:
+        self._set_named("accordi_admin", value, label="Accordi admin token", minimum_length=8, maximum_length=4096)
 
     def delete_project(self) -> None:
         with self.lock:
@@ -69,6 +76,12 @@ class SecretStore:
         with self.lock:
             self._delete_stored(self.data.get("discord_bot"))
             self.data["discord_bot"] = ""
+            self._save()
+
+    def delete_accordi_admin_token(self) -> None:
+        with self.lock:
+            self._delete_stored(self.data.get("accordi_admin"))
+            self.data["accordi_admin"] = ""
             self._save()
 
     def _set(self, section: str, agent_id: Optional[str], value: str) -> None:
@@ -94,13 +107,14 @@ class SecretStore:
 
     def _load(self) -> dict:
         if not self.path.exists():
-            return {"version": 3, "project": "", "agents": {}, "discord_bot": ""}
+            return {"version": 3, "project": "", "agents": {}, "discord_bot": "", "accordi_admin": ""}
         payload = json.loads(self.path.read_text(encoding="utf-8"))
         return {
             "version": int(payload.get("version", 3) or 3),
             "project": payload.get("project", ""),
             "agents": payload.get("agents", {}),
             "discord_bot": payload.get("discord_bot", ""),
+            "accordi_admin": payload.get("accordi_admin", ""),
         }
 
     def _save(self) -> None:

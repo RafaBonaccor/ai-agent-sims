@@ -69,10 +69,12 @@
           { "value": "Scarpe uomo", "label": "Men shoes" }
         ] },
         { "id": "max-results", "label": "Max items / search", "type": "number", "default": 250, "defaultFromUiSetting": "vinted_deal_hunter_max_results", "min": 0, "step": 1 },
+        { "id": "deal-hunter-min-price", "label": "Min item price for Discord", "type": "text", "default": "", "defaultFromUiSetting": "vinted_deal_hunter_min_price", "placeholder": "5.00" },
         { "id": "max-price", "label": "Max item price", "type": "text", "default": "", "defaultFromUiSetting": "vinted_deal_hunter_max_price", "placeholder": "19.90" },
         { "id": "deal-hunter-min-favorites", "label": "Min likes", "type": "number", "default": 70, "defaultFromUiSetting": "vinted_deal_hunter_min_favorites", "min": 1, "step": 1 },
         { "id": "deal-hunter-max-age-hours", "label": "Max age hours", "type": "number", "default": 24, "defaultFromUiSetting": "vinted_deal_hunter_max_age_hours", "min": 1, "step": 1 },
         { "id": "deal-hunter-loop-seconds", "label": "Loop pause seconds", "type": "number", "default": 5, "defaultFromUiSetting": "vinted_deal_hunter_loop_seconds", "min": 0, "step": 1 },
+        { "id": "deal-hunter-url-only-discord", "label": "Discord URL-only, no Vinted login", "type": "checkbox", "default": false, "defaultFromUiSetting": "vinted_deal_hunter_url_only_discord", "emitFalseFlag": true },
         { "id": "auto-submit-offers", "label": "Auto-submit offers", "type": "checkbox", "default": true, "emitFalseFlag": true },
         { "id": "browser-mode", "label": "Browser mode", "type": "select", "default": "chrome_normale", "defaultFromUiSetting": "browser_mode", "options": [
           { "value": "chrome_normale", "label": "Chrome normale" },
@@ -94,6 +96,29 @@
         "links-file",
         "db-path",
         "browser-mode",
+        { "id": "browser-user-data-dir", "label": "Browser user data dir", "type": "text", "default": "", "defaultFromUiSetting": "browser_user_data_dir", "placeholder": "/Users/.../Google/Chrome" },
+        { "id": "browser-profile-directory", "label": "Browser profile directory", "type": "text", "default": "Default", "defaultFromUiSetting": "browser_profile_directory", "placeholder": "Default" },
+        "refresh-browser-profile"
+      ]
+    },
+    "vinted.profile_monitor": {
+      "label": "Vinted profile monitor",
+      "description": "Track a seller profile, save hourly snapshots, and report active/new/gone listings.",
+      "risk": "browser-read",
+      "arguments": ["run", "vinted_profile", "--stdout-json", "--quiet", "--format", "none"],
+      "parameters": [
+        { "id": "profile-urls", "label": "Profile URLs (one per line)", "type": "textarea", "default": "https://www.vinted.it/member/262102939", "placeholder": "Paste one Vinted profile URL per line. Numeric IDs are accepted too." },
+        { "id": "interval-seconds", "label": "Check interval seconds", "type": "number", "default": 3600, "min": 0, "step": 60 },
+        { "id": "max-items", "label": "Max profile items", "type": "number", "default": 0, "min": 0, "step": 1 },
+        { "id": "db-path", "label": "SQLite DB path", "type": "text", "default": "data/scraper.db", "defaultFromUiSetting": "vinted_db_path", "placeholder": "data/scraper.db" },
+        { "id": "discord-profile-report", "label": "Send Discord report", "type": "checkbox", "default": true, "emitFalseFlag": true },
+        { "id": "discord-webhook-url", "label": "Discord webhook", "type": "text", "default": "", "defaultFromUiSetting": "vinted_discord_webhook_url", "placeholder": "https://discord.com/api/webhooks/..." },
+        { "id": "browser-mode", "label": "Browser mode", "type": "select", "default": "chrome_normale", "defaultFromUiSetting": "browser_mode", "options": [
+          { "value": "chrome_normale", "label": "Chrome normale" },
+          { "value": "sessione_persistente", "label": "Sessione persistente" },
+          { "value": "profilo_personalizzato", "label": "Profilo personalizzato" },
+          { "value": "isolated", "label": "Isolated" }
+        ] },
         { "id": "browser-user-data-dir", "label": "Browser user data dir", "type": "text", "default": "", "defaultFromUiSetting": "browser_user_data_dir", "placeholder": "/Users/.../Google/Chrome" },
         { "id": "browser-profile-directory", "label": "Browser profile directory", "type": "text", "default": "Default", "defaultFromUiSetting": "browser_profile_directory", "placeholder": "Default" },
         "refresh-browser-profile"

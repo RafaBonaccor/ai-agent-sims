@@ -471,6 +471,171 @@ class DiscordGateway:
                 allowed_mentions=discord.AllowedMentions.none(),
             )
 
+        @bot.tree.command(name="accordi_upload", description="Create a product on accordijewelry.com from Discord")
+        @app_commands.describe(
+            price="Product price, for example 10 or 10.50",
+            photo1="Product photo",
+            photo2="Optional second product photo for AI analysis",
+            photo3="Optional third product photo for AI analysis",
+            photo4="Optional fourth product photo for AI analysis",
+            name="Optional product name override",
+            description="Optional product description override",
+            category="Optional category override",
+            material="Optional material override",
+            collection_id="Optional collection id",
+            featured="Whether the product should be featured",
+        )
+        async def accordi_upload_command(
+            interaction: Any,
+            price: str,
+            photo1: DiscordAttachmentType,
+            photo2: Optional[DiscordAttachmentType] = None,
+            photo3: Optional[DiscordAttachmentType] = None,
+            photo4: Optional[DiscordAttachmentType] = None,
+            name: str = "",
+            description: str = "",
+            category: str = "",
+            material: str = "",
+            collection_id: str = "",
+            featured: bool = True,
+        ) -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            if gateway.project_bridge is None:
+                await interaction.response.send_message("Project upload bridge is not configured.", ephemeral=True)
+                return
+            gateway.logger.info(
+                "discord_slash_accordi_upload channel_id=%s price=%s attachments=%s name=%s category=%s material=%s collection_id=%s featured=%s",
+                str(interaction.channel_id),
+                price,
+                len([item for item in (photo1, photo2, photo3, photo4) if item is not None]),
+                name,
+                category,
+                material,
+                collection_id,
+                featured,
+            )
+            await interaction.response.defer(thinking=True)
+            attachments = [
+                DiscordAttachment(
+                    url=str(getattr(item, "url", "") or "").strip(),
+                    filename=str(getattr(item, "filename", "") or "").strip(),
+                    content_type=str(getattr(item, "content_type", "") or "").strip(),
+                )
+                for item in (photo1, photo2, photo3, photo4)
+                if item is not None
+            ]
+            content = "\n".join(
+                line
+                for line in (
+                    f"name: {name}" if name.strip() else "",
+                    f"description: {description}" if description.strip() else "",
+                    f"price: {price}" if price.strip() else "",
+                    f"category: {category}" if category.strip() else "",
+                    f"material: {material}" if material.strip() else "",
+                    f"collection_id: {collection_id}" if collection_id.strip() else "",
+                    f"featured: {'true' if featured else 'false'}",
+                )
+                if line
+            )
+            try:
+                result = await gateway.project_bridge.submit_accordi_product_upload(
+                    content=content,
+                    attachments=attachments,
+                )
+            except ValueError as error:
+                await interaction.followup.send(str(error), ephemeral=True)
+                return
+            await interaction.followup.send(
+                gateway.project_bridge.format_accordi_result(result),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+
+        @bot.tree.command(name="accordi_update", description="Update an existing accordijewelry.com product from Discord")
+        @app_commands.describe(
+            product_id="Existing product id",
+            price="Product price, for example 10 or 10.50",
+            photo1="Product photo",
+            photo2="Optional second product photo for AI analysis",
+            photo3="Optional third product photo for AI analysis",
+            photo4="Optional fourth product photo for AI analysis",
+            name="Optional product name override",
+            description="Optional product description override",
+            category="Optional category override",
+            material="Optional material override",
+            collection_id="Optional collection id",
+            featured="Whether the product should be featured",
+        )
+        async def accordi_update_command(
+            interaction: Any,
+            product_id: str,
+            price: str,
+            photo1: DiscordAttachmentType,
+            photo2: Optional[DiscordAttachmentType] = None,
+            photo3: Optional[DiscordAttachmentType] = None,
+            photo4: Optional[DiscordAttachmentType] = None,
+            name: str = "",
+            description: str = "",
+            category: str = "",
+            material: str = "",
+            collection_id: str = "",
+            featured: bool = True,
+        ) -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            if gateway.project_bridge is None:
+                await interaction.response.send_message("Project upload bridge is not configured.", ephemeral=True)
+                return
+            gateway.logger.info(
+                "discord_slash_accordi_update channel_id=%s product_id=%s price=%s attachments=%s name=%s category=%s material=%s collection_id=%s featured=%s",
+                str(interaction.channel_id),
+                product_id,
+                price,
+                len([item for item in (photo1, photo2, photo3, photo4) if item is not None]),
+                name,
+                category,
+                material,
+                collection_id,
+                featured,
+            )
+            await interaction.response.defer(thinking=True)
+            attachments = [
+                DiscordAttachment(
+                    url=str(getattr(item, "url", "") or "").strip(),
+                    filename=str(getattr(item, "filename", "") or "").strip(),
+                    content_type=str(getattr(item, "content_type", "") or "").strip(),
+                )
+                for item in (photo1, photo2, photo3, photo4)
+                if item is not None
+            ]
+            content = "\n".join(
+                line
+                for line in (
+                    f"name: {name}" if name.strip() else "",
+                    f"description: {description}" if description.strip() else "",
+                    f"price: {price}" if price.strip() else "",
+                    f"category: {category}" if category.strip() else "",
+                    f"material: {material}" if material.strip() else "",
+                    f"collection_id: {collection_id}" if collection_id.strip() else "",
+                    f"featured: {'true' if featured else 'false'}",
+                    f"product_id: {product_id}",
+                )
+                if line
+            )
+            try:
+                result = await gateway.project_bridge.submit_accordi_product_upload(
+                    content=content,
+                    attachments=attachments,
+                    product_id=product_id,
+                )
+            except ValueError as error:
+                await interaction.followup.send(str(error), ephemeral=True)
+                return
+            await interaction.followup.send(
+                gateway.project_bridge.format_accordi_result(result),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+
         ask_command.autocomplete("agent")(agent_autocomplete)
         use_command.autocomplete("agent")(agent_autocomplete)
         vinted_upload_command.autocomplete("agent")(agent_autocomplete)
@@ -598,13 +763,90 @@ class DiscordGateway:
 
         content = str(getattr(message, "content", "") or "").strip()
         mentioned = self._bot is not None and self._bot.user in getattr(message, "mentions", [])
+        attachments = list(getattr(message, "attachments", []) or [])
+        self.logger.info(
+            "discord_message_received channel_id=%s guild_id=%s mentioned=%s content=%s attachments=%s attachment_meta=%s",
+            channel_id,
+            guild_id,
+            mentioned,
+            content,
+            len(attachments),
+            [
+                {
+                    "filename": str(getattr(item, "filename", "") or "").strip(),
+                    "content_type": str(getattr(item, "content_type", "") or "").strip(),
+                    "url_present": bool(str(getattr(item, "url", "") or "").strip()),
+                }
+                for item in attachments
+            ],
+        )
         content = self._strip_bot_mention(content).strip() if mentioned else content
         default_agent = self.channel_defaults.get(str(channel_id), self.config.default_agent_id)
         parsed = parse_text_command(content, self.config.command_prefix, default_agent, mentioned)
         async def send(reply: str) -> None:
             await self._send_channel_message(channel, reply)
 
-        if (content or getattr(message, "attachments", None)) and parsed is None and self.project_bridge is not None:
+        if (content or attachments) and parsed is None and self.project_bridge is not None:
+            eleven_command = self.project_bridge.parse_eleven_script_text_command(
+                content,
+                prefix=self.config.command_prefix,
+                mentioned=mentioned,
+            )
+            if eleven_command is not None:
+                self.logger.info(
+                    "discord_text_eleven_command action=%s attachments=%s channel_id=%s",
+                    eleven_command.action,
+                    len(attachments),
+                    channel_id,
+                )
+                try:
+                    result = await self.project_bridge.submit_eleven_script(
+                        content=str((eleven_command.payload or {}).get("body", "") or ""),
+                        attachments=[
+                            DiscordAttachment(
+                                url=str(getattr(item, "url", "") or "").strip(),
+                                filename=str(getattr(item, "filename", "") or "").strip(),
+                                content_type=str(getattr(item, "content_type", "") or "").strip(),
+                            )
+                            for item in attachments
+                        ],
+                    )
+                except ValueError as error:
+                    await send(str(error))
+                    return
+                await send(self.project_bridge.format_eleven_script_result(result))
+                return
+            accordi_command = self.project_bridge.parse_accordi_upload_text_command(
+                content,
+                prefix=self.config.command_prefix,
+                mentioned=mentioned,
+            )
+            if accordi_command is not None:
+                self.logger.info(
+                    "discord_text_accordi_command action=%s product_id=%s attachments=%s channel_id=%s",
+                    accordi_command.action,
+                    str((accordi_command.payload or {}).get("product_id", "") or "").strip() or "-",
+                    len(attachments),
+                    channel_id,
+                )
+                try:
+                    result = await self.project_bridge.submit_accordi_product_upload(
+                        content=str((accordi_command.payload or {}).get("body", "") or ""),
+                        attachments=[
+                            DiscordAttachment(
+                                url=str(getattr(item, "url", "") or "").strip(),
+                                filename=str(getattr(item, "filename", "") or "").strip(),
+                                content_type=str(getattr(item, "content_type", "") or "").strip(),
+                            )
+                            for item in attachments
+                        ],
+                        product_id=str((accordi_command.payload or {}).get("product_id", "") or "").strip(),
+                    )
+                except ValueError as error:
+                    await send(str(error))
+                    return
+                await send(self.project_bridge.format_accordi_result(result))
+                return
             project_command = self.project_bridge.parse_vinted_upload_text_command(
                 content,
                 prefix=self.config.command_prefix,
@@ -617,7 +859,7 @@ class DiscordGateway:
                     project_command.action,
                     project_command.agent_id or default_agent or "-",
                     bool((project_command.payload or {}).get("enhance_photos", False)),
-                    len(list(getattr(message, "attachments", []) or [])),
+                    len(attachments),
                     channel_id,
                 )
                 try:
@@ -629,7 +871,7 @@ class DiscordGateway:
                                 filename=str(getattr(item, "filename", "") or "").strip(),
                                 content_type=str(getattr(item, "content_type", "") or "").strip(),
                             )
-                            for item in list(getattr(message, "attachments", []) or [])
+                            for item in attachments
                         ],
                         agent_id=project_command.agent_id or default_agent,
                         enhance_photos=bool((project_command.payload or {}).get("enhance_photos", False)),

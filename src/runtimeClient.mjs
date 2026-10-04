@@ -198,12 +198,23 @@ export class RuntimeClient {
     });
   }
 
+  setAccordiAdminSecret(apiKey) {
+    return this.request("/api/secrets/accordi-admin", {
+      method: "PUT",
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+  }
+
   deleteProjectSecret() {
     return this.request("/api/secrets/project", { method: "DELETE" });
   }
 
   deleteDiscordBotSecret() {
     return this.request("/api/secrets/discord-bot", { method: "DELETE" });
+  }
+
+  deleteAccordiAdminSecret() {
+    return this.request("/api/secrets/accordi-admin", { method: "DELETE" });
   }
 
   setAgentSecret(agentId, apiKey) {

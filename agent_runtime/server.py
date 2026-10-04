@@ -375,6 +375,23 @@ async def delete_discord_bot_secret() -> dict[str, object]:
     return secrets().status()
 
 
+@app.put("/api/secrets/accordi-admin")
+async def set_accordi_admin_secret(value: SecretValue) -> dict[str, object]:
+    try:
+        secrets().set_accordi_admin_token(value.api_key)
+        LOGGER.info("secret_updated scope=accordi-admin")
+        return secrets().status()
+    except (RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.delete("/api/secrets/accordi-admin")
+async def delete_accordi_admin_secret() -> dict[str, object]:
+    secrets().delete_accordi_admin_token()
+    LOGGER.info("secret_deleted scope=accordi-admin")
+    return secrets().status()
+
+
 @app.post("/api/vinted-ai/generate", response_model=VintedAIGenerationResponse)
 async def generate_vinted_ai_image_variants(request: VintedAIGenerationRequest) -> VintedAIGenerationResponse:
     project_key = secrets().get_project()

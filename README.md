@@ -36,6 +36,94 @@ alla postazione `Schedule Desk`; nella UI puoi premere `Schedule` per chiedergli
 di proporre orari, cron e follow-up. L'agente decide e spiega lo schedule, mentre
 il timer effettivo resta nel runtime nativo.
 
+## Indice
+
+- [Visione](#visione)
+- [Architettura](#architettura)
+- [Run](#run)
+- [Setup macOS completo](#setup-macos-completo)
+- [Layout del gioco](#layout-del-gioco)
+- [Agenti e provider](#agenti-e-provider)
+- [Shared LLM Wiki Memory](#shared-llm-wiki-memory)
+- [RecursiveMAS-style collaboration](#recursivemas-style-collaboration)
+- [Integrazione Discord](#integrazione-discord)
+- [Progetti esterni](#progetti-esterni)
+- [The Main Scraper](#the-main-scraper)
+- [Browser ibrido](#browser-ibrido-scraper-batch--controllo-live)
+- [Vast.ai e ComfyUI media generation](#vastai-e-comfyui-media-generation)
+- [File principali](#file-principali)
+- [Controlli](#controlli)
+
+## Visione
+
+Agent Protocol Lab e un control plane visuale per agenti AI. L'obiettivo non e
+soltanto avere una chat con piu personaggi, ma rendere osservabile il lavoro
+agentico: chi prende un task, quale provider usa, quali strumenti invoca, dove
+finiscono i risultati, come la memoria viene aggiornata e quando serve intervento
+umano.
+
+Il gioco 3D e quindi la superficie operativa del sistema:
+
+- gli agenti sono oggetti persistenti, configurabili e osservabili;
+- le workstation rappresentano ruoli e responsabilita;
+- il Project Gateway collega gli agenti a software reali come The Main Scraper;
+- la memoria wiki trasforma conversazioni e task in conoscenza revisionabile;
+- Discord permette di usare gli stessi agenti da fuori l'interfaccia 3D.
+
+La direzione architetturale e Hermes-like: agenti specializzati, routing
+multilingua, memoria condivisa, strumenti espliciti, job esterni e comunicazione
+visibile tra agenti. Il progetto non incorpora Hermes, ma ne prende ispirazione
+per costruire un runtime controllabile e modificabile localmente.
+
+## Architettura
+
+Il sistema e composto da quattro livelli principali.
+
+| Livello | Responsabilita | File principali |
+| --- | --- | --- |
+| Frontend 3D | scena, agenti, stanze, popup, notifiche, Project Gateway UI | `index.html`, `app.mjs`, `styles.css`, `src/agentWorld.mjs` |
+| Runtime API | FastAPI, WebSocket, lifecycle agenti, task, settings, secrets | `agent_runtime/server.py`, `agent_runtime/engine.py`, `agent_runtime/storage.py` |
+| Execution layer | provider LLM, tool registry, browser tools, memory tools | `agent_runtime/execution.py`, `agent_runtime/router.py`, `agent_runtime/browser_control.py` |
+| Integrazioni | scraper, Discord, Codex bridge, ComfyUI/Vast helper | `agent_runtime/project_gateway.py`, `agent_runtime/discord_gateway.py`, `integrations/`, `catalog_server_vast.py` |
+
+Flusso tipico:
+
+```text
+UI 3D / Discord
+  -> Runtime API
+  -> agent/router/provider/tool
+  -> Project Gateway o Browser Control
+  -> risultato/evento/log
+  -> chat agente, notifiche, memoria wiki
+```
+
+Gli eventi live passano da WebSocket e vengono usati dal gioco per aggiornare
+stato agenti, job, notifiche, chat e output. Lo stato persistente resta in
+SQLite, mentre file locali come `config/projects.local.json` e `data/secrets.json`
+contengono configurazioni specifiche della macchina.
+
+## Agenti e provider
+
+Gli agenti iniziali sono definiti in `config/agents.json`, ma possono essere
+creati e modificati dalla UI. Ogni agente puo avere:
+
+- provider e modello;
+- toolset disponibili;
+- budget e policy;
+- prompt/istruzioni;
+- memoria privata;
+- workstation nel mondo 3D;
+- routing verso altri agenti.
+
+La risoluzione delle API key segue questa precedenza:
+
+1. chiave specifica dell'agente;
+2. chiave globale di progetto;
+3. variabili ambiente compatibili col provider.
+
+Questo permette di configurare una sola key globale e farla usare anche dagli
+agenti che non hanno una chiave dedicata.
+
 ## Shared LLM Wiki Memory
 
 The runtime now has a wiki-style shared memory path inspired by the `llm wiki`
@@ -73,6 +161,28 @@ AGENT_LAB_WIKI_MAINTENANCE_INTERVAL_SECONDS=3600 ./run.command --no-browser
 
 Retrieval is local and deterministic: it uses section-level TF-IDF-style scoring
 with phrase boosts, so it works offline without vector database or embedding API.
+
+## RecursiveMAS-style collaboration
+
+Il paper RecursiveMAS propone una collaborazione ricorsiva tra agenti tramite
+stati latenti invece di messaggi testuali. Con API chiuse non abbiamo accesso
+agli hidden states dei modelli, quindi il progetto implementa la parte applicabile
+come recursive structured collaboration: gli agenti si passano stato strutturato,
+non solo chat libera.
+
+La versione pratica per questo runtime e:
+
+- un agente riceve intent e contesto utente;
+- il router decide se restare sull'agente corrente, consultare un altro agente o
+  delegare un job;
+- gli agenti producono state packet con obiettivo, evidenze, incertezze, azioni
+  suggerite e riferimenti memoria;
+- Memory Core conserva cio che puo diventare conoscenza durevole;
+- il gioco mostra messaggi e notifiche quando gli agenti si consultano.
+
+Questa impostazione non replica RecursiveMAS a livello latente, ma ne riprende
+la logica utile per il prodotto: collaborazione iterativa, riduzione del testo
+inutile, memoria centrale e miglioramento progressivo dello stato di lavoro.
 
 ## Layout del gioco
 
@@ -156,6 +266,8 @@ Comandi slash disponibili:
 - `/agents`: mostra gli agenti disponibili.
 - `/ask agent:<id> prompt:<messaggio>`: invia un messaggio chat a un agente.
 - `/use agent:<id>`: imposta l'agente predefinito del canale.
+- `/codex prompt:<messaggio>`: invia una richiesta al bridge Codex CLI, quando
+  configurato.
 
 Il bot pubblica la risposta nello stesso canale quando il task agentico termina.
 La risposta passa dallo stesso runtime della UI: provider, memoria, wiki,
@@ -171,6 +283,35 @@ export AGENT_LAB_DISCORD_MESSAGE_CONTENT=1
 Questo richiede il Message Content Intent nel Developer Portal Discord. Senza
 questa variabile restano attivi gli slash command, che sono il percorso
 consigliato.
+
+Comandi testuali principali:
+
+- `!agents`: lista agenti.
+- `!use researcher`: imposta agente predefinito del canale.
+- `!ask researcher <messaggio>`: parla con un agente specifico.
+- `!chat <messaggio>`: parla con l'agente predefinito.
+- `!codex <messaggio>`: invia una richiesta al Codex bridge.
+- `!codex-model show|set|clear`: legge o modifica il modello usato dal Codex
+  bridge per quel canale.
+- `!upload` / `!upload-ai-photo`: prepara upload Vinted da foto e testo.
+- `!accordi`: crea un prodotto su Accordi Jewelry usando foto, prezzo e AI
+  vision per nome, descrizione, categoria e materiale.
+- `!script-eleven`: genera uno script breve per voiceover/social a partire da
+  una foto gioiello, pronto da usare con ElevenLabs.
+
+`!script-eleven` richiede almeno una foto allegata e usa la key OpenAI di progetto.
+Puoi aggiungere contesto libero, per esempio:
+
+```text
+!script-eleven prezzo 14,90 focus regalo
+```
+
+La risposta include hook, script entro circa 30 secondi, testo a schermo, CTA e
+tre hook alternativi.
+
+Per Accordi Jewelry, configura il token admin dal pannello impostazioni del gioco
+oppure con variabile ambiente `ADMIN_API_TOKEN`. Il bot invia `multipart/form-data`
+con campo file reale `file`, non base64 e non URL obbligatorio.
 
 ## Briefing mattutino AI
 
@@ -332,6 +473,8 @@ separato. `Controlla configurazione` esegue invece soltanto il comando CLI `stat
 Su macOS, l'azione `Apri interfaccia scraper` viene aperta tramite Terminal:
 il launch headless diretto dal backend faceva abortire il processo Tk della GUI.
 
+## The Main Scraper
+
 Nella GUI Vinted di The Main Scraper puoi salvare e riusare termini o URL di
 ricerca. I valori vengono persistiti nel file
 `projects/main-scraper/output/_saved_search_terms.json`, separati dalle run
@@ -377,6 +520,49 @@ ogni nuovo affare confermato viene inviato una sola volta al canale configurato,
 con deduplica persistente nel DB SQLite.
 Il badge stato nell'header del main scraper e colorato: grigio `Idle`, verde
 `Running`, rosso `Stopping...`, rosso scuro `Error`.
+
+### Upload Vinted
+
+L'upload Vinted puo partire dalla GUI dello scraper, da CLI o da Discord. Il
+flusso supporta:
+
+- piu foto per annuncio;
+- analisi AI della foto per titolo, descrizione e categoria;
+- prezzo passato dall'utente;
+- valori predefiniti per brand, condizioni e materiale;
+- salvataggio bozza o pubblicazione;
+- riuso del browser/profilo Vinted quando possibile;
+- login assistito con marker account e notifiche quando l'accesso manca.
+
+Da Discord, `!upload` usa la foto allegata e il prezzo scritto nel messaggio.
+`!upload-ai-photo` genera prima varianti AI della foto e poi usa quelle per il
+caricamento.
+
+### Accordi Jewelry
+
+`!accordi` crea o aggiorna prodotti su `accordijewelry.com` usando la API admin.
+Il comando usa OpenAI vision per compilare i campi prodotto quando l'utente passa
+solo foto e prezzo.
+
+Esempio:
+
+```text
+!accordi prezzo 20
+```
+
+con una foto allegata. Il runtime genera:
+
+- `name`;
+- `slug`;
+- `description`;
+- `price_cents`;
+- `category`;
+- `material`;
+- `featured`;
+- `file` multipart.
+
+Se lo slug esiste gia, il backend Accordi puo rifiutare la creazione. In quel
+caso serve usare un update con product id oppure generare uno slug diverso.
 
 ## Browser ibrido: scraper batch + controllo live
 
@@ -427,6 +613,57 @@ Il backend `mock` valida il contratto runtime senza aprire Chrome. Il backend
 `test_agent_browser_tools.py` passa dal loop agente -> tool registry -> browser
 control, quindi verifica il percorso che useranno gli agenti con toolset
 `browser`.
+
+## Vast.ai e ComfyUI media generation
+
+La root include `catalog_server_vast.py`, un MVP autonomo per generare cataloghi
+media su Vast.ai usando ComfyUI. E pensato per essere copiato su una istanza Vast
+con ComfyUI gia presente, lanciato da terminale Jupyter e usato tramite una
+piccola UI web.
+
+Il file si occupa da solo del bootstrap Python:
+
+- se `flask` e `requests` non sono disponibili, crea un venv locale;
+- installa le dipendenze dentro `/workspace/catalog-venv`;
+- si riavvia nel Python del venv;
+- non modifica il Python di sistema Debian.
+
+Avvio tipico quando ComfyUI e gia acceso e i modelli sono gia presenti:
+
+```bash
+python3 catalog_server_vast.py \
+  --comfyui /workspace/ComfyUI \
+  --port 8000 \
+  --password "scegli-una-password" \
+  --no-start-comfyui \
+  --skip-model-downloads
+```
+
+Avvio lasciando allo script il tentativo di partire con ComfyUI:
+
+```bash
+python3 catalog_server_vast.py \
+  --comfyui /workspace/ComfyUI \
+  --port 8000 \
+  --password "scegli-una-password" \
+  --skip-model-downloads
+```
+
+Il server espone:
+
+- `GET /`: UI web per upload reference e scelta template;
+- `POST /generate`: crea un job;
+- `GET /status/<job_id>`: stato avanzamento;
+- `GET /download/<job_id>`: ZIP finale;
+- `GET /health`: stato server e socket ComfyUI.
+
+I template inclusi coprono ecommerce white, modella, reference modella, mano,
+jewelry stand, luxury fabric, marble, black luxury, macro, Capri, sunset, gift e
+social ad. Il template `model_reference` richiede una seconda immagine reference.
+
+Lo script resta un MVP: i job sono in memoria e vengono persi se il processo si
+riavvia. Gli output e gli upload vengono comunque salvati sotto
+`/workspace/catalog_jobs` o nella directory parent del path ComfyUI configurato.
 
 ## Controlli
 

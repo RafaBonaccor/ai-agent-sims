@@ -74,6 +74,7 @@ const systemSettingsForm = document.querySelector("#system-settings-form");
 const systemSettingsError = document.querySelector("#system-settings-error");
 const systemProjectKeyStatus = document.querySelector("#system-project-key-status");
 const systemDiscordBotStatus = document.querySelector("#system-discord-bot-status");
+const systemAccordiAdminStatus = document.querySelector("#system-accordi-admin-status");
 const agentSettingsDialog = document.querySelector("#agent-settings-dialog");
 const agentSettingsForm = document.querySelector("#agent-settings-form");
 const agentSettingsError = document.querySelector("#agent-settings-error");
@@ -5339,13 +5340,15 @@ function renderSecretStatus(status) {
 }
 
 function renderSystemSecretStatus(status) {
-  if (!systemProjectKeyStatus || !systemDiscordBotStatus) {
+  if (!systemProjectKeyStatus || !systemDiscordBotStatus || !systemAccordiAdminStatus) {
     return;
   }
   systemProjectKeyStatus.textContent = `Project: ${status.project_configured ? "configured" : "not configured"}`;
   systemDiscordBotStatus.textContent = `Discord bot token: ${status.discord_bot_configured ? "configured" : "not configured"}`;
+  systemAccordiAdminStatus.textContent = `Accordi admin token: ${status.accordi_admin_configured ? "configured" : "not configured"}`;
   systemProjectKeyStatus.classList.toggle("secret-status--configured", status.project_configured);
   systemDiscordBotStatus.classList.toggle("secret-status--configured", status.discord_bot_configured);
+  systemAccordiAdminStatus.classList.toggle("secret-status--configured", status.accordi_admin_configured);
 }
 
 function splitNumericIds(value) {
@@ -5578,6 +5581,7 @@ async function openSystemSettings() {
     systemSettingsField("discord_allowed_guild_ids").value = (settings.discord?.allowed_guild_ids ?? []).join(", ");
     systemSettingsField("discord_allowed_channel_ids").value = (settings.discord?.allowed_channel_ids ?? []).join(", ");
     systemSettingsField("discord_bot_token").value = "";
+    systemSettingsField("accordi_admin_token").value = "";
     systemSettingsField("discord_error_notifications").value = String(Boolean(settings.diagnostics?.discord_error_notifications));
     systemSettingsField("discord_webhook_url").value = settings.diagnostics?.discord_webhook_url ?? "";
     updateSystemProviderControls(false);
@@ -6478,6 +6482,11 @@ systemSettingsForm?.addEventListener("submit", async (event) => {
       const status = await runtimeClient.setDiscordBotSecret(value("discord_bot_token"));
       renderSystemSecretStatus(status);
       systemSettingsField("discord_bot_token").value = "";
+    }
+    if (value("accordi_admin_token")) {
+      const status = await runtimeClient.setAccordiAdminSecret(value("accordi_admin_token"));
+      renderSystemSecretStatus(status);
+      systemSettingsField("accordi_admin_token").value = "";
     }
     applySystemSettingsToUi(settings);
     const agents = await runtimeClient.listAgents();

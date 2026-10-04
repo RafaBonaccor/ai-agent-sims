@@ -82,21 +82,24 @@ def generate_vinted_ai_variants(
             if normalized_quality.lower() != "auto":
                 request_kwargs["quality"] = normalized_quality
             LOGGER.info(
-                "vinted_ai_openai_request_start model=%s size=%s quality=%s variants=%s source_count=%s output_dir=%s",
+                "vinted_ai_openai_request_start model=%s size=%s quality=%s variants=%s source_count=%s source_names=%s output_dir=%s prompt=%s",
                 request_kwargs.get("model", ""),
                 request_kwargs.get("size", "auto"),
                 request_kwargs.get("quality", "auto"),
                 request_kwargs.get("n", 1),
                 len(resolved_paths),
+                [path.name for path in resolved_paths],
                 str(target_dir),
+                cleaned_prompt,
             )
             response = client.images.edit(**request_kwargs)
 
         data = list(getattr(response, "data", []) or [])
         LOGGER.info(
-            "vinted_ai_openai_request_ok candidates=%s output_dir=%s",
+            "vinted_ai_openai_request_ok candidates=%s output_dir=%s source_names=%s",
             len(data),
             str(target_dir),
+            [path.name for path in resolved_paths],
         )
         log_payload["steps"] = list(log_payload.get("steps", [])) + [
             {"at": datetime.now().isoformat(timespec="seconds"), "message": f"OpenAI response received with {len(data)} candidate(s)."}
@@ -152,12 +155,14 @@ def generate_vinted_ai_variants(
     except Exception as exc:
         failed_at = datetime.now().isoformat(timespec="seconds")
         LOGGER.exception(
-            "vinted_ai_openai_request_failed model=%s size=%s quality=%s variants=%s output_dir=%s",
+            "vinted_ai_openai_request_failed model=%s size=%s quality=%s variants=%s output_dir=%s source_names=%s prompt=%s",
             str(model or DEFAULT_VINTED_AI_MODEL).strip() or DEFAULT_VINTED_AI_MODEL,
             str(size or DEFAULT_VINTED_AI_SIZE).strip() or DEFAULT_VINTED_AI_SIZE,
             str(quality or DEFAULT_VINTED_AI_QUALITY).strip() or DEFAULT_VINTED_AI_QUALITY,
             variant_count,
             str(target_dir),
+            [path.name for path in resolved_paths],
+            cleaned_prompt,
         )
         log_payload.update(
             {

@@ -458,6 +458,14 @@
               <small>Stored in the system secret store. Saving updates the runtime bot configuration immediately.</small>
             </div>
             <label class="form-grid__wide">
+              <span>Accordi admin token</span>
+              <input name="accordi_admin_token" type="password" autocomplete="new-password" placeholder="Leave empty to keep current token" />
+            </label>
+            <div class="secret-status form-grid__wide">
+              <span id="system-accordi-admin-status">Accordi admin token: not configured</span>
+              <small>Used by Discord Accordi upload commands. Stored in the system secret store.</small>
+            </div>
+            <label class="form-grid__wide">
               <span>Allowed guild IDs</span>
               <input name="discord_allowed_guild_ids" placeholder="123456789012345678, 987654321098765432" />
             </label>
