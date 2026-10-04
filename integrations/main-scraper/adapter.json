@@ -124,6 +124,28 @@
         "refresh-browser-profile"
       ]
     },
+    "vinted.profile_check": {
+      "label": "Vinted profile quick check",
+      "description": "Run one immediate seller profile check without the hourly timer, then finish.",
+      "risk": "browser-read",
+      "arguments": ["run", "vinted_profile", "--stdout-json", "--quiet", "--format", "none", "--interval-seconds", "0"],
+      "parameters": [
+        { "id": "profile-urls", "label": "Profile URLs (one per line)", "type": "textarea", "default": "https://www.vinted.it/member/262102939", "placeholder": "Paste one Vinted profile URL per line. Numeric IDs are accepted too." },
+        { "id": "max-items", "label": "Max profile items", "type": "number", "default": 0, "min": 0, "step": 1 },
+        { "id": "db-path", "label": "SQLite DB path", "type": "text", "default": "data/scraper.db", "defaultFromUiSetting": "vinted_db_path", "placeholder": "data/scraper.db" },
+        { "id": "discord-profile-report", "label": "Send Discord report", "type": "checkbox", "default": true, "emitFalseFlag": true },
+        { "id": "discord-webhook-url", "label": "Discord webhook", "type": "text", "default": "", "defaultFromUiSetting": "vinted_discord_webhook_url", "placeholder": "https://discord.com/api/webhooks/..." },
+        { "id": "browser-mode", "label": "Browser mode", "type": "select", "default": "chrome_normale", "defaultFromUiSetting": "browser_mode", "options": [
+          { "value": "chrome_normale", "label": "Chrome normale" },
+          { "value": "sessione_persistente", "label": "Sessione persistente" },
+          { "value": "profilo_personalizzato", "label": "Profilo personalizzato" },
+          { "value": "isolated", "label": "Isolated" }
+        ] },
+        { "id": "browser-user-data-dir", "label": "Browser user data dir", "type": "text", "default": "", "defaultFromUiSetting": "browser_user_data_dir", "placeholder": "/Users/.../Google/Chrome" },
+        { "id": "browser-profile-directory", "label": "Browser profile directory", "type": "text", "default": "Default", "defaultFromUiSetting": "browser_profile_directory", "placeholder": "Default" },
+        "refresh-browser-profile"
+      ]
+    },
     "vinted.upload": {
       "label": "Vinted upload",
       "description": "Prepare or publish one Vinted listing using saved browser settings by default.",
