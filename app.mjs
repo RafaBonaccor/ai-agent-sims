@@ -168,6 +168,7 @@ const projectDialogActions = projectDialog?.querySelector(".dialog-actions");
 const runProjectActionButton = document.querySelector("#run-project-action");
 
 const LAYOUT_STORAGE_KEY = "agent-protocol-lab-layout-v1";
+const PROJECT_LIST_PARAMETERS_STORAGE_PREFIX = "agent-protocol-lab-project-list-parameters-v1";
 
 function loadStoredLayout() {
   try {
@@ -3870,10 +3871,29 @@ function renderProjectParameters() {
         const checked = parameter.default ? " checked" : "";
         return `<label class="${checkedClass}"><span>${label}</span><input data-project-parameter="${id}" type="checkbox"${checked} /></label>`;
       }
+      if (type === "duration") {
+        return projectDurationParameterHtml(parameter);
+      }
+      if (type === "list") {
+        const storedRows = readStoredProjectListParameterRows(id);
+        const rows = storedRows ?? splitProjectListParameterRows(parameter.default);
+        const renderedRows = (rows.length ? rows : [{ name: "", url: "" }])
+          .map((row) => projectListParameterRowHtml(id, parameter, row))
+          .join("");
+        const addLabel = escapeHtml(parameter.addLabel ?? "+ Add");
+        return `
+          <label class="project-parameter-list" data-project-list="${escapeHtml(id)}">
+            <span>${escapeHtml(label)}</span>
+            <div class="project-parameter-list__rows" data-project-list-rows="${escapeHtml(id)}">${renderedRows}</div>
+            <button class="button button--secondary button--compact" type="button" data-project-list-add="${escapeHtml(id)}">${addLabel}</button>
+          </label>
+        `;
+      }
       const value = parameter.default !== undefined && parameter.default !== null ? ` value="${String(parameter.default).replaceAll('"', "&quot;")}"` : "";
       return `<label class="${checkedClass}"><span>${label}</span><input data-project-parameter="${id}" type="${type}"${value}${placeholder}${min}${max}${step} /></label>`;
     })
     .join("");
+  setupProjectListParameters();
   projectRisk.textContent = action ? `Risk: ${action.risk}` : "";
   if (action?.description) {
     projectRisk.textContent += ` | ${action.description}`;
@@ -3884,6 +3904,23 @@ function renderProjectParameters() {
 
 function readProjectParameters() {
   const parameters = {};
+  for (const list of projectParameters.querySelectorAll("[data-project-list]")) {
+    const id = list.dataset.projectList;
+    const rows = readProjectListRowsFromElement(list);
+    persistProjectListParameterRows(id, rows);
+    const values = rows.map((row) => row.url.trim()).filter(Boolean);
+    if (values.length) {
+      parameters[id] = values.join("\n");
+    }
+  }
+  for (const input of projectParameters.querySelectorAll("[data-project-duration-value]")) {
+    const id = input.dataset.projectDurationValue;
+    const value = Number(String(input.value ?? "").trim() || "0");
+    const unit = projectParameters.querySelector(`[data-project-duration-unit="${CSS.escape(id)}"]`)?.value ?? "seconds";
+    if (Number.isFinite(value) && value >= 0) {
+      parameters[id] = Math.round(value * projectDurationUnitMultiplier(unit));
+    }
+  }
   for (const input of projectParameters.querySelectorAll("[data-project-parameter]")) {
     if (input.type === "checkbox") {
       parameters[input.dataset.projectParameter] = input.checked;
@@ -3897,13 +3934,265 @@ function readProjectParameters() {
   return parameters;
 }
 
+function projectDurationParameterHtml(parameter) {
+  const id = parameter.id;
+  const label = parameter.label ?? id;
+  const duration = splitProjectDurationValue(parameter.default, parameter.defaultUnit);
+  const min = parameter.min !== undefined ? ` min="${parameter.min}"` : ' min="0"';
+  const max = parameter.max !== undefined ? ` max="${parameter.max}"` : "";
+  const step = parameter.step !== undefined ? ` step="${parameter.step}"` : ' step="1"';
+  const help = parameter.help ? `<small>${escapeHtml(parameter.help)}</small>` : "";
+  const options = [
+    ["seconds", "seconds"],
+    ["minutes", "minutes"],
+    ["hours", "hours"],
+  ].map(([value, optionLabel]) => `<option value="${value}"${duration.unit === value ? " selected" : ""}>${optionLabel}</option>`).join("");
+  return `
+    <label class="project-parameter-duration">
+      <span>${escapeHtml(label)}</span>
+      <div class="project-parameter-duration__controls">
+        <input data-project-duration-value="${escapeHtml(id)}" type="number" value="${escapeHtml(duration.value)}"${min}${max}${step} />
+        <select data-project-duration-unit="${escapeHtml(id)}">${options}</select>
+      </div>
+      ${help}
+    </label>
+  `;
+}
+
+function splitProjectDurationValue(value, preferredUnit = "") {
+  const seconds = Math.max(0, Number(value ?? 0) || 0);
+  const preferred = String(preferredUnit || "").toLowerCase();
+  if (preferred && ["seconds", "minutes", "hours"].includes(preferred)) {
+    return { value: formatProjectDurationValue(seconds / projectDurationUnitMultiplier(preferred)), unit: preferred };
+  }
+  if (seconds > 0 && seconds % 3600 === 0) {
+    return { value: formatProjectDurationValue(seconds / 3600), unit: "hours" };
+  }
+  if (seconds > 0 && seconds % 60 === 0) {
+    return { value: formatProjectDurationValue(seconds / 60), unit: "minutes" };
+  }
+  return { value: formatProjectDurationValue(seconds), unit: "seconds" };
+}
+
+function projectDurationUnitMultiplier(unit) {
+  if (unit === "hours") {
+    return 3600;
+  }
+  if (unit === "minutes") {
+    return 60;
+  }
+  return 1;
+}
+
+function formatProjectDurationValue(value) {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+}
+
+function setProjectDurationValue(id, seconds, preferredUnit = "") {
+  const input = projectParameters.querySelector(`[data-project-duration-value="${CSS.escape(id)}"]`);
+  const unit = projectParameters.querySelector(`[data-project-duration-unit="${CSS.escape(id)}"]`);
+  if (!input || !unit) {
+    return;
+  }
+  const duration = splitProjectDurationValue(seconds, preferredUnit);
+  input.value = duration.value;
+  unit.value = duration.unit;
+}
+
+function projectListParameterStorageKey(id) {
+  const projectId = projectSelect?.value || "project";
+  return `${PROJECT_LIST_PARAMETERS_STORAGE_PREFIX}:${projectId}:${id}`;
+}
+
+function normalizeProjectListRow(row) {
+  if (row && typeof row === "object") {
+    return {
+      name: String(row.name ?? row.label ?? "").trim(),
+      url: String(row.url ?? row.value ?? "").trim(),
+    };
+  }
+  return {
+    name: "",
+    url: String(row ?? "").trim(),
+  };
+}
+
+function splitProjectListParameterRows(value) {
+  if (Array.isArray(value)) {
+    return value.map(normalizeProjectListRow);
+  }
+  return splitProjectListParameterValue(value).map((url) => ({ name: "", url }));
+}
+
+function splitProjectListParameterValue(value) {
+  return String(value ?? "")
+    .replaceAll("\r", "\n")
+    .replaceAll(";", "\n")
+    .split("\n")
+    .flatMap((chunk) => chunk.split(","))
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function readStoredProjectListParameterRows(id) {
+  try {
+    const raw = window.localStorage?.getItem(projectListParameterStorageKey(id));
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return null;
+    }
+    const rows = parsed.map(normalizeProjectListRow);
+    return rows.length ? rows : [{ name: "", url: "" }];
+  } catch (_error) {
+    return null;
+  }
+}
+
+function persistProjectListParameterRows(id, rows) {
+  if (!id) {
+    return;
+  }
+  try {
+    const normalizedRows = (Array.isArray(rows) ? rows : [])
+      .map(normalizeProjectListRow);
+    window.localStorage?.setItem(projectListParameterStorageKey(id), JSON.stringify(normalizedRows.length ? normalizedRows : [{ name: "", url: "" }]));
+  } catch (_error) {
+    // localStorage can be unavailable in private/restricted contexts; the job can still run.
+  }
+}
+
+function projectListParameterRowHtml(id, parameter = {}, row = {}) {
+  const normalized = normalizeProjectListRow(row);
+  const placeholder = parameter.placeholder ?? "";
+  const namePlaceholder = parameter.namePlaceholder ?? "Profile name";
+  const renderedPlaceholder = placeholder ? ` placeholder="${escapeHtml(placeholder)}"` : "";
+  const renderedNamePlaceholder = namePlaceholder ? ` placeholder="${escapeHtml(namePlaceholder)}"` : "";
+  return `
+    <div class="project-parameter-list__row">
+      <input data-project-list-name="${escapeHtml(id)}" type="text" value="${escapeHtml(normalized.name)}"${renderedNamePlaceholder} />
+      <input data-project-list-input="${escapeHtml(id)}" type="text" value="${escapeHtml(normalized.url)}"${renderedPlaceholder} />
+      <button class="button button--secondary button--compact" type="button" data-project-list-remove="${escapeHtml(id)}">−</button>
+    </div>
+  `;
+}
+
+function readProjectListRowsFromElement(list) {
+  return [...list.querySelectorAll(".project-parameter-list__row")].map((row) => ({
+    name: String(row.querySelector("[data-project-list-name]")?.value ?? "").trim(),
+    url: String(row.querySelector("[data-project-list-input]")?.value ?? "").trim(),
+  }));
+}
+
+function persistProjectListFromElement(list) {
+  if (!list) {
+    return;
+  }
+  persistProjectListParameterRows(list.dataset.projectList, readProjectListRowsFromElement(list));
+}
+
+function setProjectListRows(list, rows, parameter = {}) {
+  if (!list) {
+    return;
+  }
+  const id = list.dataset.projectList;
+  const rowsContainer = list.querySelector(`[data-project-list-rows="${CSS.escape(id)}"]`);
+  if (!rowsContainer) {
+    return;
+  }
+  const normalizedRows = (Array.isArray(rows) && rows.length ? rows : [{ name: "", url: "" }]).map(normalizeProjectListRow);
+  rowsContainer.innerHTML = normalizedRows.map((row) => projectListParameterRowHtml(id, parameter, row)).join("");
+  setupProjectListRemoveButtons(list);
+  setupProjectListInputPersistence(list);
+  persistProjectListParameterRows(id, normalizedRows);
+}
+
+function setupProjectListParameters() {
+  projectParameters.querySelectorAll("[data-project-list-add]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.projectListAdd;
+      const definition = projectParameterDefinitions(selectedProjectAction()).find((parameter) => parameter.id === id) ?? {};
+      const rows = projectParameters.querySelector(`[data-project-list-rows="${CSS.escape(id)}"]`);
+      if (!rows) {
+        return;
+      }
+      rows.insertAdjacentHTML("beforeend", projectListParameterRowHtml(id, definition, { name: "", url: "" }));
+      setupProjectListRemoveButtons(rows.closest("[data-project-list]"));
+      setupProjectListInputPersistence(rows.closest("[data-project-list]"));
+      const names = rows.querySelectorAll("[data-project-list-name]");
+      names[names.length - 1]?.focus?.();
+      persistProjectListFromElement(rows.closest("[data-project-list]"));
+    });
+  });
+  projectParameters.querySelectorAll("[data-project-list]").forEach((list) => {
+    setupProjectListRemoveButtons(list);
+    setupProjectListInputPersistence(list);
+  });
+}
+
+function setupProjectListInputPersistence(list) {
+  if (!list) {
+    return;
+  }
+  list.querySelectorAll("[data-project-list-name], [data-project-list-input]").forEach((input) => {
+    if (input.dataset.boundProjectListPersist === "true") {
+      return;
+    }
+    input.dataset.boundProjectListPersist = "true";
+    input.addEventListener("input", () => persistProjectListFromElement(list));
+  });
+}
+
+function setupProjectListRemoveButtons(list) {
+  if (!list) {
+    return;
+  }
+  const buttons = [...list.querySelectorAll("[data-project-list-remove]")];
+  buttons.forEach((button) => {
+    if (button.dataset.bound === "true") {
+      return;
+    }
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => {
+      const rows = [...list.querySelectorAll(".project-parameter-list__row")];
+      if (rows.length <= 1) {
+        rows[0]?.querySelectorAll("[data-project-list-name], [data-project-list-input]").forEach((input) => {
+          input.value = "";
+        });
+        persistProjectListFromElement(list);
+        return;
+      }
+      button.closest(".project-parameter-list__row")?.remove();
+      setupProjectListRemoveButtons(list);
+      persistProjectListFromElement(list);
+    });
+  });
+  const disabled = buttons.length <= 1;
+  buttons.forEach((button) => {
+    button.disabled = disabled;
+  });
+}
+
 function readProjectParameterValue(parameterId, fallback = "") {
   if (!projectParameters || !parameterId) {
     return fallback;
   }
   const input = projectParameters.querySelector(`[data-project-parameter="${parameterId}"]`);
   if (!input) {
-    return fallback;
+    const durationInput = projectParameters.querySelector(`[data-project-duration-value="${parameterId}"]`);
+    if (durationInput) {
+      const value = Number(String(durationInput.value ?? "").trim() || "0");
+      const unit = projectParameters.querySelector(`[data-project-duration-unit="${parameterId}"]`)?.value ?? "seconds";
+      return Number.isFinite(value) && value >= 0 ? Math.round(value * projectDurationUnitMultiplier(unit)) : fallback;
+    }
+    const list = projectParameters.querySelector(`[data-project-list="${parameterId}"]`);
+    if (!list) {
+      return fallback;
+    }
+    const value = readProjectListRowsFromElement(list).map((row) => row.url.trim()).filter(Boolean).join("\n");
+    return value === "" ? fallback : value;
   }
   if (input.type === "checkbox") {
     return input.checked;
@@ -3934,6 +4223,22 @@ function loadSelectedProjectPreset() {
       input.checked = Boolean(value);
     } else if (value !== undefined && value !== null) {
       input.value = String(value);
+    }
+  }
+  for (const list of projectParameters.querySelectorAll("[data-project-list]")) {
+    const id = list.dataset.projectList;
+    const value = preset.parameters[id];
+    if (value !== undefined && value !== null) {
+      const definition = projectParameterDefinitions(selectedProjectAction()).find((parameter) => parameter.id === id) ?? {};
+      setProjectListRows(list, splitProjectListParameterRows(value), definition);
+    }
+  }
+  for (const input of projectParameters.querySelectorAll("[data-project-duration-value]")) {
+    const id = input.dataset.projectDurationValue;
+    const value = preset.parameters[id];
+    if (value !== undefined && value !== null) {
+      const definition = projectParameterDefinitions(selectedProjectAction()).find((parameter) => parameter.id === id) ?? {};
+      setProjectDurationValue(id, value, definition.defaultUnit);
     }
   }
   projectPresetName.value = preset.name;

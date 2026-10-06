@@ -103,12 +103,13 @@
     },
     "vinted.profile_monitor": {
       "label": "Vinted profile monitor",
-      "description": "Track a seller profile, save hourly snapshots, and report active/new/gone listings.",
+      "description": "Run one profile check immediately, then keep monitoring and reporting active/new/gone listings at the selected interval.",
       "risk": "browser-read",
+      "timeoutSeconds": 0,
       "arguments": ["run", "vinted_profile", "--stdout-json", "--quiet", "--format", "none"],
       "parameters": [
-        { "id": "profile-urls", "label": "Profile URLs (one per line)", "type": "textarea", "default": "https://www.vinted.it/member/262102939", "placeholder": "Paste one Vinted profile URL per line. Numeric IDs are accepted too." },
-        { "id": "interval-seconds", "label": "Check interval seconds", "type": "number", "default": 3600, "min": 0, "step": 60 },
+        { "id": "profile-urls", "label": "Profile URLs", "type": "list", "default": "https://www.vinted.it/member/262102939", "namePlaceholder": "Profile name", "placeholder": "Vinted profile URL or numeric ID", "addLabel": "+ Add profile" },
+        { "id": "interval-seconds", "label": "After the first check, repeat every", "type": "duration", "default": 3600, "min": 0, "step": 1, "help": "Start always runs one check immediately. Use 0 to run once and stop." },
         { "id": "max-items", "label": "Max profile items", "type": "number", "default": 0, "min": 0, "step": 1 },
         { "id": "db-path", "label": "SQLite DB path", "type": "text", "default": "data/scraper.db", "defaultFromUiSetting": "vinted_db_path", "placeholder": "data/scraper.db" },
         { "id": "discord-profile-report", "label": "Send Discord report", "type": "checkbox", "default": true, "emitFalseFlag": true },
@@ -128,12 +129,11 @@
       "label": "Vinted profile quick check",
       "description": "Run one immediate seller profile check without the hourly timer, then finish.",
       "risk": "browser-read",
-      "arguments": ["run", "vinted_profile", "--stdout-json", "--quiet", "--format", "none", "--interval-seconds", "0"],
+      "arguments": ["run", "vinted_profile", "--stdout-json", "--quiet", "--format", "none", "--interval-seconds", "0", "--discord-profile-report"],
       "parameters": [
-        { "id": "profile-urls", "label": "Profile URLs (one per line)", "type": "textarea", "default": "https://www.vinted.it/member/262102939", "placeholder": "Paste one Vinted profile URL per line. Numeric IDs are accepted too." },
+        { "id": "profile-urls", "label": "Profile URLs", "type": "list", "default": "https://www.vinted.it/member/262102939", "namePlaceholder": "Profile name", "placeholder": "Vinted profile URL or numeric ID", "addLabel": "+ Add profile" },
         { "id": "max-items", "label": "Max profile items", "type": "number", "default": 0, "min": 0, "step": 1 },
         { "id": "db-path", "label": "SQLite DB path", "type": "text", "default": "data/scraper.db", "defaultFromUiSetting": "vinted_db_path", "placeholder": "data/scraper.db" },
-        { "id": "discord-profile-report", "label": "Send Discord report", "type": "checkbox", "default": true, "emitFalseFlag": true },
         { "id": "discord-webhook-url", "label": "Discord webhook", "type": "text", "default": "", "defaultFromUiSetting": "vinted_discord_webhook_url", "placeholder": "https://discord.com/api/webhooks/..." },
         { "id": "browser-mode", "label": "Browser mode", "type": "select", "default": "chrome_normale", "defaultFromUiSetting": "browser_mode", "options": [
           { "value": "chrome_normale", "label": "Chrome normale" },

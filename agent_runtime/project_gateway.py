@@ -387,11 +387,19 @@ class ProjectGateway:
                     stderr=asyncio.subprocess.PIPE,
                 )
                 self.processes[job.id] = process
-                timeout = max(10, int(entry.get("defaultTimeoutSeconds", 900)))
-                stdout_text, stderr_text = await asyncio.wait_for(
-                    self._communicate_project_process(process, job),
-                    timeout=timeout,
+                timeout = self._action_timeout_seconds(entry, action)
+                self.logger.info(
+                    "job_waiting id=%s timeout_seconds=%s",
+                    job.id,
+                    timeout if timeout > 0 else "none",
                 )
+                if timeout > 0:
+                    stdout_text, stderr_text = await asyncio.wait_for(
+                        self._communicate_project_process(process, job),
+                        timeout=timeout,
+                    )
+                else:
+                    stdout_text, stderr_text = await self._communicate_project_process(process, job)
                 if process.returncode != 0:
                     raise RuntimeError(stderr_text or stdout_text or f"Process exited with {process.returncode}")
                 job.result = self._parse_json_output(stdout_text)
@@ -406,11 +414,26 @@ class ProjectGateway:
                 job.error = str(error)[:4000]
                 job.updated_at = utc_now()
                 self.logger.exception("job_failed id=%s error=%s", job.id, error)
-                await self._report_job_failure(job, entry, error)
+                try:
+                    await self._report_job_failure(job, entry, error)
+                except Exception:
+                    self.logger.exception("job_failure_report_failed id=%s", job.id)
                 self._store_agent_job_message(job)
                 await self._publish(job, "failed")
             finally:
                 self.processes.pop(job.id, None)
+
+    @staticmethod
+    def _action_timeout_seconds(entry: dict[str, Any], action: dict[str, Any]) -> int:
+        if "timeoutSeconds" in action:
+            try:
+                return int(action.get("timeoutSeconds") or 0)
+            except (TypeError, ValueError):
+                return 0
+        try:
+            return max(10, int(entry.get("defaultTimeoutSeconds", 900)))
+        except (TypeError, ValueError):
+            return 900
 
     def _store_agent_job_message(self, job: ProjectJob) -> None:
         if not self.store or not job.agent_id:
@@ -706,27 +729,43 @@ class ProjectGateway:
         process: asyncio.subprocess.Process,
         job: ProjectJob,
     ) -> tuple[str, str]:
-        stdout_lines: list[str] = []
-        stderr_lines: list[str] = []
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
 
         async def read_stream(stream: asyncio.StreamReader | None, sink: list[str], stream_name: str) -> None:
             if stream is None:
                 return
+            pending = ""
             while True:
-                line = await stream.readline()
-                if not line:
+                chunk = await stream.read(65536)
+                if not chunk:
                     break
-                text = line.decode("utf-8", errors="replace").rstrip("\r\n")
+                text = chunk.decode("utf-8", errors="replace")
                 sink.append(text)
-                if stream_name == "stdout":
-                    await self._handle_project_output_line(job, text)
+                if stream_name != "stdout":
+                    continue
+                pending += text
+                while True:
+                    newline_index = pending.find("\n")
+                    if newline_index < 0:
+                        if len(pending) > 262144:
+                            # Very large JSON/result lines are valid stdout, but they cannot be
+                            # project signal lines. Keep them in stdout and stop buffering them
+                            # for alert parsing so stream reading never fails on long lines.
+                            pending = ""
+                        break
+                    line = pending[:newline_index].rstrip("\r")
+                    pending = pending[newline_index + 1:]
+                    await self._handle_project_output_line(job, line)
+            if stream_name == "stdout" and pending and len(pending) <= 262144:
+                await self._handle_project_output_line(job, pending.rstrip("\r"))
 
         await asyncio.gather(
-            read_stream(process.stdout, stdout_lines, "stdout"),
-            read_stream(process.stderr, stderr_lines, "stderr"),
+            read_stream(process.stdout, stdout_chunks, "stdout"),
+            read_stream(process.stderr, stderr_chunks, "stderr"),
         )
         await process.wait()
-        return "\n".join(stdout_lines).strip(), "\n".join(stderr_lines).strip()
+        return "".join(stdout_chunks).strip(), "".join(stderr_chunks).strip()
 
     async def _handle_project_output_line(self, job: ProjectJob, line: str) -> None:
         alert = self._project_output_alert(line)
@@ -737,7 +776,10 @@ class ProjectGateway:
             return
         self.job_alert_states[job.id] = signature
         self._store_agent_job_alert_message(job, alert)
-        await self._report_job_alert(job, alert)
+        try:
+            await self._report_job_alert(job, alert)
+        except Exception:
+            self.logger.exception("job_alert_report_failed id=%s kind=%s", job.id, alert.get("kind"))
         await self.emit(
             RuntimeEvent(
                 type="project.job.alert",

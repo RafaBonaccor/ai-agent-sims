@@ -1255,6 +1255,49 @@ noscript {
   box-shadow: 0 0 0 3px rgba(94, 231, 242, 0.08);
 }
 
+.project-parameter-list {
+  grid-column: 1 / -1;
+}
+
+.project-parameter-list__rows {
+  display: grid;
+  gap: 8px;
+}
+
+.project-parameter-list__row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.42fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.project-parameter-list__row input {
+  min-width: 0;
+}
+
+.project-parameter-list__row button {
+  min-height: 42px;
+  min-width: 42px;
+  padding-inline: 0;
+}
+
+.project-parameter-duration {
+  display: grid;
+  gap: 7px;
+}
+
+.project-parameter-duration__controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 0.45fr);
+  gap: 8px;
+}
+
+.project-parameter-duration small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
 .settings-section {
   display: grid;
   gap: 13px;

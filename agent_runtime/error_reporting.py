@@ -35,8 +35,26 @@ def build_error_report_message(source: str, message: str, context: Optional[dict
     if trimmed_context:
         lines.append("")
         lines.append("Context:")
-        lines.append(json.dumps(trimmed_context, ensure_ascii=False, indent=2, default=str)[:3000])
+        lines.append(json.dumps(_redact_error_report_value(trimmed_context), ensure_ascii=False, indent=2, default=str)[:3000])
     return "\n".join(lines)
+
+
+def _redact_error_report_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if any(token in key_text.lower() for token in ("token", "secret", "api_key", "apikey", "webhook")):
+                redacted[key_text] = "[redacted]"
+            else:
+                redacted[key_text] = _redact_error_report_value(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_error_report_value(item) for item in value]
+    text = str(value)
+    if "discord.com/api/webhooks/" in text:
+        return "[redacted]"
+    return value
 
 
 def send_discord_webhook_message(

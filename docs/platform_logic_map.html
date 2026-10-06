@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mappa zone funzionali piattaforma</title>
+  <style>
+    :root {
+      --bg: #edf2f8;
+      --paper: #ffffff;
+      --ink: #101828;
+      --muted: #667085;
+      --line: #c8d2df;
+      --blue: #2563eb;
+      --green: #079455;
+      --amber: #b7791f;
+      --purple: #7c3aed;
+      --red: #d92d20;
+      --cyan: #0891b2;
+      --gray: #667085;
+      --blue-bg: #e8f0ff;
+      --green-bg: #e7f8ef;
+      --amber-bg: #fff6db;
+      --purple-bg: #f2edff;
+      --red-bg: #fff0ee;
+      --cyan-bg: #e6faff;
+      --gray-bg: #f2f4f7;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 20% 0%, rgba(37, 99, 235, .15), transparent 32rem),
+        radial-gradient(circle at 90% 10%, rgba(124, 58, 237, .13), transparent 30rem),
+        var(--bg);
+      color: var(--ink);
+    }
+
+    header {
+      padding: 24px 30px;
+      background: rgba(255,255,255,.86);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(14px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: center;
+    }
+
+    h1 {
+      margin: 0 0 5px;
+      font-size: clamp(1.55rem, 2.4vw, 2.5rem);
+      letter-spacing: -.055em;
+    }
+
+    header p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    a, button {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: white;
+      color: var(--ink);
+      padding: 10px 12px;
+      font-weight: 850;
+      text-decoration: none;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    button.primary {
+      background: var(--ink);
+      color: white;
+      border-color: var(--ink);
+    }
+
+    main {
+      width: min(1560px, calc(100vw - 32px));
+      margin: 22px auto 56px;
+    }
+
+    .map {
+      position: relative;
+      min-height: 1390px;
+      border: 1px solid rgba(148, 163, 184, .7);
+      border-radius: 30px;
+      overflow: auto;
+      background:
+        linear-gradient(var(--line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line) 1px, transparent 1px),
+        #fbfdff;
+      background-size: 34px 34px;
+      box-shadow: 0 18px 46px rgba(16, 24, 40, .1);
+    }
+
+    .board {
+      position: relative;
+      width: 1740px;
+      height: 1360px;
+    }
+
+    .zone {
+      position: absolute;
+      border: 2px solid var(--line);
+      border-radius: 28px;
+      padding: 54px 18px 18px;
+      background: rgba(255, 255, 255, .78);
+      box-shadow: 0 12px 30px rgba(16, 24, 40, .075);
+    }
+
+    .zone > h2 {
+      position: absolute;
+      top: 16px;
+      left: 18px;
+      right: 18px;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 1.05rem;
+      letter-spacing: -.025em;
+    }
+
+    .zone > h2 span {
+      width: 14px;
+      height: 14px;
+      border-radius: 99px;
+      background: currentColor;
+      flex: 0 0 auto;
+    }
+
+    .zone.platform { border-color: rgba(37,99,235,.55); background: rgba(232,240,255,.82); color: var(--blue); }
+    .zone.monitor { border-color: rgba(7,148,85,.55); background: rgba(231,248,239,.82); color: var(--green); }
+    .zone.deals { border-color: rgba(183,121,31,.55); background: rgba(255,246,219,.86); color: var(--amber); }
+    .zone.actions-zone { border-color: rgba(217,45,32,.55); background: rgba(255,240,238,.86); color: var(--red); }
+    .zone.data { border-color: rgba(124,58,237,.55); background: rgba(242,237,255,.86); color: var(--purple); }
+    .zone.scheduler { border-color: rgba(8,145,178,.55); background: rgba(230,250,255,.88); color: var(--cyan); }
+    .zone.visibility { border-color: rgba(16,24,40,.45); background: rgba(255,255,255,.88); color: var(--ink); }
+    .zone.future {
+      border-color: rgba(102,112,133,.55);
+      background:
+        repeating-linear-gradient(135deg, rgba(102,112,133,.07) 0 10px, rgba(102,112,133,.12) 10px 20px),
+        rgba(242,244,247,.9);
+      color: var(--gray);
+    }
+    .zone.future > h2 em {
+      margin-left: auto;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(102,112,133,.14);
+      color: #475467;
+      font-size: .64rem;
+      font-style: normal;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .card {
+      border: 1px solid rgba(148, 163, 184, .75);
+      border-radius: 16px;
+      padding: 12px;
+      background: white;
+      color: var(--ink);
+      box-shadow: 0 6px 16px rgba(16, 24, 40, .055);
+      margin-bottom: 10px;
+    }
+
+    .card b {
+      display: block;
+      margin-bottom: 5px;
+      font-size: .92rem;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: .82rem;
+      line-height: 1.38;
+    }
+
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .wide { grid-column: 1 / -1; }
+
+    svg.links {
+      position: absolute;
+      inset: 0;
+      width: 1740px;
+      height: 1360px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .zone, .hub, .legend { z-index: 2; }
+
+    .link {
+      fill: none;
+      stroke: #475467;
+      stroke-width: 2.8;
+      marker-end: url(#arrow);
+    }
+
+    .link.dashed { stroke-dasharray: 8 8; }
+    .link.blue { stroke: var(--blue); }
+    .link.green { stroke: var(--green); }
+    .link.amber { stroke: var(--amber); }
+    .link.red { stroke: var(--red); }
+    .link.purple { stroke: var(--purple); }
+    .link.cyan { stroke: var(--cyan); }
+    .link.gray { stroke: var(--gray); }
+
+    .hub {
+      position: absolute;
+      left: 610px;
+      top: 418px;
+      width: 280px;
+      min-height: 170px;
+      border: 3px solid #101828;
+      border-radius: 30px;
+      padding: 22px;
+      background: #101828;
+      color: white;
+      box-shadow: 0 18px 45px rgba(16,24,40,.22);
+      text-align: center;
+    }
+
+    .hub h2 {
+      margin: 0 0 9px;
+      font-size: 1.4rem;
+      letter-spacing: -.035em;
+    }
+
+    .hub p {
+      margin: 0;
+      color: rgba(255,255,255,.74);
+      line-height: 1.42;
+      font-size: .9rem;
+    }
+
+    .legend {
+      position: absolute;
+      left: 32px;
+      top: 32px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      width: 680px;
+    }
+
+    .pill {
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: white;
+      border: 1px solid var(--line);
+      color: #344054;
+      font-size: .74rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+    }
+
+    .relation-note {
+      position: absolute;
+      padding: 7px 9px;
+      border-radius: 999px;
+      background: #101828;
+      color: white;
+      font-size: .72rem;
+      font-weight: 900;
+      z-index: 3;
+      white-space: nowrap;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid rgba(148,163,184,.65);
+      color: var(--ink);
+    }
+
+    th, td {
+      padding: 9px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: .78rem;
+      line-height: 1.32;
+    }
+
+    th {
+      background: #101828;
+      color: white;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      font-size: .68rem;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .tag {
+      display: inline-flex;
+      padding: 3px 7px;
+      border-radius: 99px;
+      font-size: .68rem;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .tag.ok { color: var(--green); background: var(--green-bg); }
+    .tag.warn { color: var(--amber); background: var(--amber-bg); }
+    .tag.bad { color: var(--red); background: var(--red-bg); }
+    .tag.info { color: var(--blue); background: var(--blue-bg); }
+
+    @media print {
+      header { position: static; }
+      .actions { display: none; }
+      body { background: white; }
+      .map { overflow: visible; box-shadow: none; border: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Mappa a zone delle funzionalità piattaforma</h1>
+      <p>Non è un flusso lineare: ogni area rappresenta una zona di interesse e le frecce mostrano le relazioni operative.</p>
+    </div>
+    <div class="actions">
+      <a href="./platform_logic_map.drawio">Versione .drawio</a>
+      <button onclick="document.querySelector('.map').scrollTo({left:0, top:0, behavior:'smooth'})">Reset view</button>
+      <button class="primary" onclick="window.print()">Print / PDF</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="map">
+      <div class="board">
+        <svg class="links" viewBox="0 0 1740 1360" aria-hidden="true">
+          <defs>
+            <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+              <path d="M2,2 L10,6 L2,10 Z" fill="currentColor"></path>
+            </marker>
+          </defs>
+          <path class="link blue" d="M424 245 C510 250 555 395 610 448" />
+          <path class="link green" d="M474 580 C535 580 552 506 610 506" />
+          <path class="link amber" d="M1034 580 C968 580 948 506 890 506" />
+          <path class="link red" d="M890 570 C955 650 990 768 1018 858" />
+          <path class="link purple" d="M750 588 L750 790" />
+          <path class="link cyan" d="M475 940 C535 830 575 690 630 570" />
+          <path class="link purple dashed" d="M750 345 L750 418" />
+          <path class="link red dashed" d="M1060 238 C980 265 940 402 890 455" />
+          <path class="link green dashed" d="M405 708 C465 805 545 890 618 930" />
+          <path class="link amber dashed" d="M1096 708 C1018 815 940 880 872 930" />
+          <path class="link gray dashed" d="M1448 552 C1510 575 1530 660 1530 735" />
+          <path class="link gray dashed" d="M1355 380 C1460 430 1508 510 1530 735" />
+          <path class="link gray dashed" d="M953 940 C1045 980 1105 1080 1162 1160" />
+          <path class="link gray dashed" d="M475 940 C690 1125 905 1190 1162 1160" />
+          <path class="link gray dashed" d="M890 570 C1000 590 1120 670 1190 735" />
+          <path class="link gray dashed" d="M1155 875 C1050 870 955 840 880 790" />
+        </svg>
+
+        <div class="legend">
+          <span class="pill">Zone funzionali</span>
+          <span class="pill">Relazioni</span>
+          <span class="pill">Job ricorrenti</span>
+          <span class="pill">Database</span>
+          <span class="pill">Notifiche</span>
+          <span class="pill">Controlli anti errore</span>
+        </div>
+
+        <div class="hub">
+          <h2>Core automazione</h2>
+          <p>Coordina configurazioni, browser, dati, regole, scheduler, notifiche e azioni sugli articoli.</p>
+        </div>
+
+        <section class="zone platform" style="left:64px; top:110px; width:360px; height:270px">
+          <h2><span></span>Zona piattaforma</h2>
+          <div class="mini-grid">
+            <div class="card"><b>Sessione browser</b><p>Usa profilo persistente e riusa sessioni già aperte.</p></div>
+            <div class="card"><b>Accesso</b><p>Controlla marker login, pagina non trovata e stato sessione.</p></div>
+            <div class="card wide"><b>Pagine operative</b><p>Profili, catalogo, dettaglio articolo, pagina offerta, pagina upload.</p></div>
+          </div>
+        </section>
+
+        <section class="zone monitor" style="left:54px; top:430px; width:420px; height:300px">
+          <h2><span></span>Zona monitor profili</h2>
+          <div class="mini-grid">
+            <div class="card"><b>Profili salvati</b><p>Nome + URL. Restano nel gioco.</p></div>
+            <div class="card"><b>Primo controllo</b><p>Parte sempre subito appena avvii.</p></div>
+            <div class="card"><b>Scroll completo</b><p>Scende fino al fondo e attende lazy-load.</p></div>
+            <div class="card"><b>Snapshot</b><p>Confronta nuovo, presente e sparito.</p></div>
+            <div class="card wide"><b>Protezione</b><p>Se legge molto meno del precedente, non salva baseline e non genera falsi spariti.</p></div>
+          </div>
+        </section>
+
+        <section class="zone deals" style="left:1034px; top:430px; width:410px; height:300px">
+          <h2><span></span>Zona ricerca affari</h2>
+          <div class="mini-grid">
+            <div class="card"><b>Termini</b><p>Query/categorie rotanti.</p></div>
+            <div class="card"><b>Soglie</b><p>Like, prezzo min/max, età, spedizione.</p></div>
+            <div class="card"><b>Dettaglio</b><p>Entra nell’articolo solo se serve precisione.</p></div>
+            <div class="card"><b>Deduplica</b><p>Salta articoli già analizzati.</p></div>
+            <div class="card wide"><b>Output</b><p>Affari in tabella + notifica esterna con link e immagine se presente.</p></div>
+          </div>
+        </section>
+
+        <section class="zone actions-zone" style="left:1018px; top:780px; width:430px; height:275px">
+          <h2><span></span>Zona azioni articolo</h2>
+          <div class="mini-grid">
+            <div class="card"><b>Offerte</b><p>Calcolo dal prezzo base. Salta se già inviata.</p></div>
+            <div class="card"><b>Like</b><p>Applicato sugli affari quando configurato.</p></div>
+            <div class="card"><b>Upload</b><p>Foto, titolo, descrizione, prezzo, bozza/pubblica.</p></div>
+            <div class="card"><b>Export</b><p>Link selezionati o risultati ricerca.</p></div>
+          </div>
+        </section>
+
+        <section class="zone future" style="left:1484px; top:650px; width:220px; height:320px">
+          <h2><span></span>Rack telefoni<em>da sviluppare</em></h2>
+          <div class="card"><b>iPhone multipli</b><p>Un telefono per account, con sessione isolata.</p></div>
+          <div class="card"><b>Appium</b><p>Automazione app mobile per upload e azioni dove il browser non basta.</p></div>
+          <div class="card"><b>Stato device</b><p>Online, occupato, errore, batteria, account collegato.</p></div>
+        </section>
+
+        <section class="zone future" style="left:1130px; top:1110px; width:560px; height:210px">
+          <h2><span></span>Creazione contenuti social AI<em>da sviluppare</em></h2>
+          <div class="mini-grid">
+            <div class="card"><b>Foto prodotto</b><p>Migliora immagini, varianti, sfondo coerente e metadati puliti.</p></div>
+            <div class="card"><b>Script brevi</b><p>Hook, testo parlato, CTA e output pronto per voce/video.</p></div>
+            <div class="card"><b>Upload mobile</b><p>Pubblica o prepara contenuti tramite telefono automatizzato.</p></div>
+            <div class="card"><b>Feedback</b><p>Salva cosa performa e alimenta le decisioni future.</p></div>
+          </div>
+        </section>
+
+        <section class="zone future" style="left:1040px; top:645px; width:390px; height:120px">
+          <h2><span></span>Computer vision domanda<em>da sviluppare</em></h2>
+          <div class="card"><b>Conteggio ricorrenze visive</b><p>Se un charm o stile appare spesso nei risultati, aumenta il trend score e lo propone come prodotto da acquistare.</p></div>
+        </section>
+
+        <section class="zone data" style="left:548px; top:790px; width:405px; height:300px">
+          <h2><span></span>Zona dati / memoria operativa</h2>
+          <table>
+            <thead>
+              <tr><th>Dato</th><th>Serve per</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Snapshot profili</td><td>Nuovi / presenti / spariti</td></tr>
+              <tr><td>Articoli analizzati</td><td>Non riestrarre sempre dettaglio</td></tr>
+              <tr><td>Offerte inviate</td><td>Evitare duplicati</td></tr>
+              <tr><td>Notifiche inviate</td><td>Evitare spam</td></tr>
+              <tr><td>Preset profili/job</td><td>Non riscrivere configurazioni</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="zone scheduler" style="left:60px; top:790px; width:415px; height:300px">
+          <h2><span></span>Zona scheduler / cron</h2>
+          <div class="mini-grid">
+            <div class="card"><b>Monitor</b><p>Subito, poi ogni intervallo.</p></div>
+            <div class="card"><b>Procacciatore</b><p>Loop con pausa configurabile.</p></div>
+            <div class="card"><b>Briefing AI</b><p>Giornaliero all’orario configurato.</p></div>
+            <div class="card"><b>Project cron</b><p>5 campi cron + next run.</p></div>
+            <div class="card wide"><b>Regola</b><p>Ogni job lungo deve avere stop, owner, prossimo run e ultimo output.</p></div>
+          </div>
+        </section>
+
+        <section class="zone visibility" style="left:1060px; top:95px; width:385px; height:285px">
+          <h2><span></span>Zona visibilità nel gioco</h2>
+          <div class="mini-grid">
+            <div class="card"><b>Jobs active</b><p>running, scheduled, failed, completed.</p></div>
+            <div class="card"><b>Notifications</b><p>Campana con tutti i job e alert.</p></div>
+            <div class="card"><b>Agent chat</b><p>L’agente owner mostra messaggi.</p></div>
+            <div class="card"><b>Toast</b><p>Eventi immediati non bloccanti.</p></div>
+            <div class="card wide"><b>Controlli</b><p>Stop / pause / resume devono essere accessibili da qui.</p></div>
+          </div>
+        </section>
+
+        <div class="relation-note" style="left:482px; top:313px">sessione + login</div>
+        <div class="relation-note" style="left:500px; top:552px">profili</div>
+        <div class="relation-note" style="left:930px; top:552px">scoring</div>
+        <div class="relation-note" style="left:925px; top:700px">azioni</div>
+        <div class="relation-note" style="left:692px; top:675px">storico</div>
+        <div class="relation-note" style="left:492px; top:750px">tempo / cron</div>
+        <div class="relation-note" style="left:960px; top:325px">notifiche</div>
+        <div class="relation-note" style="left:704px; top:372px">stati</div>
+        <div class="relation-note" style="left:1456px; top:575px">mobile / account</div>
+        <div class="relation-note" style="left:1095px; top:610px">visione → scoring</div>
+        <div class="relation-note" style="left:1000px; top:1110px">contenuti</div>
+        <div class="relation-note" style="left:800px; top:1132px">feedback</div>
+
+        <section class="zone visibility" style="left:520px; top:105px; width:450px; height:240px">
+          <h2><span></span>Stati articolo</h2>
+          <table>
+            <thead>
+              <tr><th>Stato</th><th>Quando</th><th>Effetto</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><span class="tag ok">new</span></td><td>Mai visto prima</td><td>Notifica</td></tr>
+              <tr><td><span class="tag info">still</span></td><td>Ancora presente</td><td>Aggiorna</td></tr>
+              <tr><td><span class="tag bad">gone</span></td><td>Assente con snapshot valido</td><td>Venduto/rimosso</td></tr>
+              <tr><td><span class="tag warn">incomplete</span></td><td>Lettura sospetta</td><td>Nessuno sparito</td></tr>
+            </tbody>
+          </table>
+        </section>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
