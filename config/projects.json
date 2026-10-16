@@ -7,7 +7,7 @@
       "root": "projects/main-scraper",
       "integration": "integrations/main-scraper/adapter.json",
       "enabled": true,
-      "maxConcurrentJobs": 1,
+      "maxConcurrentJobs": 4,
       "defaultTimeoutSeconds": 900
     }
   ]

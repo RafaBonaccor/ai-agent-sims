@@ -44,6 +44,16 @@ class DiscordGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("codex", codex.action)
         self.assertEqual("spiegami questo file", codex.prompt)
 
+        report = parse_text_command("!report 90")
+        self.assertEqual("report", report.action)
+        self.assertEqual("90", report.prompt)
+        self.assertEqual("30", parse_text_command("!report").prompt)
+
+        sold = parse_text_command("!sold 1-6 90")
+        self.assertEqual("sold_deals", sold.action)
+        self.assertEqual("1-6", sold.agent_id)
+        self.assertEqual("90", sold.prompt)
+
     def test_parse_mention_command_with_default_agent(self):
         ask = parse_text_command(
             "ciao come va",
@@ -58,6 +68,18 @@ class DiscordGatewayTests(unittest.IsolatedAsyncioTestCase):
         chunks = chunk_discord_message("x" * 4100, limit=1900)
         self.assertEqual(3, len(chunks))
         self.assertTrue(all(len(chunk) <= 1900 for chunk in chunks))
+
+    def test_sold_deal_time_ranges(self):
+        sold_two_hours = {"status": "sold", "sold_after_seconds": 7_200}
+        sold_six_hours = {"status": "sold", "sold_after_seconds": 21_600}
+        active = {"status": "active", "sold_after_seconds": 7_200}
+
+        self.assertEqual("under-1", DiscordGateway.normalize_sold_time_range("<1h"))
+        self.assertEqual("over-24", DiscordGateway.normalize_sold_time_range("24+"))
+        self.assertTrue(DiscordGateway.sold_deal_matches_range(sold_two_hours, "1-6"))
+        self.assertFalse(DiscordGateway.sold_deal_matches_range(sold_six_hours, "1-6"))
+        self.assertTrue(DiscordGateway.sold_deal_matches_range(sold_six_hours, "6-12"))
+        self.assertFalse(DiscordGateway.sold_deal_matches_range(active, "1-6"))
 
     async def test_submit_chat_creates_runtime_chat_task(self):
         sent = []

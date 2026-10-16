@@ -49,11 +49,22 @@ from .vinted_ai import (
     DEFAULT_VINTED_AI_SIZE,
 )
 from .error_reporting import RuntimeErrorReporter
+from .vinted_reports import (
+    build_vinted_report,
+    deactivate_owned_profile,
+    save_owned_profile,
+    write_vinted_report_html,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 LOGGER = configure_logging(PROJECT_ROOT)
+
+
+class OwnedMarketplaceProfileRequest(BaseModel):
+    profile_url: str = Field(min_length=1, max_length=512)
+    display_name: str = Field(default="", max_length=120)
 
 
 @asynccontextmanager
@@ -608,6 +619,63 @@ async def close_browser_session(session_id: str) -> dict[str, object]:
 @app.get("/api/projects")
 async def list_projects() -> list[dict[str, object]]:
     return project_gateway().list_projects()
+
+
+@app.get("/api/vinted/reports")
+async def vinted_reports(
+    days: int = Query(default=30, ge=1, le=3650),
+    limit: int = Query(default=200, ge=1, le=5000),
+) -> dict[str, object]:
+    try:
+        return build_vinted_report(PROJECT_ROOT, days=days, limit=limit)
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/vinted/owned-profiles")
+async def add_vinted_owned_profile(request: OwnedMarketplaceProfileRequest) -> dict[str, object]:
+    try:
+        return save_owned_profile(
+            PROJECT_ROOT,
+            profile_url=request.profile_url,
+            display_name=request.display_name,
+        )
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.delete("/api/vinted/owned-profiles/{member_id}")
+async def remove_vinted_owned_profile(member_id: str) -> dict[str, object]:
+    try:
+        return deactivate_owned_profile(PROJECT_ROOT, member_id)
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/api/vinted/reports/export", response_class=FileResponse)
+async def export_vinted_report(
+    days: int = Query(default=30, ge=1, le=3650),
+    limit: int = Query(default=5000, ge=1, le=5000),
+) -> FileResponse:
+    try:
+        report_path = write_vinted_report_html(PROJECT_ROOT, days=days, limit=limit)
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return FileResponse(
+        report_path,
+        media_type="text/html; charset=utf-8",
+        filename=report_path.name,
+    )
+
+
+@app.get("/api/vinted/archive", response_class=FileResponse)
+async def vinted_archive(path: str = Query(min_length=1, max_length=2048)) -> FileResponse:
+    archive_root = (PROJECT_ROOT / "projects" / "main-scraper" / "data" / "deal_archive").resolve()
+    requested = Path(path).expanduser()
+    requested = requested.resolve() if requested.is_absolute() else (PROJECT_ROOT / requested).resolve()
+    if not requested.is_relative_to(archive_root) or not requested.is_file():
+        raise HTTPException(status_code=404, detail="Archived marketplace artifact not found")
+    return FileResponse(requested)
 
 
 @app.get("/api/project-jobs", response_model=list[ProjectJob])

@@ -29,6 +29,7 @@
       <div class="toolbar" aria-label="Controlli">
         <button id="add-agent" class="button" type="button">+ Agent</button>
         <button id="layout-toggle" class="button" type="button">Editor</button>
+        <button id="reports-dashboard" class="button" type="button">Reports</button>
         <button id="system-settings" class="button button--icon" type="button" aria-label="System settings">⚙</button>
         <button id="theme-toggle" class="button" type="button">White</button>
         <button id="run-toggle" class="button button--primary" type="button">Pausa</button>
@@ -737,6 +738,135 @@
           <button class="button button--primary" id="run-project-action" type="submit">Avvia</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog class="agent-dialog report-dialog" id="report-dialog" aria-labelledby="report-dialog-title">
+      <div class="report-shell">
+        <div class="dialog-heading report-heading">
+          <div>
+            <p class="section-label">Marketplace intelligence</p>
+            <h2 id="report-dialog-title">Performance reports</h2>
+          </div>
+          <div class="report-controls">
+            <label>
+              <span>Period</span>
+              <select id="report-period">
+                <option value="7">7 days</option>
+                <option value="30" selected>30 days</option>
+                <option value="90">90 days</option>
+                <option value="365">1 year</option>
+                <option value="3650">All history</option>
+              </select>
+            </label>
+            <button class="button" id="report-refresh" type="button">Refresh</button>
+            <button class="dialog-close" data-report-close type="button" aria-label="Close">×</button>
+          </div>
+        </div>
+
+        <div class="report-status" id="report-status">Loading report…</div>
+        <nav class="report-tabs" aria-label="Report sections">
+          <button class="report-tab report-tab--active" type="button" data-report-tab="overview">Overview</button>
+          <button class="report-tab" type="button" data-report-tab="owned">My Profiles <span id="report-owned-count">0</span></button>
+          <button class="report-tab" type="button" data-report-tab="competitors">Competitors <span id="report-competitor-count">0</span></button>
+        </nav>
+
+        <div class="report-panel" data-report-panel="overview">
+          <section class="report-metrics" id="report-metrics" aria-label="Report metrics"></section>
+
+          <section class="report-grid">
+            <article class="report-card report-card--wide">
+              <div class="report-card__heading">
+                <div><span class="section-label">Trend</span><h3>Confirmed sales</h3></div>
+                <small id="report-sales-caption"></small>
+              </div>
+              <div class="report-bars" id="report-sales-chart" aria-label="Daily confirmed sales chart"></div>
+            </article>
+            <article class="report-card">
+              <div class="report-card__heading"><div><span class="section-label">Pipeline</span><h3>Deal status</h3></div></div>
+              <div class="report-distribution" id="report-status-chart"></div>
+            </article>
+            <article class="report-card">
+              <div class="report-card__heading"><div><span class="section-label">Discovery</span><h3>Top searches</h3></div></div>
+              <div class="report-ranking" id="report-search-ranking"></div>
+            </article>
+          </section>
+
+          <section class="report-articles-section">
+            <div class="report-card__heading">
+              <div><span class="section-label">Tracked inventory</span><h3>Articles</h3></div>
+              <div class="report-article-filters" role="group" aria-label="Article status filter">
+                <label class="report-sale-time-filter">
+                  <span>Sale time</span>
+                  <select id="report-sale-time">
+                    <option value="all">Any duration</option>
+                    <option value="under-1">Under 1 hour</option>
+                    <option value="1-6">1–6 hours</option>
+                    <option value="6-12">6–12 hours</option>
+                    <option value="12-24">12–24 hours</option>
+                    <option value="over-24">Over 24 hours</option>
+                  </select>
+                </label>
+                <button class="report-filter report-filter--active" type="button" data-report-filter="all">All</button>
+                <button class="report-filter" type="button" data-report-filter="sold">Sold</button>
+                <button class="report-filter" type="button" data-report-filter="active">Active</button>
+                <button class="report-filter" type="button" data-report-filter="unavailable">Unavailable</button>
+              </div>
+            </div>
+            <div class="report-articles" id="report-articles"></div>
+          </section>
+        </div>
+
+        <div class="report-panel" data-report-panel="owned" hidden>
+          <section class="report-owned-section">
+            <div class="report-card__heading">
+              <div><span class="section-label">Owned inventory</span><h3>My profiles</h3></div>
+            </div>
+            <p class="report-competitor-rule">Owned accounts are kept separate from competitors. Existing discoveries, confirmed sales and future profile snapshots are merged without deleting history.</p>
+            <div class="report-owned-summary" id="report-owned-summary"></div>
+            <div class="report-owned-charts">
+              <article class="report-owned-chart-card">
+                <div class="report-card__heading"><div><span class="section-label">Inventory mix</span><h3>Profiles comparison</h3></div></div>
+                <div class="report-owned-chart" id="report-owned-inventory-chart"></div>
+              </article>
+              <article class="report-owned-chart-card">
+                <div class="report-card__heading"><div><span class="section-label">Sales velocity</span><h3>Average time to sell</h3></div></div>
+                <div class="report-owned-chart" id="report-owned-speed-chart"></div>
+              </article>
+            </div>
+            <form class="report-owned-form" id="report-owned-form">
+              <label><span>Profile name (optional)</span><input id="report-owned-name" type="text" maxlength="120" placeholder="e.g. Main shop" /></label>
+              <label><span>Profile URL</span><input id="report-owned-url" type="url" required placeholder="https://www.vinted.it/member/…" /></label>
+              <button class="button button--primary" type="submit">Add profile</button>
+            </form>
+            <p class="form-error" id="report-owned-error" role="alert"></p>
+            <div class="report-owned-toolbar">
+              <label><span>Product status</span><select id="report-owned-status"><option value="all">All products</option><option value="active">Active</option><option value="sold">Sold</option><option value="gone">Gone / removed</option><option value="observed">Observed</option></select></label>
+              <label><span>Find product</span><input id="report-owned-search" type="search" placeholder="Name or price…" /></label>
+            </div>
+            <div class="report-owned-profiles" id="report-owned-profiles"></div>
+          </section>
+        </div>
+
+        <div class="report-panel" data-report-panel="competitors" hidden>
+          <section class="report-competitors-section">
+            <div class="report-card__heading">
+              <div><span class="section-label">Seller intelligence</span><h3>Competitor profiles</h3></div>
+              <label class="report-sale-time-filter">
+                <span>Status</span>
+                <select id="report-competitor-status">
+                  <option value="all">All statuses</option>
+                  <option value="priority">Priority</option>
+                  <option value="confirmed">Confirmed</option>
+                  <option value="active">Active</option>
+                  <option value="candidate">Candidate</option>
+                </select>
+              </label>
+            </div>
+            <p class="report-competitor-rule">A seller becomes confirmed after appearing in at least 3 distinct deals for the same search keyword.</p>
+            <div class="report-competitors" id="report-competitors"></div>
+          </section>
+        </div>
+      </div>
     </dialog>
 
     <noscript>Abilita JavaScript per usare la simulazione.</noscript>

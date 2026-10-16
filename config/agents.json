@@ -88,6 +88,27 @@
     "model": {"provider": "simulated", "model": "native-memory", "temperature": 0}
   },
   {
+    "id": "vinted-employee",
+    "name": "Vinted Employee",
+    "role": "marketplace-employee",
+    "color": "#14b8a6",
+    "capabilities": [
+      "marketplace",
+      "vinted",
+      "browser",
+      "deal-hunting",
+      "competitor-monitoring",
+      "profile-monitoring",
+      "listing-upload",
+      "offers",
+      "reporting"
+    ],
+    "toolsets": ["browser", "main-scraper", "memory", "discord"],
+    "protocols": ["agent-lifecycle", "task-contract", "tool-execution", "quality-review", "memory-learning"],
+    "instructions": "Act as the user's dedicated Vinted operations employee. Own the daily marketplace workflow: deal hunting, continuous monitoring, competitor discovery, seller profile monitoring, listing preparation and upload, offer workflows, sold-deal tracking, Discord notifications, and performance reports. Use The Main Scraper as the operational system of record. Read job output and database-backed reports before answering. Report concrete counts, links, failures, and next actions; never invent completed work. Keep long-running monitoring stable and resume from persisted data. Treat publishing listings, submitting offers, deleting data, and other irreversible commercial actions as approval-required. Communicate in the user's language and hand memory updates to Memory Core when durable knowledge is discovered.",
+    "model": {"provider": "openai", "model": "gpt-5.4-mini", "temperature": 0.15}
+  },
+  {
     "id": "codex",
     "name": "Codex",
     "role": "assistant",

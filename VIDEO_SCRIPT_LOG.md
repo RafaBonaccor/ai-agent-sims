@@ -331,3 +331,70 @@ Nota utile per il video:
 - lasciare finire un ciclo per mostrare che il loop riparte dai termini iniziali
 - mostrare che tra un giro e il successivo il browser non viene chiuso: il procacciatore continua nello stesso processo/browser senza riaprire Chrome
 - mostrare che quando il procacciatore trova affari, l'agente che sta eseguendo il job li riceve direttamente nella chat in-game con link cliccabili, oltre al toast di notifica
+
+### Episodio 06
+
+Richiesta:
+- trasformare la ricerca lavori in un job autonomo e parallelo
+- cercare badanti part-time a Roma e nei comuni/zone a nord di Roma
+- mantenere completamente separate le logiche Vinted
+
+Cosa ho fatto:
+- aggiunta l'azione Project Gateway `Monitor badanti part-time`
+- configurato il preset con Roma, Monterotondo, Guidonia Montecelio, Rignano Flaminio, Morlupo, Capena, Fiano Romano, Faleria, Castelnuovo di Porto, Riano, Sacrofano, Montebello e Roma Nord
+- aggiunto primo ciclo immediato e intervallo ricorrente configurabile
+- aggiunti filtri reali per ruolo, part-time esplicito e zona
+- aggiunto database separato `data/subito_jobs.db` con cicli, annunci e avvistamenti
+- aggiunta deduplica degli URL e notifica Discord opzionale solo per annunci nuovi
+- isolato browser, processo e database dal monitor marketplace esistente
+- verificato il flusso live su Roma: estrazione, filtro, persistenza e payload gateway completati senza errori
+
+File toccati:
+- `projects/main-scraper/main.py`
+- `projects/main-scraper/scraper_app/runner.py`
+- `projects/main-scraper/scraper_app/subito_monitor.py`
+- `projects/main-scraper/scraper_app/ui.py`
+- `integrations/main-scraper/adapter.json`
+- `README.md`
+- `projects/main-scraper/README`
+- `docs/platform_logic_map.html`
+- `VIDEO_SCRIPT_LOG.md`
+
+Stato attuale:
+- il nuovo monitor può occupare uno dei quattro slot concorrenti di The Main Scraper
+- un errore su una zona non interrompe le altre ricerche
+- fermare questo job non ferma i processi Vinted o gli altri scheduler
+
+Nota utile per il video:
+- aprire Project Gateway e mostrare `Monitor badanti part-time`
+- evidenziare le zone e il valore `1800` secondi
+- avviare il job mentre un altro monitor è già Running
+- mostrare Active Jobs, i log zona per zona e il nuovo annuncio deduplicato
+
+### Correzione pertinenza affari Vinted
+
+- eliminati i falsi positivi causati da parole incidentali nella descrizione
+- il dettaglio deve ora rispettare sia la keyword sia l'ID categoria richiesto
+- keyword confrontata solo con titolo e breadcrumb, mai con il testo descrittivo
+- breadcrumb estratti nella stessa lettura DOM di prezzo e descrizione, senza nuove attese
+- cache estesa con percorso e ID categoria; i record legacy vengono aggiornati una sola volta
+- mantenuta invariata la pausa rapida di 5 secondi tra i cicli
+
+### Category Trend Scout a coorti
+
+- mostrare il nuovo job `Brand trend scout` nel Project Gateway
+- evidenziare la query a categorie separata da virgole e il fatto che il monitor
+  `charm/pandora` rimane separato
+- spiegare `learning`: nessuna decisione prima di 30 articoli maturi e 72 ore
+- mostrare le soglie configurabili 8% (minimo) e 15% (promettente)
+- mostrare che due valutazioni deboli distanziate 24 ore sospendono la query e che il probe futuro la
+  può riattivare senza cancellare lo storico
+- aprire il Performance Report e mostrare campione, venduti, sell-through,
+  confidence lower bound e prossimo probe
+
+### Chrome in background su macOS
+
+- avviare un job autonomo e mostrare che Chrome parte minimizzato senza rubare il focus
+- evidenziare che le finestre Chrome personali non vengono toccate
+- spiegare che il browser resta grafico e usa lo stesso profilo/sessione dello scraper
+- mostrare che apertura manuale e upload foto restano in primo piano perché interattivi

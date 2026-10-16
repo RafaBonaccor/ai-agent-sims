@@ -90,6 +90,17 @@
       border-color: var(--ink);
     }
 
+    .zoom-level {
+      min-width: 3.7rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 4px;
+      color: var(--muted);
+      font-size: .82rem;
+      font-weight: 850;
+    }
+
     main {
       width: min(1560px, calc(100vw - 32px));
       margin: 22px auto 56px;
@@ -97,22 +108,24 @@
 
     .map {
       position: relative;
-      min-height: 1390px;
+      height: min(78vh, 920px);
+      min-height: 680px;
       border: 1px solid rgba(148, 163, 184, .7);
       border-radius: 30px;
       overflow: auto;
-      background:
-        linear-gradient(var(--line) 1px, transparent 1px),
-        linear-gradient(90deg, var(--line) 1px, transparent 1px),
-        #fbfdff;
-      background-size: 34px 34px;
+      background: #fbfdff;
       box-shadow: 0 18px 46px rgba(16, 24, 40, .1);
     }
 
     .board {
       position: relative;
-      width: 1740px;
-      height: 1360px;
+      width: 2400px;
+      height: 1900px;
+      background:
+        linear-gradient(var(--line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line) 1px, transparent 1px),
+        #fbfdff;
+      background-size: 34px 34px;
     }
 
     .zone {
@@ -135,6 +148,32 @@
       gap: 9px;
       font-size: 1.05rem;
       letter-spacing: -.025em;
+    }
+
+    .layout-edit .zone > h2,
+    .layout-edit .hub,
+    .layout-edit .legend,
+    .layout-edit .relation-note {
+      cursor: grab;
+      user-select: none;
+      touch-action: none;
+    }
+
+    .layout-edit .zone > h2::after {
+      content: "trascina";
+      margin-left: auto;
+      color: currentColor;
+      opacity: .65;
+      font-size: .64rem;
+      font-weight: 900;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .is-dragging {
+      opacity: .9;
+      box-shadow: 0 22px 54px rgba(16, 24, 40, .22) !important;
+      cursor: grabbing !important;
     }
 
     .zone > h2 span {
@@ -205,8 +244,8 @@
     svg.links {
       position: absolute;
       inset: 0;
-      width: 1740px;
-      height: 1360px;
+      width: 2400px;
+      height: 1900px;
       pointer-events: none;
       z-index: 0;
     }
@@ -351,6 +390,11 @@
     <div class="actions">
       <a href="./platform_logic_map.drawio">Versione .drawio</a>
       <button onclick="document.querySelector('.map').scrollTo({left:0, top:0, behavior:'smooth'})">Reset view</button>
+      <button id="zoom-out" type="button" aria-label="Riduci zoom">−</button>
+      <span id="zoom-level" class="zoom-level" aria-live="polite">100%</span>
+      <button id="zoom-in" type="button" aria-label="Aumenta zoom">+</button>
+      <button id="toggle-layout" type="button">Move zones</button>
+      <button id="reset-layout" type="button">Reset layout</button>
       <button class="primary" onclick="window.print()">Print / PDF</button>
     </div>
   </header>
@@ -358,31 +402,34 @@
   <main>
     <section class="map">
       <div class="board">
-        <svg class="links" viewBox="0 0 1740 1360" aria-hidden="true">
+        <svg class="links" viewBox="0 0 2400 1900" aria-hidden="true">
           <defs>
             <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
               <path d="M2,2 L10,6 L2,10 Z" fill="currentColor"></path>
             </marker>
           </defs>
-          <path class="link blue" d="M424 245 C510 250 555 395 610 448" />
-          <path class="link green" d="M474 580 C535 580 552 506 610 506" />
-          <path class="link amber" d="M1034 580 C968 580 948 506 890 506" />
-          <path class="link red" d="M890 570 C955 650 990 768 1018 858" />
-          <path class="link purple" d="M750 588 L750 790" />
-          <path class="link cyan" d="M475 940 C535 830 575 690 630 570" />
-          <path class="link purple dashed" d="M750 345 L750 418" />
-          <path class="link red dashed" d="M1060 238 C980 265 940 402 890 455" />
-          <path class="link green dashed" d="M405 708 C465 805 545 890 618 930" />
-          <path class="link amber dashed" d="M1096 708 C1018 815 940 880 872 930" />
-          <path class="link gray dashed" d="M1448 552 C1510 575 1530 660 1530 735" />
-          <path class="link gray dashed" d="M1355 380 C1460 430 1508 510 1530 735" />
-          <path class="link gray dashed" d="M953 940 C1045 980 1105 1080 1162 1160" />
-          <path class="link gray dashed" d="M475 940 C690 1125 905 1190 1162 1160" />
-          <path class="link gray dashed" d="M890 570 C1000 590 1120 670 1190 735" />
-          <path class="link gray dashed" d="M1155 875 C1050 870 955 840 880 790" />
+          <path class="link blue" data-from="platform" data-to="hub" />
+          <path class="link green" data-from="monitor" data-to="hub" />
+          <path class="link amber" data-from="deals" data-to="hub" />
+          <path class="link red" data-from="hub" data-to="actions" />
+          <path class="link purple" data-from="hub" data-to="data" />
+          <path class="link cyan" data-from="scheduler" data-to="hub" />
+          <path class="link purple dashed" data-from="states" data-to="hub" />
+          <path class="link red dashed" data-from="visibility" data-to="hub" />
+          <path class="link green dashed" data-from="monitor" data-to="data" />
+          <path class="link amber dashed" data-from="deals" data-to="data" />
+          <path class="link gray dashed" data-from="deals" data-to="phones" />
+          <path class="link gray dashed" data-from="visibility" data-to="phones" />
+          <path class="link gray dashed" data-from="data" data-to="social" />
+          <path class="link gray dashed" data-from="scheduler" data-to="social" />
+          <path class="link gray dashed" data-from="hub" data-to="phones" />
+          <path class="link gray dashed" data-from="actions" data-to="data" />
+          <path class="link cyan" data-from="job-search" data-to="scheduler" />
+          <path class="link purple dashed" data-from="job-search" data-to="data" />
+          <path class="link blue" data-from="job-search" data-to="visibility" />
         </svg>
 
-        <div class="legend">
+        <div class="legend" data-node="legend">
           <span class="pill">Zone funzionali</span>
           <span class="pill">Relazioni</span>
           <span class="pill">Job ricorrenti</span>
@@ -391,12 +438,12 @@
           <span class="pill">Controlli anti errore</span>
         </div>
 
-        <div class="hub">
+        <div class="hub" data-node="hub">
           <h2>Core automazione</h2>
-          <p>Coordina configurazioni, browser, dati, regole, scheduler, notifiche e azioni sugli articoli.</p>
+          <p>Il Vinted Employee coordina configurazioni, browser, dati, regole, scheduler, notifiche e azioni sugli articoli come owner operativo dedicato.</p>
         </div>
 
-        <section class="zone platform" style="left:64px; top:110px; width:360px; height:270px">
+        <section class="zone platform" data-node="platform" style="left:64px; top:110px; width:360px; height:270px">
           <h2><span></span>Zona piattaforma</h2>
           <div class="mini-grid">
             <div class="card"><b>Sessione browser</b><p>Usa profilo persistente e riusa sessioni già aperte.</p></div>
@@ -405,18 +452,20 @@
           </div>
         </section>
 
-        <section class="zone monitor" style="left:54px; top:430px; width:420px; height:300px">
+        <section class="zone monitor" data-node="monitor" style="left:54px; top:430px; width:420px; height:300px">
           <h2><span></span>Zona monitor profili</h2>
           <div class="mini-grid">
             <div class="card"><b>Profili salvati</b><p>Nome + URL. Restano nel gioco.</p></div>
+            <div class="card"><b>Profili proprietari</b><p>Account propri separati dai competitor, con KPI, grafici inventario/vendite e filtri.</p></div>
             <div class="card"><b>Primo controllo</b><p>Parte sempre subito appena avvii.</p></div>
             <div class="card"><b>Scroll completo</b><p>Scende fino al fondo e attende lazy-load.</p></div>
             <div class="card"><b>Snapshot</b><p>Confronta nuovo, presente e sparito.</p></div>
+            <div class="card"><b>Competitor priority</b><p>Profili strategici marcati manualmente mantengono la priorità durante i ricalcoli.</p></div>
             <div class="card wide"><b>Protezione</b><p>Se legge molto meno del precedente, non salva baseline e non genera falsi spariti.</p></div>
           </div>
         </section>
 
-        <section class="zone deals" style="left:1034px; top:430px; width:410px; height:300px">
+        <section class="zone deals" data-node="deals" style="left:1034px; top:430px; width:410px; height:300px">
           <h2><span></span>Zona ricerca affari</h2>
           <div class="mini-grid">
             <div class="card"><b>Termini</b><p>Query/categorie rotanti.</p></div>
@@ -427,7 +476,7 @@
           </div>
         </section>
 
-        <section class="zone actions-zone" style="left:1018px; top:780px; width:430px; height:275px">
+        <section class="zone actions-zone" data-node="actions" style="left:1018px; top:780px; width:430px; height:275px">
           <h2><span></span>Zona azioni articolo</h2>
           <div class="mini-grid">
             <div class="card"><b>Offerte</b><p>Calcolo dal prezzo base. Salta se già inviata.</p></div>
@@ -437,14 +486,14 @@
           </div>
         </section>
 
-        <section class="zone future" style="left:1484px; top:650px; width:220px; height:320px">
+        <section class="zone future" data-node="phones" style="left:1484px; top:650px; width:220px; height:320px">
           <h2><span></span>Rack telefoni<em>da sviluppare</em></h2>
           <div class="card"><b>iPhone multipli</b><p>Un telefono per account, con sessione isolata.</p></div>
           <div class="card"><b>Appium</b><p>Automazione app mobile per upload e azioni dove il browser non basta.</p></div>
           <div class="card"><b>Stato device</b><p>Online, occupato, errore, batteria, account collegato.</p></div>
         </section>
 
-        <section class="zone future" style="left:1130px; top:1110px; width:560px; height:210px">
+        <section class="zone future" data-node="social" style="left:1130px; top:1110px; width:560px; height:210px">
           <h2><span></span>Creazione contenuti social AI<em>da sviluppare</em></h2>
           <div class="mini-grid">
             <div class="card"><b>Foto prodotto</b><p>Migliora immagini, varianti, sfondo coerente e metadati puliti.</p></div>
@@ -454,12 +503,25 @@
           </div>
         </section>
 
-        <section class="zone future" style="left:1040px; top:645px; width:390px; height:120px">
+        <section class="zone scheduler" data-node="job-search" style="left:1750px; top:360px; width:430px; height:340px">
+          <h2><span></span>Zona ricerca lavoro</h2>
+          <div class="mini-grid">
+            <div class="card"><b>Preset badante</b><p>Ruolo part-time e zone Roma nord configurabili.</p></div>
+            <div class="card"><b>Job parallelo</b><p>Browser e processo isolati dagli altri monitor.</p></div>
+            <div class="card"><b>Filtro reale</b><p>Ruolo, orario e località devono comparire nell’annuncio.</p></div>
+            <div class="card"><b>Deduplica</b><p>Un URL già visto viene aggiornato, non rinotificato.</p></div>
+            <div class="card"><b>Storico separato</b><p>Cicli, annunci e avvistamenti in SQLite dedicato.</p></div>
+            <div class="card"><b>Resilienza</b><p>Una zona in errore non interrompe il ciclo completo.</p></div>
+            <div class="card wide"><b>Output</b><p>Active Jobs, log dei nuovi annunci e Discord opzionale.</p></div>
+          </div>
+        </section>
+
+        <section class="zone future" data-node="vision" style="left:1040px; top:645px; width:390px; height:120px">
           <h2><span></span>Computer vision domanda<em>da sviluppare</em></h2>
           <div class="card"><b>Conteggio ricorrenze visive</b><p>Se un charm o stile appare spesso nei risultati, aumenta il trend score e lo propone come prodotto da acquistare.</p></div>
         </section>
 
-        <section class="zone data" style="left:548px; top:790px; width:405px; height:300px">
+        <section class="zone data" data-node="data" style="left:548px; top:790px; width:405px; height:300px">
           <h2><span></span>Zona dati / memoria operativa</h2>
           <table>
             <thead>
@@ -467,15 +529,19 @@
             </thead>
             <tbody>
               <tr><td>Snapshot profili</td><td>Nuovi / presenti / spariti</td></tr>
+              <tr><td>Registro profili proprietari</td><td>Unisce storico, vendite e inventario per account</td></tr>
               <tr><td>Articoli analizzati</td><td>Non riestrarre sempre dettaglio</td></tr>
               <tr><td>Offerte inviate</td><td>Evitare duplicati</td></tr>
               <tr><td>Notifiche inviate</td><td>Evitare spam</td></tr>
+              <tr><td>Eventi append-only</td><td>Mai cancellare la storia di un articolo</td></tr>
+              <tr><td>Immagine + screenshot + HTML</td><td>Prova locale anche dopo la rimozione</td></tr>
+              <tr><td>Backup SQLite giornaliero</td><td>Ripristino verificato senza sovrascritture</td></tr>
               <tr><td>Preset profili/job</td><td>Non riscrivere configurazioni</td></tr>
             </tbody>
           </table>
         </section>
 
-        <section class="zone scheduler" style="left:60px; top:790px; width:415px; height:300px">
+        <section class="zone scheduler" data-node="scheduler" style="left:60px; top:790px; width:415px; height:300px">
           <h2><span></span>Zona scheduler / cron</h2>
           <div class="mini-grid">
             <div class="card"><b>Monitor</b><p>Subito, poi ogni intervallo.</p></div>
@@ -486,12 +552,12 @@
           </div>
         </section>
 
-        <section class="zone visibility" style="left:1060px; top:95px; width:385px; height:285px">
+        <section class="zone visibility" data-node="visibility" style="left:1060px; top:95px; width:385px; height:285px">
           <h2><span></span>Zona visibilità nel gioco</h2>
           <div class="mini-grid">
             <div class="card"><b>Jobs active</b><p>running, scheduled, failed, completed.</p></div>
             <div class="card"><b>Notifications</b><p>Campana con tutti i job e alert.</p></div>
-            <div class="card"><b>Agent chat</b><p>L’agente owner mostra messaggi.</p></div>
+            <div class="card"><b>Vinted Employee</b><p>Dipendente owner con chat, workstation e output dei job.</p></div>
             <div class="card"><b>Toast</b><p>Eventi immediati non bloccanti.</p></div>
             <div class="card wide"><b>Controlli</b><p>Stop / pause / resume devono essere accessibili da qui.</p></div>
           </div>
@@ -510,7 +576,7 @@
         <div class="relation-note" style="left:1000px; top:1110px">contenuti</div>
         <div class="relation-note" style="left:800px; top:1132px">feedback</div>
 
-        <section class="zone visibility" style="left:520px; top:105px; width:450px; height:240px">
+        <section class="zone visibility" data-node="states" style="left:520px; top:105px; width:450px; height:240px">
           <h2><span></span>Stati articolo</h2>
           <table>
             <thead>
@@ -527,5 +593,150 @@
       </div>
     </section>
   </main>
+  <script>
+    (() => {
+      const board = document.querySelector('.board');
+      const map = document.querySelector('.map');
+      const toggle = document.querySelector('#toggle-layout');
+      const reset = document.querySelector('#reset-layout');
+      const zoomIn = document.querySelector('#zoom-in');
+      const zoomOut = document.querySelector('#zoom-out');
+      const zoomLevel = document.querySelector('#zoom-level');
+      const storageKey = 'platform-logic-map-layout-v1';
+      const zoomStorageKey = 'platform-logic-map-zoom-v1';
+      const movables = [
+        ...board.querySelectorAll('.zone, .hub, .legend, .relation-note'),
+      ];
+      const originals = new Map();
+      // The map is a working board first: make every zone movable immediately.
+      // The button remains available when a locked/read-only view is useful.
+      let editing = true;
+      let active = null;
+      let zoom = Math.min(1.6, Math.max(.45, Number.parseFloat(localStorage.getItem(zoomStorageKey) || '1') || 1));
+
+      function applyZoom(nextZoom, focusX, focusY) {
+        const oldZoom = zoom;
+        zoom = Math.min(1.6, Math.max(.45, Math.round(nextZoom * 100) / 100));
+        board.style.zoom = String(zoom);
+        zoomLevel.textContent = `${Math.round(zoom * 100)}%`;
+        localStorage.setItem(zoomStorageKey, String(zoom));
+        if (Number.isFinite(focusX) && Number.isFinite(focusY) && oldZoom > 0) {
+          const contentX = (map.scrollLeft + focusX) / oldZoom;
+          const contentY = (map.scrollTop + focusY) / oldZoom;
+          map.scrollLeft = contentX * zoom - focusX;
+          map.scrollTop = contentY * zoom - focusY;
+        }
+      }
+
+      movables.forEach((element, index) => {
+        const key = element.dataset.node || `note-${index}`;
+        element.dataset.layoutKey = key;
+        originals.set(key, { left: element.offsetLeft, top: element.offsetTop });
+      });
+
+      function savedLayout() {
+        try { return JSON.parse(localStorage.getItem(storageKey) || '{}'); }
+        catch { return {}; }
+      }
+
+      function applyPosition(element, position) {
+        if (!position) return;
+        element.style.left = `${Math.round(position.left)}px`;
+        element.style.top = `${Math.round(position.top)}px`;
+      }
+
+      function drawLinks() {
+        const nodes = new Map([...board.querySelectorAll('[data-node]')].map((node) => [node.dataset.node, node]));
+        board.querySelectorAll('.link[data-from][data-to]').forEach((line) => {
+          const from = nodes.get(line.dataset.from);
+          const to = nodes.get(line.dataset.to);
+          if (!from || !to) return;
+          const x1 = from.offsetLeft + from.offsetWidth / 2;
+          const y1 = from.offsetTop + from.offsetHeight / 2;
+          const x2 = to.offsetLeft + to.offsetWidth / 2;
+          const y2 = to.offsetTop + to.offsetHeight / 2;
+          const dx = x2 - x1;
+          const bend = Math.max(70, Math.min(260, Math.abs(dx) * .5 + 45));
+          const direction = dx >= 0 ? 1 : -1;
+          line.setAttribute('d', `M ${x1} ${y1} C ${x1 + direction * bend} ${y1}, ${x2 - direction * bend} ${y2}, ${x2} ${y2}`);
+        });
+      }
+
+      function restoreLayout() {
+        const positions = savedLayout();
+        movables.forEach((element) => applyPosition(element, positions[element.dataset.layoutKey]));
+        drawLinks();
+      }
+
+      function persistLayout() {
+        const positions = Object.fromEntries(movables.map((element) => [
+          element.dataset.layoutKey,
+          { left: element.offsetLeft, top: element.offsetTop },
+        ]));
+        localStorage.setItem(storageKey, JSON.stringify(positions));
+      }
+
+      function setEditing(enabled) {
+        editing = Boolean(enabled);
+        board.classList.toggle('layout-edit', editing);
+        toggle.textContent = editing ? 'Done moving' : 'Move zones';
+      }
+
+      board.addEventListener('pointerdown', (event) => {
+        if (!editing || event.button !== 0) return;
+        const element = event.target.closest('.zone, .hub, .legend, .relation-note');
+        if (!element) return;
+        active = {
+          element,
+          pointerId: event.pointerId,
+          offsetX: (event.clientX - element.getBoundingClientRect().left) / zoom,
+          offsetY: (event.clientY - element.getBoundingClientRect().top) / zoom,
+        };
+        element.classList.add('is-dragging');
+        board.setPointerCapture(event.pointerId);
+        event.preventDefault();
+      });
+
+      board.addEventListener('pointermove', (event) => {
+        if (!active || event.pointerId !== active.pointerId) return;
+        const boardRect = board.getBoundingClientRect();
+        const element = active.element;
+        const left = Math.max(0, Math.min(board.offsetWidth - element.offsetWidth, (event.clientX - boardRect.left) / zoom - active.offsetX));
+        const top = Math.max(0, Math.min(board.offsetHeight - element.offsetHeight, (event.clientY - boardRect.top) / zoom - active.offsetY));
+        element.style.left = `${Math.round(left)}px`;
+        element.style.top = `${Math.round(top)}px`;
+        drawLinks();
+      });
+
+      function finishDrag(event) {
+        if (!active || (event && event.pointerId !== active.pointerId)) return;
+        active.element.classList.remove('is-dragging');
+        persistLayout();
+        active = null;
+      }
+
+      board.addEventListener('pointerup', finishDrag);
+      board.addEventListener('pointercancel', finishDrag);
+      toggle.addEventListener('click', () => setEditing(!editing));
+      zoomIn.addEventListener('click', () => applyZoom(zoom + .1, map.clientWidth / 2, map.clientHeight / 2));
+      zoomOut.addEventListener('click', () => applyZoom(zoom - .1, map.clientWidth / 2, map.clientHeight / 2));
+      map.addEventListener('wheel', (event) => {
+        if (!(event.ctrlKey || event.metaKey)) return;
+        event.preventDefault();
+        const mapRect = map.getBoundingClientRect();
+        const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+        applyZoom(zoom * factor, event.clientX - mapRect.left, event.clientY - mapRect.top);
+      }, { passive: false });
+      reset.addEventListener('click', () => {
+        localStorage.removeItem(storageKey);
+        movables.forEach((element) => applyPosition(element, originals.get(element.dataset.layoutKey)));
+        drawLinks();
+      });
+      window.addEventListener('resize', drawLinks);
+      restoreLayout();
+      setEditing(true);
+      applyZoom(zoom);
+    })();
+  </script>
 </body>
 </html>

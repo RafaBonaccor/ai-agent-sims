@@ -64,6 +64,35 @@ const addWorkstationButton = document.querySelector("#add-workstation");
 const resetLayoutButton = document.querySelector("#reset-layout");
 const themeToggle = document.querySelector("#theme-toggle");
 const systemSettingsButton = document.querySelector("#system-settings");
+const reportsDashboardButton = document.querySelector("#reports-dashboard");
+const reportDialog = document.querySelector("#report-dialog");
+const reportPeriod = document.querySelector("#report-period");
+const reportRefreshButton = document.querySelector("#report-refresh");
+const reportStatus = document.querySelector("#report-status");
+const reportMetrics = document.querySelector("#report-metrics");
+const reportSalesChart = document.querySelector("#report-sales-chart");
+const reportSalesCaption = document.querySelector("#report-sales-caption");
+const reportStatusChart = document.querySelector("#report-status-chart");
+const reportSearchRanking = document.querySelector("#report-search-ranking");
+const reportArticles = document.querySelector("#report-articles");
+const reportSaleTime = document.querySelector("#report-sale-time");
+const reportFilterButtons = Array.from(document.querySelectorAll("[data-report-filter]"));
+const reportTabButtons = Array.from(document.querySelectorAll("[data-report-tab]"));
+const reportPanels = Array.from(document.querySelectorAll("[data-report-panel]"));
+const reportCompetitors = document.querySelector("#report-competitors");
+const reportCompetitorCount = document.querySelector("#report-competitor-count");
+const reportCompetitorStatus = document.querySelector("#report-competitor-status");
+const reportOwnedProfiles = document.querySelector("#report-owned-profiles");
+const reportOwnedCount = document.querySelector("#report-owned-count");
+const reportOwnedForm = document.querySelector("#report-owned-form");
+const reportOwnedName = document.querySelector("#report-owned-name");
+const reportOwnedUrl = document.querySelector("#report-owned-url");
+const reportOwnedError = document.querySelector("#report-owned-error");
+const reportOwnedSummary = document.querySelector("#report-owned-summary");
+const reportOwnedInventoryChart = document.querySelector("#report-owned-inventory-chart");
+const reportOwnedSpeedChart = document.querySelector("#report-owned-speed-chart");
+const reportOwnedStatus = document.querySelector("#report-owned-status");
+const reportOwnedSearch = document.querySelector("#report-owned-search");
 const agentDialog = document.querySelector("#agent-dialog");
 const agentForm = document.querySelector("#agent-form");
 const agentFormError = document.querySelector("#agent-form-error");
@@ -233,6 +262,12 @@ let projectDialogMode = "gateway";
 let projectJobFilter = "all";
 let selectedTaskThreadId = "";
 let unreadCompletedProjectJobs = 0;
+let reportSnapshot = null;
+let reportArticleFilter = "all";
+let reportSaleTimeFilter = "all";
+let reportCompetitorStatusFilter = "all";
+let reportOwnedStatusFilter = "all";
+let reportOwnedSearchFilter = "";
 
 const providerDefaults = {
   simulated: { model: "native-simulator", baseUrl: "" },
@@ -1614,6 +1649,18 @@ function createStationProp(station) {
     addMesh(group, new THREE.CylinderGeometry(0.48, 0.58, 1.35, 20), sharedMaterials.glass, { y: 0.78 });
     const core = addMesh(group, new THREE.IcosahedronGeometry(0.42, 1), lightMaterial, { y: 0.84 });
     core.userData.spin = 1.2;
+  } else if (stationKind === "marketplace") {
+    addMesh(group, new THREE.BoxGeometry(1.75, 0.18, 0.78), darkMaterial, { y: 0.43 });
+    for (let index = 0; index < 3; index += 1) {
+      const screen = addMesh(group, new THREE.BoxGeometry(0.52, 0.42, 0.06), lightMaterial, {
+        x: -0.58 + index * 0.58,
+        y: 0.9,
+        z: -0.2,
+      });
+      screen.rotation.x = -0.06;
+    }
+    addMesh(group, new THREE.BoxGeometry(0.42, 0.28, 0.42), stationMaterial, { x: -0.55, y: 0.24, z: 0.58 });
+    addMesh(group, new THREE.BoxGeometry(0.34, 0.22, 0.34), stationMaterial, { x: -0.08, y: 0.2, z: 0.62 });
   } else {
     addMesh(group, new THREE.CylinderGeometry(1.08, 1.08, 0.22, 20), darkMaterial, { y: 0.14 });
     for (let i = 0; i < 6; i += 1) {
@@ -2884,6 +2931,7 @@ function ensureRuntimeAgent(snapshot) {
     existing.role = snapshot.role;
     existing.color = snapshot.color;
     existing.capabilities = [...snapshot.capabilities];
+    existing.toolsets = [...(snapshot.toolsets ?? [])];
     existing.runtime.status = snapshot.state;
     existing.runtime.load = snapshot.load;
     applyAgentAppearance(existing);
@@ -2904,6 +2952,7 @@ function ensureRuntimeAgent(snapshot) {
     color: snapshot.color,
     reliability: 0.84,
     capabilities: snapshot.capabilities,
+    toolsets: snapshot.toolsets ?? [],
     position: positionForAgent(snapshot.id),
     summary: `${snapshot.role} agent managed by the native runtime.`,
     runtime: { status: snapshot.state, load: snapshot.load },
@@ -3865,11 +3914,11 @@ function renderProjectParameters() {
             return `<option value="${value}"${selected}>${value}</option>`;
           })
           .join("");
-        return `<label class="${checkedClass}"><span>${label}</span><select data-project-parameter="${id}">${renderedOptions}</select></label>`;
+        return `<label class="${checkedClass}"><span>${label}</span><select data-project-parameter="${id}">${renderedOptions}</select>${projectParameterHelpHtml(parameter)}</label>`;
       }
       if (type === "checkbox") {
         const checked = parameter.default ? " checked" : "";
-        return `<label class="${checkedClass}"><span>${label}</span><input data-project-parameter="${id}" type="checkbox"${checked} /></label>`;
+        return `<label class="${checkedClass}"><span>${label}</span><input data-project-parameter="${id}" type="checkbox"${checked} />${projectParameterHelpHtml(parameter)}</label>`;
       }
       if (type === "duration") {
         return projectDurationParameterHtml(parameter);
@@ -3886,11 +3935,12 @@ function renderProjectParameters() {
             <span>${escapeHtml(label)}</span>
             <div class="project-parameter-list__rows" data-project-list-rows="${escapeHtml(id)}">${renderedRows}</div>
             <button class="button button--secondary button--compact" type="button" data-project-list-add="${escapeHtml(id)}">${addLabel}</button>
+            ${projectParameterHelpHtml(parameter)}
           </label>
         `;
       }
       const value = parameter.default !== undefined && parameter.default !== null ? ` value="${String(parameter.default).replaceAll('"', "&quot;")}"` : "";
-      return `<label class="${checkedClass}"><span>${label}</span><input data-project-parameter="${id}" type="${type}"${value}${placeholder}${min}${max}${step} /></label>`;
+      return `<label class="${checkedClass}"><span>${label}</span><input data-project-parameter="${id}" type="${type}"${value}${placeholder}${min}${max}${step} />${projectParameterHelpHtml(parameter)}</label>`;
     })
     .join("");
   setupProjectListParameters();
@@ -3941,7 +3991,6 @@ function projectDurationParameterHtml(parameter) {
   const min = parameter.min !== undefined ? ` min="${parameter.min}"` : ' min="0"';
   const max = parameter.max !== undefined ? ` max="${parameter.max}"` : "";
   const step = parameter.step !== undefined ? ` step="${parameter.step}"` : ' step="1"';
-  const help = parameter.help ? `<small>${escapeHtml(parameter.help)}</small>` : "";
   const options = [
     ["seconds", "seconds"],
     ["minutes", "minutes"],
@@ -3954,9 +4003,13 @@ function projectDurationParameterHtml(parameter) {
         <input data-project-duration-value="${escapeHtml(id)}" type="number" value="${escapeHtml(duration.value)}"${min}${max}${step} />
         <select data-project-duration-unit="${escapeHtml(id)}">${options}</select>
       </div>
-      ${help}
+      ${projectParameterHelpHtml(parameter)}
     </label>
   `;
+}
+
+function projectParameterHelpHtml(parameter) {
+  return parameter.help ? `<small class="project-parameter-help">${escapeHtml(parameter.help)}</small>` : "";
 }
 
 function splitProjectDurationValue(value, preferredUnit = "") {
@@ -4567,6 +4620,317 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function formatReportNumber(value) {
+  return new Intl.NumberFormat("en-US").format(Number(value) || 0);
+}
+
+function formatReportDate(value) {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
+}
+
+function renderReportArticles() {
+  if (!reportArticles) return;
+  const articles = Array.isArray(reportSnapshot?.articles) ? reportSnapshot.articles : [];
+  const reportArticleStatus = (article) => article.status === "sold"
+    ? "sold"
+    : (article.availability_status === "unavailable" || article.status === "unavailable" ? "unavailable" : "active");
+  let filtered = reportArticleFilter === "all"
+    ? articles
+    : articles.filter((article) => reportArticleStatus(article) === reportArticleFilter);
+  if (reportSaleTimeFilter !== "all") {
+    const ranges = {
+      "under-1": [0, 3600],
+      "1-6": [3600, 21600],
+      "6-12": [21600, 43200],
+      "12-24": [43200, 86400],
+      "over-24": [86400, Number.POSITIVE_INFINITY],
+    };
+    const [minimum, maximum] = ranges[reportSaleTimeFilter] ?? [0, Number.POSITIVE_INFINITY];
+    filtered = filtered.filter((article) => {
+      const seconds = Number(article.sold_after_seconds);
+      return article.status === "sold" && Number.isFinite(seconds) && seconds >= minimum && seconds < maximum;
+    });
+  }
+  if (!filtered.length) {
+    reportArticles.innerHTML = '<div class="report-status">No articles match this filter.</div>';
+    return;
+  }
+  reportArticles.innerHTML = filtered.map((article) => {
+    const status = reportArticleStatus(article);
+    const archivedImage = article.archive_image_path
+      ? `/api/vinted/archive?path=${encodeURIComponent(article.archive_image_path)}`
+      : "";
+    const archivedScreenshot = article.archive_screenshot_path
+      ? `/api/vinted/archive?path=${encodeURIComponent(article.archive_screenshot_path)}`
+      : "";
+    const imageSource = archivedImage || article.image_url || archivedScreenshot;
+    const image = imageSource
+      ? `<img src="${escapeHtml(imageSource)}" data-archive-fallback="${escapeHtml(archivedScreenshot)}" alt="" loading="lazy" />`
+      : '<div class="report-article__placeholder" aria-hidden="true">◇</div>';
+    const timing = status === "sold"
+      ? `Sold in ${escapeHtml(article.sold_after_text || "—")} · ${escapeHtml(formatReportDate(article.sold_at))} · ${article.sale_duration_source === "listing_age" ? "listing time" : "deal discovery"}`
+      : status === "unavailable"
+        ? `Unavailable since ${escapeHtml(formatReportDate(article.unavailable_at))} · historical data preserved`
+        : `Tracked since ${escapeHtml(formatReportDate(article.first_seen_at))}`;
+    const favorites = Number.isFinite(Number(article.favorite_count))
+      ? ` · ${formatReportNumber(article.favorite_count)} likes`
+      : "";
+    return `
+      <a class="report-article" href="${escapeHtml(article.link)}" target="_blank" rel="noopener noreferrer">
+        ${image}
+        <div class="report-article__body">
+          <div class="report-article__top">
+            <strong title="${escapeHtml(article.name)}">${escapeHtml(article.name)}</strong>
+            <span class="report-pill ${status === "active" ? "report-pill--active" : ""}">${status}</span>
+          </div>
+          <p>${escapeHtml(article.price || "Price unavailable")}</p>
+          <small>${timing}${favorites}</small>
+        </div>
+      </a>
+    `;
+  }).join("");
+  reportArticles.querySelectorAll("img").forEach((image) => {
+    image.addEventListener("error", () => {
+      const fallback = image.dataset.archiveFallback;
+      if (fallback && image.src !== new URL(fallback, window.location.href).href) {
+        image.src = fallback;
+        return;
+      }
+      const placeholder = document.createElement("div");
+      placeholder.className = "report-article__placeholder";
+      placeholder.textContent = "◇";
+      image.replaceWith(placeholder);
+    }, { once: true });
+  });
+}
+
+function renderReportCompetitors() {
+  if (!reportCompetitors) return;
+  const profiles = Array.isArray(reportSnapshot?.competitor_profiles)
+    ? reportSnapshot.competitor_profiles
+    : [];
+  if (reportCompetitorCount) reportCompetitorCount.textContent = formatReportNumber(profiles.length);
+  const filtered = reportCompetitorStatusFilter === "all"
+    ? profiles
+    : profiles.filter((profile) => profile.status === reportCompetitorStatusFilter);
+  if (!filtered.length) {
+    reportCompetitors.innerHTML = '<div class="report-status">No competitor profiles match this filter.</div>';
+    return;
+  }
+  reportCompetitors.innerHTML = filtered.map((profile) => {
+    const sellerName = profile.seller_name || `Seller ${profile.seller_member_id || "unknown"}`;
+    const keyword = profile.top_deal_keyword || "No confirmed keyword yet";
+    const sameKeywordDeals = Number(profile.same_keyword_deal_count) || 0;
+    const status = profile.status || "candidate";
+    const content = `
+      <div class="report-competitor__top">
+        <div>
+          <strong title="${escapeHtml(sellerName)}">${escapeHtml(sellerName)}</strong>
+          <small>ID ${escapeHtml(profile.seller_member_id || "—")}</small>
+        </div>
+        <span class="report-pill report-pill--competitor-${escapeHtml(status)}">${escapeHtml(status)}</span>
+      </div>
+      <div class="report-competitor__keyword">
+        <span>${profile.manual_priority ? "Manually prioritized · top keyword" : "Top deal keyword"}</span>
+        <strong>${escapeHtml(keyword)}</strong>
+        <b>${formatReportNumber(sameKeywordDeals)} deals</b>
+      </div>
+      <div class="report-competitor__signals">
+        <span><b>${formatReportNumber(profile.interesting_item_count)}</b> items</span>
+        <span><b>${formatReportNumber(profile.distinct_search_terms)}</b> searches</span>
+        <span><b>${formatReportNumber(profile.gone_item_count)}</b> gone/sold</span>
+        <span><b>${formatReportNumber(profile.max_favorite_count)}</b> max likes</span>
+      </div>
+      <div class="report-competitor__footer">
+        <span>Score <b>${formatReportNumber(profile.score)}</b></span>
+        <span>Last seen ${escapeHtml(formatReportDate(profile.last_seen_at))}</span>
+      </div>`;
+    if (!profile.seller_profile_url) return `<article class="report-competitor">${content}</article>`;
+    return `<a class="report-competitor" href="${escapeHtml(profile.seller_profile_url)}" target="_blank" rel="noopener noreferrer">${content}</a>`;
+  }).join("");
+}
+
+function renderReportOwnedProfiles() {
+  if (!reportOwnedProfiles) return;
+  const profiles = Array.isArray(reportSnapshot?.owned_profiles) ? reportSnapshot.owned_profiles : [];
+  if (reportOwnedCount) reportOwnedCount.textContent = formatReportNumber(profiles.length);
+  if (!profiles.length) {
+    if (reportOwnedSummary) reportOwnedSummary.innerHTML = "";
+    if (reportOwnedInventoryChart) reportOwnedInventoryChart.innerHTML = "";
+    if (reportOwnedSpeedChart) reportOwnedSpeedChart.innerHTML = "";
+    reportOwnedProfiles.innerHTML = '<div class="report-status">No owned profiles configured yet.</div>';
+    return;
+  }
+  const totals = profiles.reduce((result, profile) => {
+    result.known += Number(profile.known_items_count) || 0;
+    result.active += Number(profile.active_items_count) || 0;
+    result.sold += Number(profile.sold_items_count) || 0;
+    result.snapshots += Number(profile.snapshots_count) || 0;
+    result.weightedSaleSeconds += (Number(profile.average_sale_seconds) || 0) * (Number(profile.sold_items_count) || 0);
+    return result;
+  }, { known: 0, active: 0, sold: 0, snapshots: 0, weightedSaleSeconds: 0 });
+  const sellThrough = totals.active + totals.sold ? (totals.sold / (totals.active + totals.sold)) * 100 : 0;
+  const averageSaleSeconds = totals.sold ? totals.weightedSaleSeconds / totals.sold : 0;
+  const averageSaleHours = averageSaleSeconds / 3600;
+  const averageSaleLabel = averageSaleSeconds >= 86400
+    ? `${(averageSaleSeconds / 86400).toFixed(1)}d`
+    : averageSaleSeconds ? `${averageSaleHours.toFixed(1)}h` : "—";
+  if (reportOwnedSummary) {
+    reportOwnedSummary.innerHTML = [
+      [profiles.length, "Owned profiles", `${totals.snapshots} snapshots`],
+      [totals.active, "Current listings", `${totals.known} products known`],
+      [totals.sold, "Confirmed sold", `${sellThrough.toFixed(1)}% sell-through`],
+      [averageSaleLabel, "Average sale time", "Confirmed sales only"],
+    ].map(([value, label, note]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(note)}</small></article>`).join("");
+  }
+  if (reportOwnedInventoryChart) {
+    reportOwnedInventoryChart.innerHTML = profiles.map((profile) => {
+      const items = Array.isArray(profile.items) ? profile.items : [];
+      const counts = items.reduce((result, item) => {
+        const status = ["sold", "gone", "observed"].includes(item.status) ? item.status : "active";
+        result[status] += 1;
+        return result;
+      }, { active: 0, sold: 0, gone: 0, observed: 0 });
+      const total = Math.max(counts.active + counts.sold + counts.gone + counts.observed, 1);
+      const segments = ["active", "sold", "gone", "observed"].map((status) =>
+        `<i data-tone="${status}" style="--segment:${(counts[status] / total) * 100}%" title="${status}: ${counts[status]}"></i>`
+      ).join("");
+      return `<div class="report-owned-chart-row"><div><strong>${escapeHtml(profile.display_name)}</strong><small>${formatReportNumber(total)} known</small></div><div class="report-owned-stack">${segments}</div><b>${formatReportNumber(profile.active_items_count)} live</b></div>`;
+    }).join("") + '<div class="report-owned-legend"><span data-tone="active">Active</span><span data-tone="sold">Sold</span><span data-tone="gone">Gone</span><span data-tone="observed">Observed</span></div>';
+  }
+  if (reportOwnedSpeedChart) {
+    const maxSpeed = Math.max(1, ...profiles.map((profile) => Number(profile.average_sale_seconds) || 0));
+    reportOwnedSpeedChart.innerHTML = profiles.map((profile) => {
+      const seconds = Number(profile.average_sale_seconds) || 0;
+      const width = seconds ? Math.max((seconds / maxSpeed) * 100, 5) : 0;
+      return `<div class="report-owned-speed-row"><div><strong>${escapeHtml(profile.display_name)}</strong><small>${formatReportNumber(profile.sold_items_count)} confirmed sales</small></div><div class="report-owned-speed-track"><i style="--speed:${width}%"></i></div><b>${escapeHtml(profile.average_sale_text || "—")}</b></div>`;
+    }).join("") + '<p class="report-owned-chart-note">Shorter bars indicate faster average sales.</p>';
+  }
+  reportOwnedProfiles.innerHTML = profiles.map((profile) => {
+    const allItems = Array.isArray(profile.items) ? profile.items : [];
+    const items = allItems.filter((item) => {
+      const status = item.status || "observed";
+      const statusMatches = reportOwnedStatusFilter === "all" || status === reportOwnedStatusFilter;
+      const searchText = `${item.name || ""} ${item.price || ""}`.toLowerCase();
+      return statusMatches && (!reportOwnedSearchFilter || searchText.includes(reportOwnedSearchFilter));
+    });
+    const itemCards = items.length ? items.map((item) => {
+      const status = item.status || "observed";
+      const image = item.image_url
+        ? `<img src="${escapeHtml(item.image_url)}" alt="" loading="lazy" />`
+        : '<span class="report-owned-item__placeholder">◇</span>';
+      const timing = status === "sold"
+        ? `Sold in ${escapeHtml(item.sold_after_text || "—")} · ${escapeHtml(formatReportDate(item.sold_at))}`
+        : status === "gone" ? "Gone / sold / removed" : `Seen ${escapeHtml(formatReportDate(item.last_seen_at || item.first_seen_at))}`;
+      return `<a class="report-owned-item" href="${escapeHtml(item.link || profile.profile_url)}" target="_blank" rel="noopener noreferrer">
+        ${image}<span><strong>${escapeHtml(item.name || "Marketplace item")}</strong><small>${escapeHtml(item.price || "Price unavailable")} · ${timing}</small></span>
+        <b class="report-pill ${status === "active" ? "report-pill--active" : ""}">${escapeHtml(status)}</b>
+      </a>`;
+    }).join("") : '<div class="report-status">No product history collected for this profile yet.</div>';
+    return `<article class="report-owned-profile">
+      <header>
+        <div><a href="${escapeHtml(profile.profile_url)}" target="_blank" rel="noopener noreferrer"><strong>${escapeHtml(profile.display_name)}</strong></a><small>Member ID ${escapeHtml(profile.member_id)}</small></div>
+        <button class="button button--danger button--compact" type="button" data-owned-profile-remove="${escapeHtml(profile.member_id)}">Remove</button>
+      </header>
+      <div class="report-owned-metrics">
+        <span><b>${formatReportNumber(profile.known_items_count)}</b> known</span>
+        <span><b>${formatReportNumber(profile.active_items_count)}</b> active</span>
+        <span><b>${formatReportNumber(profile.sold_items_count)}</b> sold</span>
+        <span><b>${escapeHtml(profile.average_sale_text || "—")}</b> avg. sale</span>
+        <span><b>${formatReportNumber(profile.snapshots_count)}</b> snapshots</span>
+      </div>
+      <div class="report-owned-profile__caption"><span>${formatReportNumber(items.length)} of ${formatReportNumber(allItems.length)} products shown</span><span>Last snapshot ${escapeHtml(formatReportDate(profile.latest_snapshot_at))}</span></div>
+      <div class="report-owned-items">${itemCards}</div>
+    </article>`;
+  }).join("");
+  reportOwnedProfiles.querySelectorAll("img").forEach((image) => {
+    image.addEventListener("error", () => image.replaceWith(Object.assign(document.createElement("span"), { className: "report-owned-item__placeholder", textContent: "◇" })), { once: true });
+  });
+}
+
+function renderVintedReport(snapshot) {
+  reportSnapshot = snapshot;
+  const summary = snapshot?.summary ?? {};
+  const metrics = [
+    ["Analyzed articles", formatReportNumber(summary.total_items), "Current database"],
+    ["Active deals", formatReportNumber(summary.active_deals), "Still being tracked"],
+    ["Sold in period", formatReportNumber(summary.sold_in_period), `${snapshot.period_days} day window`],
+    ["Average sale time", summary.average_sale_text || "—", `Median ${summary.median_sale_text || "—"}`],
+    ["Conversion", `${Number(summary.conversion_rate || 0).toFixed(1)}%`, `${formatReportNumber(summary.sold_total)} confirmed sold`],
+    ["Competitors", formatReportNumber(summary.competitors), `${formatReportNumber(summary.priority_competitors)} confirmed / priority`],
+  ];
+  reportMetrics.innerHTML = metrics.map(([label, value, note]) => `
+    <article class="report-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(note)}</small></article>
+  `).join("");
+
+  const daily = Array.isArray(snapshot.daily_sales) ? snapshot.daily_sales : [];
+  const visibleDaily = daily.slice(-60);
+  const maxDaily = Math.max(1, ...visibleDaily.map((row) => Number(row.sold_count) || 0));
+  reportSalesChart.innerHTML = visibleDaily.map((row) => {
+    const count = Number(row.sold_count) || 0;
+    const height = count ? Math.max((count / maxDaily) * 100, 5) : 2;
+    return `<div class="report-bar" style="--bar-height:${height}%" title="${escapeHtml(row.date)} · ${count} sold"><span>${count || ""}</span></div>`;
+  }).join("");
+  reportSalesCaption.textContent = `${formatReportNumber(summary.sold_in_period)} sold · last ${snapshot.period_days} days`;
+
+  const distribution = Array.isArray(snapshot.status_distribution) ? snapshot.status_distribution : [];
+  const maxStatus = Math.max(1, ...distribution.map((row) => Number(row.value) || 0));
+  reportStatusChart.innerHTML = distribution.map((row) => `
+    <div class="report-distribution__row" data-tone="${escapeHtml(row.tone)}">
+      <span>${escapeHtml(row.label)}</span>
+      <div class="report-progress"><i style="--progress:${Math.max((Number(row.value) / maxStatus) * 100, row.value ? 4 : 0)}%"></i></div>
+      <strong>${formatReportNumber(row.value)}</strong>
+    </div>
+  `).join("");
+
+  const searches = Array.isArray(snapshot.top_searches) ? snapshot.top_searches : [];
+  const maxSearch = Math.max(1, ...searches.map((row) => Number(row.seen) || 0));
+  reportSearchRanking.innerHTML = searches.length ? searches.map((row) => `
+    <div class="report-ranking__row">
+      <span title="${escapeHtml(row.term)}">${escapeHtml(row.term)}</span>
+      <div class="report-progress"><i style="--progress:${Math.max((Number(row.seen) / maxSearch) * 100, 4)}%"></i></div>
+      <strong>${formatReportNumber(row.seen)}</strong>
+    </div>
+  `).join("") : '<div class="report-status">No search history yet.</div>';
+
+  reportStatus.textContent = `Updated ${formatReportDate(snapshot.generated_at)} · ${formatReportNumber(summary.unavailable_items)} unavailable articles preserved`;
+  renderReportArticles();
+  renderReportCompetitors();
+  renderReportOwnedProfiles();
+}
+
+async function loadVintedReport() {
+  if (!runtimeClient.connected) {
+    reportStatus.textContent = "Start the runtime to load reports.";
+    return;
+  }
+  reportRefreshButton.disabled = true;
+  reportStatus.textContent = "Loading marketplace report…";
+  try {
+    const snapshot = await runtimeClient.getVintedReports(Number(reportPeriod.value) || 30, 5000);
+    if (!snapshot.available) {
+      reportStatus.textContent = "The scraper database is not available yet.";
+      reportMetrics.innerHTML = "";
+      reportArticles.innerHTML = "";
+      return;
+    }
+    renderVintedReport(snapshot);
+  } catch (error) {
+    reportStatus.textContent = `Report load failed: ${error.message}`;
+    reportUiError("ui.vinted-reports.load", error, { phase: "load-vinted-reports" });
+  } finally {
+    reportRefreshButton.disabled = false;
+  }
+}
+
+async function openVintedReports() {
+  if (!reportDialog.open) reportDialog.showModal();
+  await loadVintedReport();
 }
 
 function renderProjectOutputSummary(job) {
@@ -6172,6 +6536,84 @@ addWorkstationButton?.addEventListener("click", addEditorWorkstation);
 workstationAgentSelect?.addEventListener("change", renderWorkstationControls);
 resetLayoutButton?.addEventListener("click", resetSavedLayout);
 themeToggle?.addEventListener("click", () => applyTheme(currentTheme === "light" ? "dark" : "light"));
+reportsDashboardButton?.addEventListener("click", () => {
+  void openVintedReports();
+});
+reportRefreshButton?.addEventListener("click", () => {
+  void loadVintedReport();
+});
+reportPeriod?.addEventListener("change", () => {
+  void loadVintedReport();
+});
+reportSaleTime?.addEventListener("change", () => {
+  reportSaleTimeFilter = reportSaleTime.value || "all";
+  renderReportArticles();
+});
+reportFilterButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    reportArticleFilter = button.dataset.reportFilter || "all";
+    reportFilterButtons.forEach((candidate) => {
+      candidate.classList.toggle("report-filter--active", candidate === button);
+    });
+    renderReportArticles();
+  });
+});
+reportTabButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    const selectedTab = button.dataset.reportTab || "overview";
+    reportTabButtons.forEach((candidate) => {
+      candidate.classList.toggle("report-tab--active", candidate === button);
+    });
+    reportPanels.forEach((panel) => {
+      panel.hidden = panel.dataset.reportPanel !== selectedTab;
+    });
+  });
+});
+reportCompetitorStatus?.addEventListener("change", () => {
+  reportCompetitorStatusFilter = reportCompetitorStatus.value || "all";
+  renderReportCompetitors();
+});
+reportOwnedForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  reportOwnedError.textContent = "";
+  const submit = reportOwnedForm.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    await runtimeClient.saveVintedOwnedProfile(reportOwnedUrl.value, reportOwnedName.value);
+    reportOwnedForm.reset();
+    await loadVintedReport();
+  } catch (error) {
+    reportOwnedError.textContent = error.message;
+    reportUiError("ui.vinted-reports.owned-profile-save", error, { phase: "save-owned-profile" });
+  } finally {
+    submit.disabled = false;
+  }
+});
+reportOwnedProfiles?.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-owned-profile-remove]");
+  if (!button) return;
+  button.disabled = true;
+  reportOwnedError.textContent = "";
+  try {
+    await runtimeClient.removeVintedOwnedProfile(button.dataset.ownedProfileRemove);
+    await loadVintedReport();
+  } catch (error) {
+    reportOwnedError.textContent = error.message;
+    reportUiError("ui.vinted-reports.owned-profile-remove", error, { phase: "remove-owned-profile" });
+    button.disabled = false;
+  }
+});
+reportOwnedStatus?.addEventListener("change", () => {
+  reportOwnedStatusFilter = reportOwnedStatus.value || "all";
+  renderReportOwnedProfiles();
+});
+reportOwnedSearch?.addEventListener("input", () => {
+  reportOwnedSearchFilter = reportOwnedSearch.value.trim().toLowerCase();
+  renderReportOwnedProfiles();
+});
+reportDialog?.querySelectorAll("[data-report-close]").forEach((button) => {
+  button.addEventListener("click", () => reportDialog.close());
+});
 speedControl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-speed]");
   if (button) {

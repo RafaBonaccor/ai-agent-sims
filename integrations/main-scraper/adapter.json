@@ -55,6 +55,7 @@
       "label": "Procacciatore",
       "description": "Avvia il loop Vinted deal-hunter usando i valori salvati dalla GUI come default modificabili.",
       "risk": "browser-read-write",
+      "timeoutSeconds": 0,
       "arguments": ["run", "vinted", "--stdout-json", "--quiet", "--format", "none"],
       "parameters": [
         { "id": "deal-hunter-terms", "label": "Rotation terms", "type": "text", "default": "charm, bracciali, pandora, collane, gioielli, ciondoli, orecchini, anelli", "defaultFromUiSetting": "vinted_deal_hunter_terms", "placeholder": "charm, pandora, collane" },
@@ -101,6 +102,122 @@
         "refresh-browser-profile"
       ]
     },
+    "vinted.competitor_discovery": {
+      "label": "Competitor discovery",
+      "description": "Independent cron-style scanner: searches interesting listings, opens only candidates, extracts seller/profile data, and stores it for competitor intelligence.",
+      "risk": "browser-read",
+      "timeoutSeconds": 0,
+      "arguments": ["run", "vinted_competitors", "--stdout-json", "--quiet", "--format", "none"],
+      "parameters": [
+        { "id": "competitor-keywords", "label": "Competitor keywords", "type": "text", "default": "charm, pandora", "placeholder": "charm, pandora, bracciale charm" },
+        { "id": "competitor-category", "label": "Category", "type": "select", "default": "Gioielli donna", "options": [
+          { "value": "Nessuna categoria rapida", "label": "No quick category" },
+          { "value": "Monitoraggio", "label": "Monitoring" },
+          { "value": "Accessori donna", "label": "Women accessories" },
+          { "value": "Accessori uomo", "label": "Men accessories" },
+          { "value": "Elettronica", "label": "Electronics" },
+          { "value": "Gioielli donna", "label": "Women jewellery" },
+          { "value": "Scarpe donna", "label": "Women shoes" },
+          { "value": "Scarpe uomo", "label": "Men shoes" }
+        ] },
+        { "id": "competitor-min-likes", "label": "Min likes before opening listing", "type": "number", "default": 15, "min": 0, "step": 1 },
+        { "id": "competitor-max-age-hours", "label": "Max age hours for scoring", "type": "number", "default": 720, "min": 0, "step": 1 },
+        { "id": "competitor-interval-seconds", "label": "Repeat every", "type": "duration", "default": 0, "min": 0, "step": 1, "help": "Use 0 to run once. Use 3600 for hourly competitor discovery." },
+        { "id": "max-results", "label": "Max items / search", "type": "number", "default": 100, "min": 0, "step": 1 },
+        { "id": "max-price", "label": "Max item price", "type": "text", "default": "", "placeholder": "19.90" },
+        { "id": "competitor-min-price", "label": "Min item price", "type": "text", "default": "", "placeholder": "5.00" },
+        { "id": "skip-login-required", "label": "No login required", "type": "checkbox", "default": true, "emitFalseFlag": true },
+        { "id": "db-path", "label": "SQLite DB path", "type": "text", "default": "data/scraper.db", "defaultFromUiSetting": "vinted_db_path", "placeholder": "data/scraper.db" },
+        { "id": "browser-mode", "label": "Browser mode", "type": "select", "default": "chrome_normale", "defaultFromUiSetting": "browser_mode", "options": [
+          { "value": "chrome_normale", "label": "Chrome normale" },
+          { "value": "sessione_persistente", "label": "Sessione persistente" },
+          { "value": "profilo_personalizzato", "label": "Profilo personalizzato" },
+          { "value": "isolated", "label": "Isolated" }
+        ] },
+        { "id": "browser-user-data-dir", "label": "Browser user data dir", "type": "text", "default": "", "defaultFromUiSetting": "browser_user_data_dir", "placeholder": "/Users/.../Google/Chrome" },
+        { "id": "browser-profile-directory", "label": "Browser profile directory", "type": "text", "default": "Default", "defaultFromUiSetting": "browser_profile_directory", "placeholder": "Default" },
+        "refresh-browser-profile"
+      ]
+    },
+    "vinted.brand_trend_scout": {
+      "label": "Category trend scout",
+      "description": "Independent cohort monitor for broad product categories. It compares confirmed sell-through, pauses statistically weak segments, and periodically retests them without deleting history.",
+      "risk": "browser-read",
+      "timeoutSeconds": 0,
+      "arguments": ["run", "vinted_trends", "--stdout-json", "--quiet", "--format", "none"],
+      "parameters": [
+        { "id": "trend-keywords", "label": "Category queries (comma-separated)", "type": "text", "default": "gioielli, spille, collane, braccialetti, anelli, orecchini, ciondoli, portachiavi, accessori borsa", "placeholder": "gioielli, spille, collane, anelli", "help": "Always separate categories with a comma. Each segment has its own lifecycle and sell-through statistics; gioielli is kept as the broad benchmark." },
+        { "id": "trend-interval-seconds", "label": "Scheduler cycle", "type": "duration", "default": 900, "min": 0, "step": 1, "help": "How often the scheduler wakes up. Use 0 for one cycle only." },
+        { "id": "trend-queries-per-cycle", "label": "Queries per cycle", "type": "number", "default": 3, "min": 1, "step": 1, "help": "Limits browser load and rate-limit risk." },
+        { "id": "max-results", "label": "Observed items per query", "type": "number", "default": 100, "min": 1, "step": 1 },
+        { "id": "max-price", "label": "Optional maximum price", "type": "text", "default": "", "placeholder": "50.00" },
+        { "id": "trend-evaluation-hours", "label": "Sell-through window (hours)", "type": "number", "default": 72, "min": 1, "step": 1, "help": "Only cohorts old enough to complete this window enter the denominator." },
+        { "id": "trend-evaluation-spacing-hours", "label": "Minimum time between ratings (hours)", "type": "number", "default": 24, "min": 1, "step": 1, "help": "Prevents repeated scheduler ticks from counting as independent weak evaluations." },
+        { "id": "trend-min-sample", "label": "Minimum mature sample", "type": "number", "default": 30, "min": 1, "step": 1, "help": "No query is judged before this many eligible listings exist." },
+        { "id": "trend-min-sell-through", "label": "Minimum sell-through %", "type": "number", "default": 8, "min": 0, "max": 100, "step": 0.5, "help": "Below this percentage, a mature query receives one weak evaluation." },
+        { "id": "trend-promising-sell-through", "label": "Promising sell-through %", "type": "number", "default": 15, "min": 0, "max": 100, "step": 0.5 },
+        { "id": "trend-weak-evaluations", "label": "Weak evaluations before pause", "type": "number", "default": 2, "min": 1, "step": 1 },
+        { "id": "trend-empty-scans", "label": "Empty scans before pause", "type": "number", "default": 3, "min": 1, "step": 1 },
+        { "id": "trend-error-scans", "label": "Errors before cooldown", "type": "number", "default": 3, "min": 1, "step": 1, "help": "Technical errors never count as poor sales performance." },
+        { "id": "trend-pause-hours", "label": "Pause before probe (hours)", "type": "number", "default": 72, "min": 1, "step": 1, "help": "Paused searches are probed again; historical data is never deleted." },
+        { "id": "trend-sale-check-interval-seconds", "label": "Item sold check interval", "type": "duration", "default": 3600, "min": 0, "step": 1 },
+        { "id": "trend-sale-checks-per-cycle", "label": "Sold checks per cycle", "type": "number", "default": 20, "min": 1, "step": 1 },
+        { "id": "trend-max-tracking-hours", "label": "Maximum tracking age (hours)", "type": "number", "default": 168, "min": 1, "step": 1 },
+        { "id": "db-path", "label": "SQLite DB path", "type": "text", "default": "data/scraper.db", "defaultFromUiSetting": "vinted_db_path" },
+        { "id": "browser-mode", "label": "Browser mode", "type": "select", "default": "chrome_normale", "defaultFromUiSetting": "browser_mode", "options": [
+          { "value": "chrome_normale", "label": "Chrome normale" },
+          { "value": "sessione_persistente", "label": "Sessione persistente" },
+          { "value": "profilo_personalizzato", "label": "Profilo personalizzato" },
+          { "value": "isolated", "label": "Isolated" }
+        ] },
+        { "id": "browser-user-data-dir", "label": "Browser user data dir", "type": "text", "default": "", "defaultFromUiSetting": "browser_user_data_dir" },
+        { "id": "browser-profile-directory", "label": "Browser profile directory", "type": "text", "default": "Default", "defaultFromUiSetting": "browser_profile_directory" },
+        "refresh-browser-profile"
+      ]
+    },
+    "vinted.continuous_monitoring": {
+      "label": "Continuous monitoring",
+      "description": "Runs competitor/article discovery continuously, while checking selected seller profiles on their own slower interval. The phases run sequentially when both are due.",
+      "risk": "browser-read",
+      "timeoutSeconds": 0,
+      "arguments": ["run", "vinted_continuous", "--stdout-json", "--quiet", "--format", "none"],
+      "parameters": [
+        { "id": "profile-urls", "label": "Profiles to monitor", "type": "list", "default": "", "namePlaceholder": "Profile name", "placeholder": "Marketplace profile URL or numeric ID", "addLabel": "+ Add profile", "help": "Each profile is checked on the slower profile interval. The database records active, new and disappeared listings." },
+        { "id": "competitor-keywords", "label": "Competitor keywords", "type": "text", "default": "charm, pandora", "placeholder": "charm, pandora, bracciale charm", "help": "Search terms scanned repeatedly to find interesting listings and discover their sellers." },
+        { "id": "competitor-category", "label": "Competitor category", "type": "select", "default": "Gioielli donna", "options": [
+          { "value": "Nessuna categoria rapida", "label": "No quick category" },
+          { "value": "Monitoraggio", "label": "Monitoring" },
+          { "value": "Accessori donna", "label": "Women accessories" },
+          { "value": "Accessori uomo", "label": "Men accessories" },
+          { "value": "Elettronica", "label": "Electronics" },
+          { "value": "Gioielli donna", "label": "Women jewellery" },
+          { "value": "Scarpe donna", "label": "Women shoes" },
+          { "value": "Scarpe uomo", "label": "Men shoes" }
+        ] },
+        { "id": "article-interval-seconds", "label": "Article and competitor scan every", "type": "duration", "default": 5, "min": 0, "step": 1, "help": "Continuous procacciatore-style discovery. Use 0 to scan articles once." },
+        { "id": "profile-interval-seconds", "label": "Profile check every", "type": "duration", "default": 3600, "min": 0, "step": 1, "help": "Checks selected seller profiles at this slower interval. Use 0 to check profiles once." },
+        { "id": "max-items", "label": "Max items per profile", "type": "number", "default": 0, "min": 0, "step": 1, "help": "Maximum listings read from each profile in one check. Use 0 to scroll and read all available listings." },
+        { "id": "max-results", "label": "Max items per competitor search", "type": "number", "default": 100, "min": 0, "step": 1, "help": "Caps the catalog listings considered for each keyword before opening qualified candidates." },
+        { "id": "competitor-min-likes", "label": "Min likes before opening competitor listing", "type": "number", "default": 15, "min": 0, "step": 1, "help": "Listings below this number are not opened, making continuous scanning faster." },
+        { "id": "competitor-max-age-hours", "label": "Max competitor listing age (hours)", "type": "number", "default": 720, "min": 0, "step": 1, "help": "Older listings are excluded from competitor scoring. Use 0 to disable the age limit." },
+        { "id": "competitor-min-price", "label": "Min competitor item price", "type": "text", "default": "", "placeholder": "5.00", "help": "Listings below this base item price are skipped before their detail page is opened." },
+        { "id": "max-price", "label": "Max competitor item price", "type": "text", "default": "", "placeholder": "19.90", "help": "Listings above this base item price are skipped before their detail page is opened." },
+        { "id": "discord-deal-notifications", "label": "Send qualifying deals to Discord", "type": "checkbox", "default": true, "emitFalseFlag": true, "help": "Sends an alert when an article satisfies likes, age, price and other deal conditions, like the Procacciatore." },
+        { "id": "discord-profile-report", "label": "Send profile report to Discord", "type": "checkbox", "default": true, "emitFalseFlag": true, "help": "Sends changes from each completed profile check. The daily digest remains a separate single report." },
+        { "id": "daily-report-hour", "label": "Daily Discord digest hour", "type": "number", "default": 10, "min": 0, "max": 23, "step": 1 },
+        { "id": "discord-webhook-url", "label": "Discord webhook", "type": "text", "default": "", "defaultFromUiSetting": "vinted_discord_webhook_url", "placeholder": "https://discord.com/api/webhooks/..." },
+        { "id": "db-path", "label": "SQLite DB path", "type": "text", "default": "data/scraper.db", "defaultFromUiSetting": "vinted_db_path", "placeholder": "data/scraper.db" },
+        { "id": "browser-mode", "label": "Browser mode", "type": "select", "default": "chrome_normale", "defaultFromUiSetting": "browser_mode", "options": [
+          { "value": "chrome_normale", "label": "Chrome normale" },
+          { "value": "sessione_persistente", "label": "Sessione persistente" },
+          { "value": "profilo_personalizzato", "label": "Profilo personalizzato" },
+          { "value": "isolated", "label": "Isolated" }
+        ] },
+        { "id": "browser-user-data-dir", "label": "Browser user data dir", "type": "text", "default": "", "defaultFromUiSetting": "browser_user_data_dir", "placeholder": "/Users/.../Google/Chrome" },
+        { "id": "browser-profile-directory", "label": "Browser profile directory", "type": "text", "default": "Default", "defaultFromUiSetting": "browser_profile_directory", "placeholder": "Default" },
+        "refresh-browser-profile"
+      ]
+    },
     "vinted.profile_monitor": {
       "label": "Vinted profile monitor",
       "description": "Run one profile check immediately, then keep monitoring and reporting active/new/gone listings at the selected interval.",
@@ -110,6 +227,7 @@
       "parameters": [
         { "id": "profile-urls", "label": "Profile URLs", "type": "list", "default": "https://www.vinted.it/member/262102939", "namePlaceholder": "Profile name", "placeholder": "Vinted profile URL or numeric ID", "addLabel": "+ Add profile" },
         { "id": "interval-seconds", "label": "After the first check, repeat every", "type": "duration", "default": 3600, "min": 0, "step": 1, "help": "Start always runs one check immediately. Use 0 to run once and stop." },
+        { "id": "daily-report-hour", "label": "Daily Discord digest hour", "type": "number", "default": 10, "min": 0, "max": 23, "step": 1, "help": "Local hour. After each cycle, if this hour has passed, one daily summary is sent." },
         { "id": "max-items", "label": "Max profile items", "type": "number", "default": 0, "min": 0, "step": 1 },
         { "id": "db-path", "label": "SQLite DB path", "type": "text", "default": "data/scraper.db", "defaultFromUiSetting": "vinted_db_path", "placeholder": "data/scraper.db" },
         { "id": "discord-profile-report", "label": "Send Discord report", "type": "checkbox", "default": true, "emitFalseFlag": true },
@@ -164,6 +282,30 @@
         { "id": "browser-user-data-dir", "label": "Browser user data dir", "type": "text", "default": "", "defaultFromUiSetting": "browser_user_data_dir", "placeholder": "/Users/.../Google/Chrome" },
         { "id": "browser-profile-directory", "label": "Browser profile directory", "type": "text", "default": "Default", "defaultFromUiSetting": "browser_profile_directory", "placeholder": "Default" },
         "refresh-browser-profile"
+      ]
+    },
+    "subito.caregiver_monitor": {
+      "label": "Monitor badanti part-time",
+      "description": "Job autonomo e parallelo: cerca continuamente lavori di badante/assistente familiare part-time nelle zone configurate, deduplica e conserva lo storico in un database separato.",
+      "risk": "browser-read-write",
+      "timeoutSeconds": 0,
+      "arguments": ["run", "subito_caregiver", "--stdout-json", "--quiet", "--format", "none"],
+      "parameters": [
+        { "id": "locations", "label": "Zone da monitorare", "type": "textarea", "default": "Roma, Monterotondo, Guidonia Montecelio, Rignano Flaminio, Morlupo, Capena, Fiano Romano, Faleria, Castelnuovo di Porto, Riano, Sacrofano, Montebello, Roma Nord", "help": "Separa le zone con virgole o righe. Ogni zona viene cercata separatamente." },
+        { "id": "search-terms", "label": "Ricerche lavoro", "type": "text", "default": "badante part time", "help": "Ogni termine viene combinato con ciascuna zona. Puoi aggiungere assistente familiare part time." },
+        { "id": "interval-seconds", "label": "Intervallo fra cicli (secondi)", "type": "number", "default": 1800, "min": 60, "step": 60, "help": "1800 = ogni 30 minuti. Il primo controllo parte subito." },
+        { "id": "max-results", "label": "Max annunci per ricerca/zona", "type": "number", "default": 25, "min": 1, "step": 1 },
+        { "id": "max-age-days", "label": "Età massima annuncio (giorni)", "type": "number", "default": 14, "min": 0, "step": 1 },
+        { "id": "only-part-time", "label": "Solo part-time esplicito", "type": "checkbox", "default": true, "emitFalseFlag": true, "help": "Accetta part-time, a ore, mezza giornata, mattina o pomeriggio." },
+        { "id": "include-details", "label": "Apri annunci per descrizione completa", "type": "checkbox", "default": false, "emitFalseFlag": true, "help": "Più preciso ma più lento; normalmente i dati della lista sono sufficienti." },
+        { "id": "db-path", "label": "Database storico", "type": "text", "default": "data/subito_jobs.db", "help": "Database separato: non modifica il database o le logiche Vinted." },
+        { "id": "discord-notifications", "label": "Invia nuovi lavori su Discord", "type": "checkbox", "default": false, "emitFalseFlag": true },
+        { "id": "discord-webhook-url", "label": "Discord webhook", "type": "text", "default": "", "defaultFromUiSetting": "vinted_discord_webhook_url", "placeholder": "https://discord.com/api/webhooks/..." },
+        { "id": "browser-mode", "label": "Browser isolato", "type": "select", "default": "isolated", "options": [
+          { "value": "isolated", "label": "Isolated (recommended)" },
+          { "value": "sessione_persistente", "label": "Persistent session" },
+          { "value": "chrome_normale", "label": "Normal Chrome" }
+        ] }
       ]
     },
     "subito.search": {

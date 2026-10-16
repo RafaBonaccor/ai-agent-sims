@@ -72,6 +72,13 @@ export const workstationPresets = [
     color: "#f4b647",
     jobs: ["cron plan", "follow-up", "briefing timer"],
   },
+  {
+    id: "marketplace",
+    label: "Marketplace Operations Desk",
+    role: "marketplace-employee",
+    color: "#14b8a6",
+    jobs: ["deal hunting", "competitor watch", "listing operations", "daily report"],
+  },
 ];
 
 const defaultWorkstations = [
@@ -138,6 +145,16 @@ const defaultWorkstations = [
     color: "#51605a",
     position: { x: -0.5, z: -3.5 },
     jobs: ["standup", "alignment", "handoff"],
+  },
+  {
+    id: "marketplace",
+    label: "Marketplace Operations",
+    role: "marketplace-employee",
+    color: "#14b8a6",
+    position: { x: -2.5, z: 0.5 },
+    jobs: ["deal hunting", "competitor watch", "listing operations", "daily report"],
+    agentId: "vinted-employee",
+    presetId: "marketplace",
   },
 ];
 
@@ -530,6 +547,9 @@ function roleStationId(agent) {
   }
   if (agent.role === "memory") {
     return "memory";
+  }
+  if (agent.role === "marketplace-employee" || agent.capabilities.includes("marketplace")) {
+    return "marketplace";
   }
   return "meeting";
 }

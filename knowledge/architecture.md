@@ -12,6 +12,18 @@ Context assembly is bounded. It combines agent identity, instructions, private m
 
 Tool-facing project modules should prefer one shared data contract across interfaces. When a workflow exists in both GUI and CLI, the GUI should write a stable manifest that the CLI can consume unchanged rather than inventing a second private format.
 
+## Marketplace deal validation
+
+The deal-monitor detail pass is the semantic boundary for accepting a listing.
+Numeric thresholds alone are insufficient: the requested catalog id must be
+present in the listing breadcrumb ids and the search term must match exact
+tokens or controlled aliases in the listing title/category path. Description
+text is intentionally excluded to prevent incidental words from becoming false
+matches. Breadcrumb metadata is collected in the existing detail-page DOM read
+and cached in SQLite, so validation adds no browser round trip and preserves the
+five-second monitoring cadence. Legacy cache entries without this evidence are
+refreshed once and then become reusable.
+
 ## Autonomous workflow loop
 
 Autonomous objectives are persisted as a workflow plus an immutable task tree. The supervisor produces a dependency graph, specialist agents execute child tasks, outputs move through typed handoffs, failed attempts create retry tasks, reviewer output becomes an evaluation gate, and the supervisor synthesizes the final result. Successful trajectories create or refine reusable Markdown skills under `knowledge/skills/`; failures become reviewable wiki proposals.
@@ -106,6 +118,25 @@ Those escalation artifacts now carry typed metadata rather than only generic pro
 Specialist output is now surfaced as a first-class reasoning artifact rather than only as a plain summary. After a specialist reply or council reaction, the runtime emits a `chat.reasoning` protocol message and appends a `reasoning` discussion entry that records the specialist focus, the distilled conclusion, any detected concern, the suggested next step, and the council counterpart when relevant. The frontend can therefore show not only that an agent answered, but what line of reasoning it is advancing and what uncertainty or follow-up it is signaling.
 
 The runtime now also supports a bounded council-turn phase after multi-specialist consults. Council is policy-driven rather than unconditional: the runtime first attempts an LLM council-policy decision when a provider-backed router is available, and falls back to heuristics otherwise. It then appends a `council-policy` thread entry explaining whether council was enabled, which specialists were included, the chosen turn budget, and whether the decision came from `llm` or `heuristic` mode. Only when the task looks multi-perspective enough do up to three consulted specialists exchange short follow-up reactions through `chat.council` turns. Those council notes are appended back into `consultation_notes` so the final synthesis step can incorporate cross-specialist challenge/extension rather than only raw first-pass summaries.
+
+### Marketplace category trend scout
+
+`vinted.brand_trend_scout` is an independent long-running Project Gateway job.
+It does not share scheduling state with continuous monitoring, profile tracking,
+or the deal hunter. Its comma-separated broad categories are persisted as
+independent cohorts; `gioielli` is an umbrella benchmark and leaf categories are
+the comparable segments. Catalog observations are persisted in dedicated cohort
+tables; explicit sold markers are checked in bounded batches.
+
+The query state machine is:
+
+`learning -> observing -> active/promising -> paused_low_rotation -> probe`
+
+Separate paths cover `paused_empty` and `cooldown_error`. Evaluation only uses
+items old enough to complete the configured window. Explicit unavailable pages
+are excluded, while transient browser errors change only the error/cooldown
+state. Pauses set a future probe instead of deleting a query or its observations.
+The report layer reads these tables without owning scheduler state.
 
 ### Clarification policy
 

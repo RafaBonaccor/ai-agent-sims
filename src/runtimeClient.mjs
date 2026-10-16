@@ -232,6 +232,23 @@ export class RuntimeClient {
     return this.request("/api/projects");
   }
 
+  getVintedReports(days = 30, limit = 200) {
+    return this.request(`/api/vinted/reports?days=${encodeURIComponent(days)}&limit=${encodeURIComponent(limit)}`);
+  }
+
+  saveVintedOwnedProfile(profileUrl, displayName = "") {
+    return this.request("/api/vinted/owned-profiles", {
+      method: "POST",
+      body: JSON.stringify({ profile_url: profileUrl, display_name: displayName }),
+    });
+  }
+
+  removeVintedOwnedProfile(memberId) {
+    return this.request(`/api/vinted/owned-profiles/${encodeURIComponent(memberId)}`, {
+      method: "DELETE",
+    });
+  }
+
   createProjectJob(job) {
     return this.request("/api/project-jobs", {
       method: "POST",

@@ -15,6 +15,8 @@ from .engine import AgentRuntime
 from .models import SystemSettings
 from .models import RuntimeEvent, TaskCreate
 from .project_gateway import ProjectGateway
+from .vinted_reports import write_vinted_report_html
+from .vinted_reports import build_vinted_report
 
 
 LOGGER = logging.getLogger("agent_lab.discord")
@@ -191,6 +193,52 @@ class DiscordGateway:
             if not await gateway._allow_interaction(interaction):
                 return
             await interaction.response.send_message(gateway.format_agents(), ephemeral=True)
+
+        @bot.tree.command(name="report", description="Generate and download the marketplace intelligence HTML report")
+        @app_commands.describe(days="Report period in days, from 1 to 365")
+        async def report_command(interaction: Any, days: int = 30) -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            await interaction.response.defer(thinking=True)
+            try:
+                report_path = await gateway.create_marketplace_report(days)
+            except (OSError, ValueError) as error:
+                gateway.logger.exception("discord_report_generation_failed channel_id=%s days=%s", interaction.channel_id, days)
+                await interaction.followup.send(f"Report generation failed: {error}", ephemeral=True)
+                return
+            gateway.logger.info(
+                "discord_report_generation_ok channel_id=%s days=%s path=%s size_bytes=%s",
+                interaction.channel_id,
+                gateway.normalize_report_days(days),
+                report_path,
+                report_path.stat().st_size,
+            )
+            await interaction.followup.send(
+                content=f"Marketplace report ready · last {gateway.normalize_report_days(days)} days.",
+                file=discord.File(str(report_path), filename=report_path.name),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+
+        @bot.tree.command(name="sold_deals", description="Show sold marketplace deals filtered by sale time")
+        @app_commands.describe(
+            time_range="Sale-time range: under-1, 1-6, 6-12, 12-24, or over-24",
+            days="Look-back period in days, from 1 to 365",
+        )
+        async def sold_deals_command(interaction: Any, time_range: str = "1-6", days: int = 30) -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            await interaction.response.defer(thinking=True)
+            try:
+                normalized_range, articles = await gateway.load_sold_deals(time_range, days)
+            except ValueError as error:
+                await interaction.followup.send(str(error), ephemeral=True)
+                return
+            await gateway.send_sold_deals(
+                lambda **kwargs: interaction.followup.send(**kwargs),
+                articles,
+                time_range=normalized_range,
+                days=gateway.normalize_report_days(days),
+            )
 
         @bot.tree.command(name="use", description="Set the default Agent Lab agent for this Discord channel")
         @app_commands.describe(agent="Agent id, for example researcher")
@@ -897,6 +945,39 @@ class DiscordGateway:
         if parsed.action == "agents":
             await send(self.format_agents())
             return
+        if parsed.action == "report":
+            try:
+                report_path = await self.create_marketplace_report(parsed.prompt or "30")
+            except (OSError, ValueError) as error:
+                self.logger.exception("discord_report_generation_failed channel_id=%s days=%s", channel_id, parsed.prompt)
+                await send(f"Report generation failed: {error}")
+                return
+            self.logger.info(
+                "discord_report_generation_ok channel_id=%s days=%s path=%s size_bytes=%s",
+                channel_id,
+                self.normalize_report_days(parsed.prompt or "30"),
+                report_path,
+                report_path.stat().st_size,
+            )
+            await channel.send(
+                content=f"Marketplace report ready · last {self.normalize_report_days(parsed.prompt or '30')} days.",
+                file=self._discord.File(str(report_path), filename=report_path.name),
+                allowed_mentions=self._discord.AllowedMentions.none(),
+            )
+            return
+        if parsed.action == "sold_deals":
+            try:
+                normalized_range, articles = await self.load_sold_deals(parsed.agent_id or "1-6", parsed.prompt or "30")
+            except ValueError as error:
+                await send(str(error))
+                return
+            await self.send_sold_deals(
+                lambda **kwargs: channel.send(**kwargs),
+                articles,
+                time_range=normalized_range,
+                days=self.normalize_report_days(parsed.prompt or "30"),
+            )
+            return
         if parsed.action == "use":
             if parsed.agent_id not in self.runtime.agents:
                 await send(self.unknown_agent_message(parsed.agent_id))
@@ -959,6 +1040,131 @@ class DiscordGateway:
         allowed_mentions = self._discord.AllowedMentions.none() if self._discord else None
         for chunk in chunk_discord_message(content):
             await channel.send(chunk, allowed_mentions=allowed_mentions)
+
+    @staticmethod
+    def normalize_report_days(value: object) -> int:
+        try:
+            return max(1, min(int(str(value or "30").strip()), 365))
+        except (TypeError, ValueError):
+            raise ValueError("Report days must be a number between 1 and 365.") from None
+
+    async def create_marketplace_report(self, days: object = 30) -> Path:
+        normalized_days = self.normalize_report_days(days)
+        project_root = Path(__file__).resolve().parent.parent
+        return await asyncio.to_thread(
+            write_vinted_report_html,
+            project_root,
+            days=normalized_days,
+            limit=500,
+        )
+
+    @staticmethod
+    def normalize_sold_time_range(value: object) -> str:
+        normalized = str(value or "1-6").strip().lower().replace(" ", "").replace("h", "")
+        aliases = {
+            "<1": "under-1",
+            "0-1": "under-1",
+            "under-1": "under-1",
+            "1-6": "1-6",
+            "6-12": "6-12",
+            "12-24": "12-24",
+            ">24": "over-24",
+            "24+": "over-24",
+            "over-24": "over-24",
+            "all": "all",
+            "tutti": "all",
+        }
+        if normalized not in aliases:
+            raise ValueError("Invalid sale-time range. Use `under-1`, `1-6`, `6-12`, `12-24`, `over-24`, or `all`.")
+        return aliases[normalized]
+
+    @staticmethod
+    def sold_deal_matches_range(article: dict[str, Any], time_range: str) -> bool:
+        if str(article.get("status", "") or "").lower() != "sold":
+            return False
+        if time_range == "all":
+            return True
+        seconds = article.get("sold_after_seconds")
+        if not isinstance(seconds, (int, float)):
+            return False
+        hours = max(float(seconds), 0.0) / 3600
+        bounds = {
+            "under-1": (0, 1),
+            "1-6": (1, 6),
+            "6-12": (6, 12),
+            "12-24": (12, 24),
+            "over-24": (24, float("inf")),
+        }
+        minimum, maximum = bounds[time_range]
+        return minimum <= hours < maximum
+
+    async def load_sold_deals(self, time_range: object = "1-6", days: object = 30) -> tuple[str, list[dict[str, Any]]]:
+        normalized_range = self.normalize_sold_time_range(time_range)
+        normalized_days = self.normalize_report_days(days)
+        project_root = Path(__file__).resolve().parent.parent
+        snapshot = await asyncio.to_thread(
+            build_vinted_report,
+            project_root,
+            days=normalized_days,
+            limit=500,
+        )
+        if not snapshot.get("available"):
+            raise ValueError("The marketplace report database is not available yet.")
+        articles = [
+            article
+            for article in snapshot.get("articles", [])
+            if isinstance(article, dict) and self.sold_deal_matches_range(article, normalized_range)
+        ]
+        articles.sort(key=lambda article: str(article.get("sold_at", "") or ""), reverse=True)
+        self.logger.info(
+            "discord_sold_deals_loaded range=%s days=%s count=%s",
+            normalized_range,
+            normalized_days,
+            len(articles),
+        )
+        return normalized_range, articles
+
+    async def send_sold_deals(
+        self,
+        send: Callable[..., Awaitable[Any]],
+        articles: list[dict[str, Any]],
+        *,
+        time_range: str,
+        days: int,
+    ) -> None:
+        allowed_mentions = self._discord.AllowedMentions.none() if self._discord else None
+        if not articles:
+            await send(
+                content=f"No sold deals found in the `{time_range}` hour range during the last {days} days.",
+                allowed_mentions=allowed_mentions,
+            )
+            return
+        for offset in range(0, len(articles), 10):
+            batch = articles[offset : offset + 10]
+            embeds = []
+            for article in batch:
+                embed = self._discord.Embed(
+                    title=str(article.get("name", "") or "Marketplace item")[:256],
+                    url=str(article.get("link", "") or "") or None,
+                    description=(
+                        f"**Price:** {article.get('price') or '—'}\n"
+                        f"**Sold in:** {article.get('sold_after_text') or '—'}\n"
+                        f"**Search:** {article.get('search_term') or '—'}\n"
+                        f"**Sold at:** {article.get('sold_at') or '—'}"
+                    )[:4096],
+                    color=0x14B8A6,
+                )
+                image_url = str(article.get("image_url", "") or "").strip()
+                if image_url:
+                    embed.set_thumbnail(url=image_url)
+                embeds.append(embed)
+            prefix = (
+                f"**Sold deals · {time_range} hours · last {days} days**\n"
+                f"Found: **{len(articles)}**"
+                if offset == 0
+                else f"Sold deals continued · {offset + 1}–{min(offset + len(batch), len(articles))} of {len(articles)}"
+            )
+            await send(content=prefix, embeds=embeds, allowed_mentions=allowed_mentions)
 
     async def _submit_vinted_upload_interaction(
         self,
@@ -1120,6 +1326,31 @@ def parse_text_command(
 
     if text == f"{prefix}agents" or (mentioned and text == "agents"):
         return ParsedDiscordCommand(action="agents")
+
+    report_prefixes = (f"{prefix}report", f"{prefix}market-report")
+    for report_prefix in report_prefixes:
+        if text == report_prefix or text.startswith(f"{report_prefix} "):
+            days = text[len(report_prefix) :].strip() or "30"
+            return ParsedDiscordCommand(action="report", prompt=days)
+    if mentioned and (text == "report" or text.startswith("report ")):
+        return ParsedDiscordCommand(action="report", prompt=text[6:].strip() or "30")
+
+    sold_prefixes = (f"{prefix}sold", f"{prefix}sold-deals", f"{prefix}sold-report")
+    for sold_prefix in sold_prefixes:
+        if text == sold_prefix or text.startswith(f"{sold_prefix} "):
+            parts = text[len(sold_prefix) :].strip().split()
+            return ParsedDiscordCommand(
+                action="sold_deals",
+                agent_id=parts[0] if parts else "1-6",
+                prompt=parts[1] if len(parts) > 1 else "30",
+            )
+    if mentioned and (text == "sold" or text.startswith("sold ")):
+        parts = text[4:].strip().split()
+        return ParsedDiscordCommand(
+            action="sold_deals",
+            agent_id=parts[0] if parts else "1-6",
+            prompt=parts[1] if len(parts) > 1 else "30",
+        )
 
     if text == f"{prefix}codex" or text.startswith(f"{prefix}codex "):
         body = text[len(f"{prefix}codex") :].strip()

@@ -115,6 +115,11 @@ CAPABILITY_KEYWORDS = {
         "noticias", "ultimas", "resumen",
         "actualites", "dernieres", "resume",
     },
+    "marketplace": {
+        "vinted", "marketplace", "deal", "deals", "listing", "listings", "seller", "competitor", "competitors",
+        "affare", "affari", "annuncio", "annunci", "venditore", "venditori", "concorrente", "concorrenti",
+        "procacciatore", "offerta", "offerte", "profilo", "profili", "caricamento", "venduto", "venduti",
+    },
 }
 
 

@@ -115,6 +115,12 @@ creati e modificati dalla UI. Ogni agente puo avere:
 - workstation nel mondo 3D;
 - routing verso altri agenti.
 
+`Vinted Employee` è il dipendente operativo dedicato al marketplace. Ha una
+workstation propria nel gioco e gestisce ricerca affari, monitoraggio continuo,
+competitor e profili, preparazione annunci, upload, offerte e report. Pubblicare
+un annuncio, inviare un'offerta o eseguire un'altra operazione commerciale
+irreversibile resta soggetto ad approvazione esplicita.
+
 La risoluzione delle API key segue questa precedenza:
 
 1. chiave specifica dell'agente;
@@ -298,6 +304,22 @@ Comandi testuali principali:
   vision per nome, descrizione, categoria e materiale.
 - `!script-eleven`: genera uno script breve per voiceover/social a partire da
   una foto gioiello, pronto da usare con ElevenLabs.
+- `!report` oppure `!report 90`: genera il Performance Report dai dati salvati
+  e invia in Discord un file HTML autonomo. È disponibile anche `/report` con
+  il periodo configurabile.
+- `!sold 1-6` restituisce su Discord gli annunci venduti tra una e sei ore,
+  completi di link, prezzo, tempo di vendita e thumbnail. Il secondo parametro
+  opzionale imposta i giorni da analizzare (`!sold 1-6 90`). Sono supportate le
+  fasce `under-1`, `1-6`, `6-12`, `12-24`, `over-24` e `all`, anche tramite
+  slash command `/sold_deals`.
+
+Il riepilogo Discord mattutino configurato nel monitoraggio continuo (default
+ore 10:00) allega automaticamente anche il Performance Report HTML degli ultimi
+30 giorni. Il file viene conservato sia in `runtime/reports/` sia accanto al DB
+del main scraper nella cartella `reports/`; se l'export HTML non è disponibile,
+il riepilogo testuale continua comunque a essere inviato. Il report HTML include
+le miniature degli articoli e filtri interattivi per stato competitor, keyword,
+stato articolo e tempo di vendita.
 
 `!script-eleven` richiede almeno una foto allegata e usa la key OpenAI di progetto.
 Puoi aggiungere contesto libero, per esempio:
@@ -495,6 +517,14 @@ procacciatore usa un profilo rapido dedicato: pausa azioni 0,25s, attesa pagina
 e descrizione, il dettaglio viene riusato dalla cache e la pagina annuncio non
 viene riaperta. Anche l'estrazione descrizioni Vinted usa il profilo rapido e
 timeout navigazione 15s.
+Prima di confermare un affare, il dettaglio viene inoltre confrontato con la
+ricerca che lo ha prodotto: l'ID della categoria richiesta deve comparire nei
+breadcrumb reali dell'annuncio e la keyword deve essere coerente con titolo o
+categoria. Il testo libero della descrizione non vale come corrispondenza (per
+esempio `charme unique` non soddisfa la query esatta `charm`). Il controllo usa
+la stessa lettura DOM gia necessaria al dettaglio, quindi non aggiunge sleep o
+navigazioni; il ciclo rapido resta a 5 secondi. Le vecchie righe cache prive dei
+breadcrumb vengono aggiornate una sola volta.
 L'offerta Vinted automatica usa una percentuale configurabile direttamente dalla
 GUI, non piu solo il valore fisso del 15%. Le offerte possono partire anche
 mentre il procacciatore sta lavorando: girano in un processo separato e il loop
@@ -513,13 +543,78 @@ Anche il procacciatore usa ora navigazione Vinted `Wait.SHORT` quando apre
 catalogo, dettaglio, pagine successive e ritorno post-login, per evitare attese
 lunghe prima del parsing.
 Nel procacciatore, un annuncio viene confermato come affare solo se rispetta
-tutti i vincoli attivi: like minimi, eta massima, prezzo massimo e spedizione
-non oltre `2,99 €`.
+tutti i vincoli attivi: pertinenza di query/categoria, like minimi, eta massima
+e limiti di prezzo. La spedizione resta visibile come avviso, ma non esclude un
+affare.
 Puoi anche attivare l'invio Discord via webhook dal pannello del procacciatore:
 ogni nuovo affare confermato viene inviato una sola volta al canale configurato,
 con deduplica persistente nel DB SQLite.
 Il badge stato nell'header del main scraper e colorato: grigio `Idle`, verde
 `Running`, rosso `Stopping...`, rosso scuro `Error`.
+
+### Marketplace reports nel gioco
+
+Il pulsante `Reports` nella toolbar di AI House apre una dashboard read-only
+collegata direttamente a `projects/main-scraper/data/scraper.db`. La dashboard
+e quindi sincronizzata con procacciatore, monitor profili, competitor discovery
+e controllo degli affari venduti senza duplicare i dati.
+
+La classificazione competitor considera anche la ricorrenza per keyword: un
+venditore che compare in almeno tre affari confermati distinti per la stessa
+keyword viene marcato `confirmed`. Il DB conserva sia la keyword dominante sia
+il relativo conteggio; reinvii Discord e cicli ripetuti dello stesso annuncio
+non incrementano la soglia.
+Un competitor strategico puo inoltre essere marcato manualmente `priority`:
+questa priorita resta persistente anche quando vengono ricalcolati score e
+segnali automatici.
+
+La vista include:
+
+- articoli analizzati, affari attivi e venduti, competitor e record non disponibili;
+- tab `My Profiles` per gli account proprietari: articoli noti, attivi,
+  venduti/spariti, tempo medio di vendita, snapshot e miniature dello storico;
+- nella tab proprietaria, KPI aggregati, grafico comparativo dello stato
+  inventario, grafico della velocita media di vendita e filtri per stato/nome;
+- registro persistente dei profili proprietari, modificabile direttamente dal
+  report con nome opzionale e URL; la rimozione disattiva il profilo ma non
+  cancella mai prodotti, snapshot o vendite gia raccolti;
+- tab `Competitors` con profilo venditore, stato, keyword dominante, affari per
+  keyword, annunci interessanti, ricerche, venduti/spariti, like massimi e score;
+- media e mediana del tempo di vendita e tasso di conversione;
+- grafico delle vendite confermate per giorno;
+- distribuzione degli stati e ranking delle ricerche;
+- card degli articoli con immagine, prezzo, like, stato, tempi e link;
+- filtri temporali da 7 a 365 giorni, stato `All`/`Sold`/`Active` e fasce del
+  tempo di vendita (`<1h`, `1-6h`, `6-12h`, `12-24h`, `>24h`).
+
+Per un affare confermato venduto, il tempo di vendita usa l'eta precisa mostrata
+dalla pagina (`N minuti fa` o `N ore fa`, fino a 24 ore). Le etichette a giorni
+non sono abbastanza precise: in quel caso il calcolo parte dall'istante in cui
+l'affare e stato scoperto. La fonte utilizzata viene salvata insieme al record e
+mostrata nelle card del report.
+
+Lo storico degli affari e append-only: una pagina non disponibile non elimina
+piu l'articolo, la notifica, l'offerta o il tracking vendita. Il record conserva
+lo stato precedente, il motivo e l'istante di indisponibilita, uno snapshot JSON
+e un evento storico. Durante l'analisi di un affare vengono inoltre archiviati,
+quando disponibili, immagine prodotto, screenshot completo e HTML in
+`projects/main-scraper/data/deal_archive/`. Il report preferisce l'immagine
+locale archiviata, quindi non dipende dalla durata del CDN della piattaforma.
+
+Il database operativo viene copiato una volta al giorno tramite la SQLite Backup
+API in `projects/main-scraper/data/backups/daily/`; ogni copia viene sottoposta a
+`PRAGMA integrity_check` e non viene sovrascritta. Il backup manuale precedente
+alla migrazione dello storico resta in
+`projects/main-scraper/data/backups/scraper-before-history-20261011.db`; lo
+snapshot verificato dopo recupero e migrazione e
+`projects/main-scraper/data/backups/scraper-after-history-20261011.db`.
+
+L'API usata dal gioco e `GET /api/vinted/reports?days=3650&limit=5000`.
+I profili proprietari si aggiungono con `POST /api/vinted/owned-profiles` e si
+disattivano con `DELETE /api/vinted/owned-profiles/{member_id}`. I seller ID
+registrati come propri vengono esclusi automaticamente dalla classifica
+competitor. I due account iniziali configurati sono `225753959` e `3178210259`;
+altri account futuri possono essere aggiunti dalla tab senza modificare codice.
 
 ### Upload Vinted
 
@@ -563,6 +658,53 @@ con una foto allegata. Il runtime genera:
 
 Se lo slug esiste gia, il backend Accordi puo rifiutare la creazione. In quel
 caso serve usare un update con product id oppure generare uno slug diverso.
+
+## Monitor autonomo lavori badante part-time
+
+Il Project Gateway espone l'azione `subito.caregiver_monitor`. È un job lungo e
+indipendente che può girare in parallelo agli altri monitor: `main-scraper` ha
+quattro slot concorrenti, mentre questo flusso usa un browser isolato e il
+database dedicato `projects/main-scraper/data/subito_jobs.db`. Non legge né
+modifica stato, database o scheduler Vinted.
+
+Il preset iniziale cerca `badante part time` a Roma, Monterotondo, Guidonia
+Montecelio, Rignano Flaminio, Morlupo, Capena, Fiano Romano, Faleria,
+Castelnuovo di Porto, Riano, Sacrofano, Montebello e Roma Nord. Il primo ciclo
+parte subito; i successivi partono ogni 30 minuti per default. Ogni annuncio
+deve contenere sia un ruolo di assistenza sia un indicatore part-time esplicito
+(`part time`, `a ore`, `mezza giornata`, mattina o pomeriggio).
+
+Lo storico SQLite conserva cicli, annunci e singoli avvistamenti. Un URL già
+visto viene aggiornato ma non torna `new`, così le eventuali notifiche Discord
+non vengono duplicate. Il fallimento di una zona viene registrato e il ciclo
+continua con le altre.
+
+Esecuzione singola da CLI:
+
+```bash
+cd projects/main-scraper
+.venv/bin/python main.py run subito_caregiver \
+  --interval-seconds 0 \
+  --locations "Roma,Monterotondo,Guidonia Montecelio,Roma Nord" \
+  --max-results 25 \
+  --format json
+```
+
+Monitor continuo equivalente al preset del gioco:
+
+```bash
+.venv/bin/python main.py run subito_caregiver \
+  --interval-seconds 1800 \
+  --db-path data/subito_jobs.db \
+  --browser-mode isolated \
+  --format none
+```
+
+Nel gioco apri il Project Gateway di The Main Scraper e scegli **Monitor
+badanti part-time**. Puoi cambiare zone, intervallo, età e numero massimo per
+ricerca; il job compare in Active Jobs e può essere fermato senza arrestare gli
+altri processi. Le notifiche Discord sono opzionali e vengono inviate solo per
+annunci nuovi.
 
 ## Browser ibrido: scraper batch + controllo live
 
@@ -678,6 +820,36 @@ riavvia. Gli output e gli upload vengono comunque salvati sotto
 - Usa `Task`, `Memoria`, `Review` per generare lavoro e comunicazioni.
 - Usa `Pausa` e `1x/2x/4x` per controllare la simulazione.
 
+## Category Trend Scout
+
+Il Project Gateway di The Main Scraper include il job autonomo `Brand trend scout`.
+Non modifica il monitor continuo `charm/pandora`: mantiene query, scheduler, tabelle
+SQLite e ciclo browser separati. Il preset iniziale usa una query separata da
+virgole: `gioielli, spille, collane, braccialetti, anelli, orecchini, ciondoli,
+portachiavi, accessori borsa`. `gioielli` è il benchmark generale; le categorie
+specifiche vengono confrontate tra loro per capire cosa ruota più velocemente.
+
+La classificazione usa coorti temporali, non il solo numero di like:
+
+- una query resta `learning` finché non esistono almeno 30 articoli che hanno
+  completato la finestra configurata (72 ore di default);
+- `sell-through` è la percentuale venduta entro la finestra;
+- una sola finestra debole non basta: di default servono due valutazioni
+  consecutive sotto l'8%, distanziate almeno 24 ore, per passare a
+  `paused_low_rotation`;
+- dal 15% la query diventa `promising`; tra le due soglie resta `active`;
+- tre scansioni realmente vuote producono `paused_empty`;
+- tre errori tecnici producono `cooldown_error`, ma non abbassano il tasso;
+- le pagine non disponibili sono escluse dal denominatore e non vengono
+  scambiate per vendite;
+- ogni pausa conserva lo storico e termina con un probe automatico, così un
+  trend stagionale può riattivarsi.
+
+Le tabelle `vinted_trend_queries`, `vinted_trend_items` e
+`vinted_trend_item_queries` sono nello stesso database configurato, ma sono
+isolate dalle tabelle degli affari. Il Performance Report mostra stato, campione
+maturo, vendite confermate, sell-through e limite inferiore di confidenza 95%.
+
 ## Prestazioni
 
 Le impostazioni leggere sono in `app.mjs`, costante `PERFORMANCE`:
@@ -686,6 +858,17 @@ Le impostazioni leggere sono in `app.mjs`, costante `PERFORMANCE`:
 - `maxPixelRatio`: risoluzione interna massima, ora 1.5.
 - `shadows`: ombre dinamiche, ora attivate.
 - `fog`: nebbia shader, ora attivata.
+
+## Browser dei job su macOS
+
+I job autonomi di The Main Scraper avviano la propria finestra Chrome già
+minimizzata, così non sottraggono il primo piano mentre lavori. Chrome resta in
+modalità grafica e mantiene DOM, cookie e profilo normali. Il runtime riconosce
+la richiesta minimizzata e rimuove il flag massimizzato imposto da Botasaurus,
+poi conferma lo stato nativo `MINIMIZED` tramite Chrome DevTools (necessario con
+Chrome 154 su macOS), senza modificare le finestre Chrome personali. Le
+operazioni interattive — apertura manuale e upload con selezione foto/login —
+restano invece in primo piano.
 
 ## Java Port
 
