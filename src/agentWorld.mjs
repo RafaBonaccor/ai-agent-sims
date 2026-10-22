@@ -79,6 +79,13 @@ export const workstationPresets = [
     color: "#14b8a6",
     jobs: ["deal hunting", "competitor watch", "listing operations", "daily report"],
   },
+  {
+    id: "sourcing",
+    label: "Visual Sourcing Desk",
+    role: "visual-sourcing-specialist",
+    color: "#f59e0b",
+    jobs: ["image search", "supplier research", "cost ranking", "batch watch"],
+  },
 ];
 
 const defaultWorkstations = [
@@ -155,6 +162,16 @@ const defaultWorkstations = [
     jobs: ["deal hunting", "competitor watch", "listing operations", "daily report"],
     agentId: "vinted-employee",
     presetId: "marketplace",
+  },
+  {
+    id: "sourcing",
+    label: "Visual Sourcing",
+    role: "visual-sourcing-specialist",
+    color: "#f59e0b",
+    position: { x: 2.5, z: 0.5 },
+    jobs: ["image search", "supplier research", "cost ranking", "batch watch"],
+    agentId: "sourcing-agent",
+    presetId: "sourcing",
   },
 ];
 
@@ -385,7 +402,7 @@ export function removeRoomFromLayout(roomId) {
   return { changed: true, room };
 }
 
-export function toggleRoomCell(roomId, tile) {
+export function setRoomCell(roomId, tile, shouldExist) {
   const room = roomLayout.find((item) => item.id === roomId);
   const normalizedTile = normalizeTile(tile);
   if (!room || !normalizedTile) {
@@ -398,11 +415,15 @@ export function toggleRoomCell(roomId, tile) {
   const key = tileKey(normalizedTile);
   const cells = roomCells(room);
   const exists = cells.some((cell) => tileKey(cell) === key);
+  const add = Boolean(shouldExist);
+  if (exists === add) {
+    return { changed: false, reason: "unchanged", room };
+  }
   if (exists && cells.length <= 3) {
     return { changed: false, reason: "room-too-small" };
   }
-  const nextCells = exists ? cells.filter((cell) => tileKey(cell) !== key) : [...cells, normalizedTile];
-  if (!exists) {
+  const nextCells = add ? [...cells, normalizedTile] : cells.filter((cell) => tileKey(cell) !== key);
+  if (add) {
     const adjacent = cells.some((cell) => Math.abs(cell.col - normalizedTile.col) + Math.abs(cell.row - normalizedTile.row) === 1);
     if (!adjacent) {
       return { changed: false, reason: "room-not-contiguous" };
@@ -413,26 +434,90 @@ export function toggleRoomCell(roomId, tile) {
   }
   room.cells = nextCells;
   updateRoomBounds(room);
-  return { changed: true, added: !exists, room };
+  return { changed: true, added: add, room };
+}
+
+export function toggleRoomCell(roomId, tile) {
+  const room = roomLayout.find((item) => item.id === roomId);
+  const normalizedTile = normalizeTile(tile);
+  const exists = Boolean(room && normalizedTile && roomContainsTile(room, normalizedTile));
+  return setRoomCell(roomId, tile, !exists);
 }
 
 export function isDoorTile(tile) {
   return doorLayout.some((door) => tileEquals(door, tile));
 }
 
-export function toggleDoorAt(tile) {
+function connectedDoorTileKeys(candidates) {
+  const reached = new Set();
+  const queue = [];
+  for (const door of candidates) {
+    const touchesRoom = roomLayout.some((room) => roomCells(room).some((cell) => (
+      Math.abs(cell.col - door.col) + Math.abs(cell.row - door.row) === 1
+    )));
+    if (touchesRoom) {
+      reached.add(tileKey(door));
+      queue.push(door);
+    }
+  }
+  while (queue.length) {
+    const current = queue.shift();
+    for (const candidate of candidates) {
+      if (reached.has(tileKey(candidate))) continue;
+      if (Math.abs(candidate.col - current.col) + Math.abs(candidate.row - current.row) !== 1) continue;
+      reached.add(tileKey(candidate));
+      queue.push(candidate);
+    }
+  }
+  return reached;
+}
+
+export function pruneDisconnectedDoorPaths() {
+  const connected = connectedDoorTileKeys(doorLayout);
+  const before = doorLayout.length;
+  for (let index = doorLayout.length - 1; index >= 0; index -= 1) {
+    if (!connected.has(tileKey(doorLayout[index]))) doorLayout.splice(index, 1);
+  }
+  return before - doorLayout.length;
+}
+
+export function setDoorAt(tile, shouldExist, { allowTemporaryDisconnect = false } = {}) {
   const normalizedTile = normalizeTile(tile);
   if (!normalizedTile) {
     return { changed: false, reason: "invalid" };
   }
   const key = tileKey(normalizedTile);
   const index = doorLayout.findIndex((door) => tileKey(door) === key);
+  const exists = index >= 0;
+  const add = Boolean(shouldExist);
+  if (exists === add) {
+    return { changed: false, reason: "unchanged", tile: normalizedTile };
+  }
+  if (add) {
+    if (roomLayout.some((room) => roomContainsTile(room, normalizedTile))) {
+      return { changed: false, reason: "inside-room", tile: normalizedTile };
+    }
+    const adjacent = (candidate) => Math.abs(candidate.col - normalizedTile.col) + Math.abs(candidate.row - normalizedTile.row) === 1;
+    const touchesRoom = roomLayout.some((room) => roomCells(room).some(adjacent));
+    const touchesPath = doorLayout.some(adjacent);
+    if (!touchesRoom && !touchesPath) {
+      return { changed: false, reason: "path-not-connected", tile: normalizedTile };
+    }
+  }
   if (index >= 0) {
+    const remaining = doorLayout.filter((_, doorIndex) => doorIndex !== index);
+    if (!allowTemporaryDisconnect && connectedDoorTileKeys(remaining).size !== remaining.length) {
+      return { changed: false, reason: "path-disconnected", tile: normalizedTile };
+    }
     doorLayout.splice(index, 1);
     return { changed: true, added: false, tile: normalizedTile };
   }
   doorLayout.push(normalizedTile);
   return { changed: true, added: true, tile: normalizedTile };
+}
+
+export function toggleDoorAt(tile) {
+  return setDoorAt(tile, !isDoorTile(tile));
 }
 
 export function findAvailableRoomRect(columns = 6, rows = 5) {
@@ -551,6 +636,9 @@ function roleStationId(agent) {
   if (agent.role === "marketplace-employee" || agent.capabilities.includes("marketplace")) {
     return "marketplace";
   }
+  if (agent.role === "visual-sourcing-specialist" || agent.capabilities.includes("visual-search")) {
+    return "sourcing";
+  }
   return "meeting";
 }
 
@@ -643,6 +731,7 @@ export class AgentWorld {
       walkPhase: (seed % 100) / 100,
       bubble: "",
       lastRuntimeStatus: "",
+      activeWorkIds: new Set(),
       nextDecisionAt: 0,
       manualUntil: 0,
       seed,
@@ -815,10 +904,10 @@ export class AgentWorld {
       if (state.lastRuntimeStatus !== agent.runtime.status) {
         state.lastRuntimeStatus = agent.runtime.status;
         state.bubble = agent.runtime.status;
-        if (autoEnabled && !manualActive) {
+        if (autoEnabled && !manualActive && state.activeWorkIds.size === 0) {
           this.assignStation(agent, stationForStatus(agent), agent.runtime.status);
         }
-      } else if (autoEnabled && !manualActive && this.clock >= state.nextDecisionAt && state.mode === "working") {
+      } else if (autoEnabled && !manualActive && state.activeWorkIds.size === 0 && this.clock >= state.nextDecisionAt && state.mode === "working") {
         const idleStation = this.getStation(roleStationId(agent));
         const shouldMeet = (Math.floor(this.clock + state.seed) % 9) === 0;
         this.assignStation(agent, shouldMeet ? "meeting" : idleStation.id);
@@ -846,6 +935,28 @@ export class AgentWorld {
       state.nextDecisionAt = this.clock + (urgent ? 8 : 5.5 + (state.seed % 5));
     }
     return ok;
+  }
+
+  assignAgentToWork(agentId, workId, jobLabel, network) {
+    const agent = network.getAgent(agentId);
+    const state = this.getAgentState(agentId);
+    if (!agent || !state) return false;
+    const key = String(workId ?? agentId).trim();
+    if (!key) return false;
+    if (state.activeWorkIds.has(key)) return true;
+    state.activeWorkIds.add(key);
+    const assigned = this.assignStation(agent, roleStationId(agent), jobLabel || "working", true);
+    if (!assigned) state.activeWorkIds.delete(key);
+    return assigned;
+  }
+
+  releaseAgentFromWork(agentId, workId, network) {
+    const agent = network.getAgent(agentId);
+    const state = this.getAgentState(agentId);
+    if (!agent || !state) return false;
+    state.activeWorkIds.delete(String(workId ?? agentId).trim());
+    if (state.activeWorkIds.size) return true;
+    return this.assignStation(agent, roleStationId(agent), agent.runtime.status || "available", true);
   }
 
   setDestination(agent, tile, options = {}) {

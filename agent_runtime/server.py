@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from contextlib import asynccontextmanager
@@ -65,6 +66,19 @@ LOGGER = configure_logging(PROJECT_ROOT)
 class OwnedMarketplaceProfileRequest(BaseModel):
     profile_url: str = Field(min_length=1, max_length=512)
     display_name: str = Field(default="", max_length=120)
+
+
+class MarketplaceSourcingItemRequest(BaseModel):
+    item_id: str = Field(default="", max_length=80)
+    name: str = Field(default="", max_length=300)
+    link: str = Field(min_length=1, max_length=2048)
+    image_url: str = Field(default="", max_length=4096)
+    archive_image_path: str = Field(default="", max_length=4096)
+
+
+class MarketplaceSourcingBatchRequest(BaseModel):
+    items: list[MarketplaceSourcingItemRequest] = Field(min_length=1, max_length=50)
+    max_results: int = Field(default=40, ge=1, le=200)
 
 
 @asynccontextmanager
@@ -629,6 +643,57 @@ async def vinted_reports(
     try:
         return build_vinted_report(PROJECT_ROOT, days=days, limit=limit)
     except (OSError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/vinted/reports/sourcing-batch", response_model=ProjectJob, status_code=202)
+async def create_vinted_report_sourcing_batch(request: MarketplaceSourcingBatchRequest) -> ProjectJob:
+    """Queue an isolated AliExpress visual-search job from report card selections."""
+    archive_root = (PROJECT_ROOT / "projects" / "main-scraper" / "data" / "deal_archive").resolve()
+    selected: list[dict[str, str]] = []
+    for item in request.items:
+        archive_path = ""
+        if item.archive_image_path.strip():
+            candidate = Path(item.archive_image_path).expanduser().resolve()
+            if candidate.is_relative_to(archive_root) and candidate.is_file():
+                archive_path = str(candidate)
+        image_url = item.image_url.strip()
+        if not archive_path and not image_url:
+            continue
+        selected.append(
+            {
+                "item_id": item.item_id.strip(),
+                "name": item.name.strip(),
+                "link": item.link.strip(),
+                "image_url": image_url,
+                "archive_image_path": archive_path,
+            }
+        )
+    if not selected:
+        raise HTTPException(status_code=422, detail="Selected articles need an archived image or an image URL.")
+
+    batch_dir = PROJECT_ROOT / "projects" / "main-scraper" / "output" / "aliexpress_batches"
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = batch_dir / f"report_selection_{time.strftime('%Y%m%d_%H%M%S')}_{time.time_ns() % 1_000_000:06d}.json"
+    manifest_path.write_text(
+        json.dumps({"source": "vinted-reports", "items": selected}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    try:
+        return await project_gateway().create_job(
+            ProjectJobCreate(
+                project_id="main-scraper",
+                action="aliexpress.image_search",
+                parameters={
+                    "items-file": str(manifest_path),
+                    "max-results": request.max_results,
+                    "reuse-cache-hours": 24,
+                    "db-path": "data/aliexpress_sourcing.db",
+                },
+                agent_id="sourcing-agent",
+            )
+        )
+    except (KeyError, PermissionError, ValueError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 

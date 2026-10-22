@@ -24,6 +24,38 @@ and cached in SQLite, so validation adds no browser round trip and preserves the
 five-second monitoring cadence. Legacy cache entries without this evidence are
 refreshed once and then become reusable.
 
+## Visual sourcing boundary
+
+AliExpress visual sourcing is owned by `sourcing-agent`, not by
+`vinted-employee`. The Project Gateway starts `aliexpress.image_search` as an
+independent process with its own browser lifecycle and SQLite database
+(`data/aliexpress_sourcing.db`). No Vinted scheduler, login marker, offer state,
+or live monitor/browser state is imported into this workflow. A user may pass an
+explicit immutable manifest of selected marketplace rows; only their IDs, links,
+titles and already-extracted image references cross the boundary.
+
+The data path is:
+
+`reference image/folder/selected-items manifest -> local image cache -> DOM file upload -> verified visual-result transition -> card extraction -> normalization -> per-source ranking -> SQLite history -> agent-readable job output`
+
+The result transition must change the AliExpress URL/result set before cards are
+accepted. This prevents ordinary homepage recommendations from being stored as
+visual matches. Each input image is identified by SHA-256 content hash; recent
+results can be reused without opening a browser, and folder-watch mode processes
+new images in later cycles. Candidate rows include product link/image, price,
+rating, visible sold count, rank, and the originating image hash.
+
+The GUI batch launcher owns a third process handle, separate from the normal
+scrape/monitor process and the offer process. Consequently a long-running
+marketplace monitor can remain active while selected images are searched. The
+`aliexpress_source_items` relation preserves source listing provenance without
+writing into the marketplace database.
+
+The boundary is epistemic as well as operational: visual results are candidates,
+not proof of product identity, material, authenticity, supplier reliability,
+margin, or compliance. Cross-agent use is an explicit typed handoff of an image
+or candidate rather than shared mutable state.
+
 ## Autonomous workflow loop
 
 Autonomous objectives are persisted as a workflow plus an immutable task tree. The supervisor produces a dependency graph, specialist agents execute child tasks, outputs move through typed handoffs, failed attempts create retry tasks, reviewer output becomes an evaluation gate, and the supervisor synthesizes the final result. Successful trajectories create or refine reusable Markdown skills under `knowledge/skills/`; failures become reviewable wiki proposals.
@@ -163,3 +195,13 @@ Frontend rendering mirrors the orchestration model:
 - strategy entries are rendered in both the per-agent `Discussion` popup and the global `Threads` panel with route mode, decision mode, consulted agents, and explicit execution steps.
 - `strategy-update`, `revise`, `revision-result`, `council-policy`, `council-turn`, `synthesis`, and `memory` thread entries now also produce in-world speech bubbles and toast notifications, so reasoning-state changes are visible in the game as they happen rather than only after inspection.
 - when the bounded follow-up step triggers, the same visible runtime path is reused: extra specialist consults emit `chat.plan`, `chat.accept`, and `chat.reply` traffic, while extra memory requests emit `memory.recall` traffic and strategy-update notifications before synthesis.
+- accepted/running runtime tasks and started Project Gateway jobs claim an explicit in-world work assignment. The agent routes to its linked workstation (or role station), suppresses idle wandering while one or more work IDs remain active, then releases back to normal positioning at a terminal state.
+
+### Game layout editor and job notifications
+
+- Room sculpting is a fixed-intent paint/erase stroke: dragging across tiles never toggles a tile twice or unexpectedly switches from adding to erasing. A whole stroke is one undo step.
+- Room cells remain cardinally connected and cannot overlap another room; removing a tile that splits the room is rejected. Door/path tiles must start at a room or an existing path, stay outside room interiors, and cannot be removed singly if that strands another segment. A drag erase prunes any segment it disconnects.
+- The room editor keeps reversible layout edits in a bounded in-memory history. Room shapes, doors, workstations, and agent/table placement share one undo/redo path; successful edits continue to persist to local storage.
+- Undo/redo restores the layout model first, then rebuilds room, door, and workstation visuals so the scene cannot retain deleted custom workstation props.
+- Job completion notifications use a persistent local notification state. The initial job-history fetch establishes a baseline; new terminal jobs are deduplicated by job ID and remain unread across reloads until the user opens the notifications history.
+- The badge counts both completed and failed jobs, updates its accessible label, and only pulses when unread count increases. In-world toasts deduplicate keyed events and are capped to avoid stacking without bound.

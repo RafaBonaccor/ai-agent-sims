@@ -398,3 +398,42 @@ Nota utile per il video:
 - evidenziare che le finestre Chrome personali non vengono toccate
 - spiegare che il browser resta grafico e usa lo stesso profilo/sessione dello scraper
 - mostrare che apertura manuale e upload foto restano in primo piano perché interattivi
+
+### Sourcing Agent e ricerca visuale AliExpress
+
+- mostrare il nuovo `Sourcing Agent` nella workstation separata dal `Vinted Employee`
+- aprire The Main Scraper nel Project Gateway e scegliere `AliExpress visual sourcing`
+- selezionare il percorso di una foto oppure una cartella inbox con più immagini
+- spiegare che il file viene caricato direttamente nel DOM tramite `Carica una foto`, senza Finder
+- mostrare risultati con link, immagine, prezzo, rating, ordini e punteggio
+- mostrare `data/aliexpress_sourcing.db` come storico separato, con deduplica per hash
+- attivare il watch interval e aggiungere una nuova immagine durante il job
+- chiarire che il match visuale è un candidato e richiede verifica commerciale
+- nella tabella risultati, selezionare più articoli e premere `Cerca selezionati su AliExpress`
+- aprire `Reports`, selezionare le checkbox sulle card degli annunci e usare
+  `Search selected on AliExpress`; mostrare che lo stesso batch viene assegnato
+  al Sourcing Agent e compare negli Active jobs senza fermare il monitoraggio
+- mostrare che le immagini già estratte vengono scaricate nella cache e collegate agli ID originali
+- lasciare il monitor della piattaforma in esecuzione durante il batch per dimostrare l'indipendenza dei processi
+- aprire `output/aliexpress_batches/<timestamp>/results.json` e mostrare i campi `source_item_id` e `source_link`
+
+### Stato venduto nei profili personali
+
+- avviare il controllo dei profili registrati come propri
+- mostrare che ogni annuncio viene aperto e classificato dal marker esplicito `Venduto`
+- distinguere venduti, attivi, non disponibili e controlli non verificati
+- verificare che gli annunci venduti non vengano conteggiati tra gli attivi nel report
+- mostrare che i profili competitor mantengono il controllo leggero basato sulla pagina profilo
+
+### Editor stanze e notifiche persistenti
+
+- aprire l'editor del gioco e trascinare sulla griglia per aggiungere o cancellare celle della stanza con un'unica azione Undo
+- mostrare che le celle non possono sovrapporsi o spezzare una stanza in isole separate
+- disegnare un percorso partendo da una stanza e cancellarlo; evidenziare i segmenti scollegati rimossi automaticamente
+- spostare un agente e una workstation, quindi usare Undo e Redo (anche con le scorciatoie da tastiera)
+- mostrare che l'ultima disposizione rimane salvata quando si ricarica il gioco
+- avviare un job, mostrare lo stato in corso e il controllo Stop nella notifica del job
+- completare o far fallire un job e verificare badge, toast deduplicato e storico dalla campanella
+- ricaricare il gioco prima di aprire le notifiche e mostrare che i job conclusi restano non letti fino all'apertura dello storico
+- assegnare un task a un agente, mostrare la camminata verso la sua workstation e che ci resta durante l'esecuzione
+- completare o fallire il job e mostrare il rilascio dell'assegnazione e il ritorno al comportamento normale

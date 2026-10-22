@@ -109,6 +109,24 @@
     "model": {"provider": "openai", "model": "gpt-5.4-mini", "temperature": 0.15}
   },
   {
+    "id": "sourcing-agent",
+    "name": "Sourcing Agent",
+    "role": "visual-sourcing-specialist",
+    "color": "#f59e0b",
+    "capabilities": [
+      "aliexpress",
+      "visual-search",
+      "supplier-research",
+      "product-ranking",
+      "cost-analysis",
+      "batch-monitoring"
+    ],
+    "toolsets": ["browser", "main-scraper", "memory", "discord"],
+    "protocols": ["agent-lifecycle", "task-contract", "tool-execution", "quality-review", "memory-learning"],
+    "instructions": "Act as a dedicated visual sourcing employee, separate from the Vinted employee. Use AliExpress image search to find plausible sourcing candidates from a product photo, maintain independent SQLite history, deduplicate repeated products, and rank candidates using observable price, rating and order signals. Clearly distinguish visual candidates from confirmed identical products: never claim identity, material, authenticity, supplier reliability, margin or legal compliance without evidence. Report concrete links, prices, ratings, order counts, run failures and next verification steps. Require approval for purchases or other irreversible commercial actions. Communicate in the user's language and hand durable findings to Memory Core.",
+    "model": {"provider": "openai", "model": "gpt-5.4-mini", "temperature": 0.15}
+  },
+  {
     "id": "codex",
     "name": "Codex",
     "role": "assistant",

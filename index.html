@@ -59,32 +59,34 @@
         <button id="editor-close" class="button button--icon" type="button" aria-label="Chiudi editor">×</button>
       </div>
       <div class="layout-editor__actions">
-        <button id="add-room" class="button" type="button">+ Stanza</button>
-        <button id="room-draw-toggle" class="button" type="button">Modella stanza</button>
-        <button id="door-toggle" class="button" type="button">Porte</button>
-        <button id="delete-room" class="button button--danger" type="button">Rimuovi stanza</button>
-        <button id="reset-layout" class="button" type="button">Reset</button>
+        <button id="undo-layout" class="button" type="button" disabled>Undo</button>
+        <button id="redo-layout" class="button" type="button" disabled>Redo</button>
+        <button id="add-room" class="button" type="button">+ Room</button>
+        <button id="room-draw-toggle" class="button" type="button">Shape room</button>
+        <button id="door-toggle" class="button" type="button">Doors & paths</button>
+        <button id="delete-room" class="button button--danger" type="button">Remove room</button>
+        <button id="reset-layout" class="button" type="button">Reset layout</button>
       </div>
       <div class="layout-editor__workstation">
         <label>
-          <span>Preset workstation</span>
+          <span>Workstation preset</span>
           <select id="workstation-preset"></select>
         </label>
         <label>
-          <span>Collega agente</span>
+          <span>Link agent</span>
           <select id="workstation-agent"></select>
         </label>
         <button id="add-workstation" class="button button--primary" type="button">+ Workstation</button>
       </div>
       <div class="layout-editor__agent-table">
         <div class="layout-editor__agent-table-heading">
-          <span>Agenti disponibili</span>
-          <small id="workstation-agent-count">0 agenti</small>
+          <span>Available agents</span>
+          <small id="workstation-agent-count">0 agents</small>
         </div>
         <div id="workstation-agent-table" class="layout-editor__agent-table-body"></div>
       </div>
       <p class="layout-editor__hint" id="layout-editor-hint">
-        Seleziona una stanza dal pannello, poi scegli cosa modificare.
+        Choose a room, then select what to edit.
       </p>
     </section>
 
@@ -794,6 +796,11 @@
           <section class="report-articles-section">
             <div class="report-card__heading">
               <div><span class="section-label">Tracked inventory</span><h3>Articles</h3></div>
+              <div class="report-sourcing-controls" aria-label="Visual sourcing selection">
+                <span class="report-selection-count" id="report-selected-count">0 selected</span>
+                <button class="button button--primary" id="report-sourcing-selected" type="button" disabled>Search selected on AliExpress</button>
+                <button class="button" id="report-clear-selection" type="button" disabled>Clear</button>
+              </div>
               <div class="report-article-filters" role="group" aria-label="Article status filter">
                 <label class="report-sale-time-filter">
                   <span>Sale time</span>

@@ -39,6 +39,33 @@
       "arguments": ["run", "google_maps", "--stdout-json", "--quiet", "--format", "none"],
       "parameters": ["search", "city", "max-results"]
     },
+    "aliexpress.image_search": {
+      "label": "AliExpress visual sourcing",
+      "description": "Independent visual-sourcing job. Uploads one local image, or watches a folder, then stores and ranks matching product candidates without using Vinted state.",
+      "risk": "browser-read",
+      "timeoutSeconds": 0,
+      "arguments": ["run", "aliexpress_image", "--stdout-json", "--quiet", "--format", "none"],
+      "parameters": [
+        { "id": "image-path", "label": "Reference image", "type": "text", "default": "", "placeholder": "/Users/.../product.jpg", "help": "Absolute path of one JPG, PNG, WebP or other supported product image." },
+        { "id": "image-dir", "label": "Automated image folder", "type": "text", "default": "", "placeholder": "/Users/.../sourcing-inbox", "help": "Every supported image in this folder is processed. Results are deduplicated using the image content hash." },
+        { "id": "items-file", "label": "Selected-items manifest", "type": "text", "default": "", "placeholder": "/Users/.../selected_items.json", "help": "Optional JSON batch exported by the results table, containing image URLs or local archived images." },
+        { "id": "max-results", "label": "Max results per image", "type": "number", "default": 100, "min": 0, "step": 1, "help": "Use 0 to continue until the result page stops adding products." },
+        { "id": "max-price", "label": "Maximum sourcing price", "type": "text", "default": "", "placeholder": "10.00" },
+        { "id": "reuse-cache-hours", "label": "Reuse results (hours)", "type": "number", "default": 24, "min": 0, "step": 1, "help": "Avoids repeating the same visual search during this period. Set 0 to disable cached results." },
+        { "id": "force-refresh", "label": "Force a new visual search", "type": "checkbox", "default": false },
+        { "id": "watch-interval-seconds", "label": "Watch folder every", "type": "duration", "default": 0, "min": 0, "step": 1, "help": "Use 0 for one batch. A positive value keeps this independent job alive and discovers new images." },
+        { "id": "db-path", "label": "Sourcing SQLite DB", "type": "text", "default": "data/aliexpress_sourcing.db" },
+        { "id": "browser-mode", "label": "Browser mode", "type": "select", "default": "chrome_normale", "defaultFromUiSetting": "browser_mode", "options": [
+          { "value": "chrome_normale", "label": "Chrome normale" },
+          { "value": "sessione_persistente", "label": "Sessione persistente" },
+          { "value": "profilo_personalizzato", "label": "Profilo personalizzato" },
+          { "value": "isolated", "label": "Isolated" }
+        ] },
+        { "id": "browser-user-data-dir", "label": "Browser user data dir", "type": "text", "default": "", "defaultFromUiSetting": "browser_user_data_dir", "placeholder": "/Users/.../Google/Chrome" },
+        { "id": "browser-profile-directory", "label": "Browser profile directory", "type": "text", "default": "Default", "defaultFromUiSetting": "browser_profile_directory" },
+        "refresh-browser-profile"
+      ]
+    },
     "vinted.search": {
       "label": "Cerca prodotti Vinted",
       "risk": "browser-read",

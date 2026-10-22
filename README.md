@@ -102,6 +102,11 @@ stato agenti, job, notifiche, chat e output. Lo stato persistente resta in
 SQLite, mentre file locali come `config/projects.local.json` e `data/secrets.json`
 contengono configurazioni specifiche della macchina.
 
+Quando un task viene accettato/avviato o un job del Project Gateway parte,
+l'agente assegnato raggiunge la propria workstation e vi rimane finché il lavoro
+è attivo. Alla conclusione o al fallimento torna alla normale logica di
+posizionamento.
+
 ## Agenti e provider
 
 Gli agenti iniziali sono definiti in `config/agents.json`, ma possono essere
@@ -120,6 +125,12 @@ workstation propria nel gioco e gestisce ricerca affari, monitoraggio continuo,
 competitor e profili, preparazione annunci, upload, offerte e report. Pubblicare
 un annuncio, inviare un'offerta o eseguire un'altra operazione commerciale
 irreversibile resta soggetto ad approvazione esplicita.
+
+`Sourcing Agent` è un dipendente separato dedicato alla ricerca visuale su
+AliExpress. Riceve una foto o monitora una cartella, avvia un job autonomo,
+salva i candidati nel proprio database, rimuove duplicati e li ordina usando
+prezzo, rating e ordini visibili. Non condivide scheduler o tabelle con Vinted:
+un eventuale passaggio dal `Vinted Employee` è un handoff esplicito.
 
 La risoluzione delle API key segue questa precedenza:
 
@@ -497,6 +508,26 @@ il launch headless diretto dal backend faceva abortire il processo Tk della GUI.
 
 ## The Main Scraper
 
+### AliExpress visual sourcing
+
+Nel Project Gateway è disponibile `AliExpress visual sourcing`, pensato per il
+`Sourcing Agent`. Il job può elaborare una foto singola oppure una cartella in
+modalità batch/monitor: carica il file direttamente nell'input DOM della ricerca
+per immagini, raccoglie i prodotti, li deduplica e salva lo storico in
+`projects/main-scraper/data/aliexpress_sourcing.db`. La cache usa il contenuto
+dell'immagine, non il nome file.
+
+Dalla tabella risultati della GUI puoi selezionare più articoli e premere
+`Cerca selezionati su AliExpress`. Il batch usa l'immagine già estratta o
+archiviata per ogni annuncio, conserva ID/link/titolo dell'origine e avvia un
+processo/browser dedicato. Il procacciatore e gli altri monitor della piattaforma
+non vengono fermati né riutilizzati dal sourcing. Le relazioni tra annunci e
+match sono salvate nella tabella `aliexpress_source_items` del database separato.
+
+Il ranking usa soltanto segnali pubblici osservabili. Un risultato resta un
+candidato da verificare e non conferma identità, autenticità, materiale o
+affidabilità del fornitore.
+
 Nella GUI Vinted di The Main Scraper puoi salvare e riusare termini o URL di
 ricerca. I valori vengono persistiti nel file
 `projects/main-scraper/output/_saved_search_terms.json`, separati dalle run
@@ -571,6 +602,10 @@ segnali automatici.
 La vista include:
 
 - articoli analizzati, affari attivi e venduti, competitor e record non disponibili;
+- checkbox su ogni card con un'immagine disponibile: seleziona uno o più annunci,
+  poi usa `Search selected on AliExpress`. Il Report crea un manifest locale e
+  assegna un job isolato al `Sourcing Agent`; il job appare in `Active jobs` e
+  non condivide né interrompe browser o scheduler del monitoraggio;
 - tab `My Profiles` per gli account proprietari: articoli noti, attivi,
   venduti/spariti, tempo medio di vendita, snapshot e miniature dello storico;
 - nella tab proprietaria, KPI aggregati, grafico comparativo dello stato
@@ -610,6 +645,10 @@ snapshot verificato dopo recupero e migrazione e
 `projects/main-scraper/data/backups/scraper-after-history-20261011.db`.
 
 L'API usata dal gioco e `GET /api/vinted/reports?days=3650&limit=5000`.
+Il lettore report e retrocompatibile con gli storici SQLite creati prima
+dell'introduzione del campo `query_kind` delle trend query: il campo viene
+mostrato come `brand_product` senza richiedere una migrazione e senza modificare
+i dati esistenti.
 I profili proprietari si aggiungono con `POST /api/vinted/owned-profiles` e si
 disattivano con `DELETE /api/vinted/owned-profiles/{member_id}`. I seller ID
 registrati come propri vengono esclusi automaticamente dalla classifica

@@ -427,6 +427,9 @@
           <path class="link cyan" data-from="job-search" data-to="scheduler" />
           <path class="link purple dashed" data-from="job-search" data-to="data" />
           <path class="link blue" data-from="job-search" data-to="visibility" />
+          <path class="link amber" data-from="sourcing" data-to="hub" />
+          <path class="link purple dashed" data-from="sourcing" data-to="data" />
+          <path class="link gray dashed" data-from="sourcing" data-to="vision" />
         </svg>
 
         <div class="legend" data-node="legend">
@@ -440,7 +443,7 @@
 
         <div class="hub" data-node="hub">
           <h2>Core automazione</h2>
-          <p>Il Vinted Employee coordina configurazioni, browser, dati, regole, scheduler, notifiche e azioni sugli articoli come owner operativo dedicato.</p>
+          <p>Gli agenti operativi coordinano browser, dati, regole, scheduler, notifiche e azioni mantenendo confini separati tra marketplace, sourcing e ricerca lavoro.</p>
         </div>
 
         <section class="zone platform" data-node="platform" style="left:64px; top:110px; width:360px; height:270px">
@@ -516,6 +519,20 @@
           </div>
         </section>
 
+        <section class="zone deals" data-node="sourcing" style="left:1750px; top:760px; width:430px; height:320px">
+          <h2><span></span>Zona visual sourcing</h2>
+          <div class="mini-grid">
+            <div class="card"><b>Sourcing Agent</b><p>Owner separato dal Vinted Employee.</p></div>
+            <div class="card"><b>Input immagini</b><p>Foto singola, cartella inbox o articoli selezionati dalla tabella.</p></div>
+            <div class="card"><b>Upload DOM</b><p>Ricerca visuale senza Finder.</p></div>
+            <div class="card"><b>Verifica risultato</b><p>Accetta card solo dopo il cambio reale del result set.</p></div>
+            <div class="card"><b>Ranking</b><p>Prezzo, rating e vendite visibili.</p></div>
+            <div class="card"><b>SQLite separato</b><p>Hash, run, candidati, cache e relazione con l’articolo origine.</p></div>
+            <div class="card"><b>Batch indipendente</b><p>Il monitor della piattaforma continua nel proprio processo e browser.</p></div>
+            <div class="card wide"><b>Confine</b><p>Un match è un candidato: identità, materiali e fornitore vanno verificati.</p></div>
+          </div>
+        </section>
+
         <section class="zone future" data-node="vision" style="left:1040px; top:645px; width:390px; height:120px">
           <h2><span></span>Computer vision domanda<em>da sviluppare</em></h2>
           <div class="card"><b>Conteggio ricorrenze visive</b><p>Se un charm o stile appare spesso nei risultati, aumenta il trend score e lo propone come prodotto da acquistare.</p></div>
@@ -537,6 +554,7 @@
               <tr><td>Immagine + screenshot + HTML</td><td>Prova locale anche dopo la rimozione</td></tr>
               <tr><td>Backup SQLite giornaliero</td><td>Ripristino verificato senza sovrascritture</td></tr>
               <tr><td>Preset profili/job</td><td>Non riscrivere configurazioni</td></tr>
+              <tr><td>Hash foto + candidati sourcing</td><td>Deduplica e confronto fornitori</td></tr>
             </tbody>
           </table>
         </section>
@@ -558,6 +576,7 @@
             <div class="card"><b>Jobs active</b><p>running, scheduled, failed, completed.</p></div>
             <div class="card"><b>Notifications</b><p>Campana con tutti i job e alert.</p></div>
             <div class="card"><b>Vinted Employee</b><p>Dipendente owner con chat, workstation e output dei job.</p></div>
+            <div class="card"><b>Sourcing Agent</b><p>Ricerca visuale e storico fornitori separati.</p></div>
             <div class="card"><b>Toast</b><p>Eventi immediati non bloccanti.</p></div>
             <div class="card wide"><b>Controlli</b><p>Stop / pause / resume devono essere accessibili da qui.</p></div>
           </div>

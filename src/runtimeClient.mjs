@@ -236,6 +236,13 @@ export class RuntimeClient {
     return this.request(`/api/vinted/reports?days=${encodeURIComponent(days)}&limit=${encodeURIComponent(limit)}`);
   }
 
+  createVintedReportSourcingBatch(items, maxResults = 40) {
+    return this.request("/api/vinted/reports/sourcing-batch", {
+      method: "POST",
+      body: JSON.stringify({ items, max_results: maxResults }),
+    });
+  }
+
   saveVintedOwnedProfile(profileUrl, displayName = "") {
     return this.request("/api/vinted/owned-profiles", {
       method: "POST",

@@ -498,10 +498,30 @@ def build_vinted_report(
             ]
 
         trend_queries: list[dict[str, Any]] = []
-        if _table_exists(connection, "vinted_trend_queries"):
+        trend_columns = _table_columns(connection, "vinted_trend_queries")
+        if trend_columns:
+            def trend_column(name: str, fallback: str) -> str:
+                return name if name in trend_columns else f"{fallback} AS {name}"
+
+            selected_trend_columns = [
+                trend_column("query_text", "''"),
+                trend_column("brand", "''"),
+                trend_column("query_kind", "'brand_product'"),
+                trend_column("status", "'learning'"),
+                trend_column("enabled", "1"),
+                trend_column("mature_count", "0"),
+                trend_column("sold_count", "0"),
+                trend_column("sell_through_percent", "0"),
+                trend_column("confidence_lower_percent", "0"),
+                trend_column("scans_count", "0"),
+                trend_column("empty_streak", "0"),
+                trend_column("error_streak", "0"),
+                trend_column("last_scan_at", "''"),
+                trend_column("next_review_at", "''"),
+                trend_column("last_error", "''"),
+            ]
             trend_queries = [dict(row) for row in connection.execute(
-                """SELECT query_text,brand,query_kind,status,enabled,mature_count,sold_count,sell_through_percent,
-                confidence_lower_percent,scans_count,empty_streak,error_streak,last_scan_at,next_review_at,last_error
+                f"""SELECT {', '.join(selected_trend_columns)}
                 FROM vinted_trend_queries
                 ORDER BY sell_through_percent DESC,mature_count DESC,query_text"""
             ).fetchall()]
@@ -563,6 +583,7 @@ def build_vinted_report(
             snapshots_count = 0
             latest_snapshot_at = ""
             latest_active_count = 0
+            latest_snapshot_id = 0
             if _table_exists(connection, "vinted_profile_snapshots"):
                 snapshot_summary = connection.execute(
                     "SELECT COUNT(*) AS snapshots_count, MAX(checked_at) AS latest_snapshot_at FROM vinted_profile_snapshots WHERE member_id = ?",
@@ -571,10 +592,12 @@ def build_vinted_report(
                 snapshots_count = int(snapshot_summary["snapshots_count"] or 0)
                 latest_snapshot_at = str(snapshot_summary["latest_snapshot_at"] or "")
                 latest = connection.execute(
-                    "SELECT item_count FROM vinted_profile_snapshots WHERE member_id = ? ORDER BY checked_at DESC, id DESC LIMIT 1",
+                    "SELECT id, item_count FROM vinted_profile_snapshots WHERE member_id = ? ORDER BY checked_at DESC, id DESC LIMIT 1",
                     (member_id,),
                 ).fetchone()
-                latest_active_count = int(latest["item_count"] or 0) if latest else 0
+                if latest:
+                    latest_snapshot_id = int(latest["id"])
+                    latest_active_count = int(latest["item_count"] or 0)
 
             if snapshot_item_columns:
                 rows = connection.execute(
@@ -592,20 +615,38 @@ def build_vinted_report(
                     link = str(row["item_link"] or payload.get("link", "") or "")
                     key = item_id or link
                     base = known_items.get(key, {})
-                    is_gone = str(row["status"] or "") == "gone" or not bool(row["present"])
+                    snapshot_status = str(row["status"] or "")
+                    is_sold = snapshot_status == "sold" or str(payload.get("profile_item_status", "") or "") == "sold"
+                    is_gone = snapshot_status in {"gone", "unavailable"} or not bool(row["present"])
                     known_items[key] = {
                         **base, "item_id": item_id, "link": link,
                         "name": str(row["item_name"] or payload.get("name", "") or base.get("name", "Marketplace item")),
                         "price": str(row["price_text"] or payload.get("price", "") or base.get("price", "")),
                         "image_url": str(row["image_url"] or payload.get("image_url", "") or base.get("image_url", "")),
-                        "status": "gone" if is_gone and base.get("status") != "sold" else base.get("status", "active"),
+                        "status": "sold" if is_sold else "gone" if is_gone and base.get("status") != "sold" else "unknown" if snapshot_status == "unknown" else base.get("status", "active"),
                         "first_seen_at": str(payload.get("profile_first_seen_at", "") or base.get("first_seen_at", row["checked_at"])),
                         "last_seen_at": str(payload.get("profile_last_seen_at", "") or row["checked_at"]),
-                        "sold_at": str(base.get("sold_at", "")),
+                        "sold_at": str(base.get("sold_at", "") or payload.get("profile_sold_at", "")),
                         "sold_after_seconds": base.get("sold_after_seconds", payload.get("profile_sold_after_seconds")),
                         "sold_after_text": str(base.get("sold_after_text", "") or payload.get("profile_sold_after_text", "")),
                         "seller_name": str(base.get("seller_name", "")),
                     }
+
+            if latest_snapshot_id and snapshot_item_columns:
+                latest_rows = connection.execute(
+                    """
+                    SELECT item_id, item_link, status, present
+                    FROM vinted_profile_snapshot_items WHERE snapshot_id = ?
+                    """,
+                    (latest_snapshot_id,),
+                ).fetchall()
+                latest_active_count = sum(
+                    1
+                    for row in latest_rows
+                    if bool(row["present"])
+                    and str(row["status"] or "") not in {"sold", "gone", "unavailable", "unknown"}
+                    and known_items.get(str(row["item_id"] or row["item_link"] or ""), {}).get("status") != "sold"
+                )
 
             profile_items = sorted(
                 known_items.values(), key=lambda item: str(item.get("sold_at") or item.get("last_seen_at") or item.get("first_seen_at") or ""), reverse=True
@@ -617,7 +658,7 @@ def build_vinted_report(
             display_name = str(registry["display_name"] or "") or detected_name or f"My profile {member_id}"
             owned_profiles.append({
                 "member_id": member_id, "profile_url": profile_url, "display_name": display_name,
-                "known_items_count": len(profile_items), "active_items_count": latest_active_count or len(active_items),
+                "known_items_count": len(profile_items), "active_items_count": latest_active_count,
                 "sold_items_count": len(sold_items), "gone_items_count": sum(1 for item in profile_items if item.get("status") == "gone"),
                 "observed_items_count": sum(1 for item in profile_items if item.get("status") == "observed"),
                 "snapshots_count": snapshots_count, "latest_snapshot_at": latest_snapshot_at,

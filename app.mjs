@@ -8,25 +8,28 @@ import {
   findAvailableRoomRect,
   isDoorTile,
   isInsideTile,
+  pruneDisconnectedDoorPaths,
   removeRoomFromLayout,
   roomConfig,
   roomCells,
   roomLayout,
   resetRoomLayout,
+  setDoorAt,
   setDoorLayout,
+  setRoomCell,
   setRoomLayout,
   setWorkstationLayout,
   tileEquals,
   tileKey,
   tileToWorld,
-  toggleDoorAt,
-  toggleRoomCell,
   workstationPresets,
   workstations,
   worldToTile,
 } from "./src/agentWorld.mjs";
 import { defaultScenario } from "./src/scenarios.mjs";
 import { RuntimeClient } from "./src/runtimeClient.mjs";
+import { LayoutHistory } from "./src/layoutHistory.mjs";
+import { JobNotificationState } from "./src/jobNotifications.mjs";
 
 const canvas = document.querySelector("#game");
 const bootMessage = document.querySelector("#boot-message");
@@ -52,6 +55,8 @@ const layoutEditor = document.querySelector("#layout-editor");
 const layoutEditorStatus = document.querySelector("#layout-editor-status");
 const layoutEditorHint = document.querySelector("#layout-editor-hint");
 const editorCloseButton = document.querySelector("#editor-close");
+const undoLayoutButton = document.querySelector("#undo-layout");
+const redoLayoutButton = document.querySelector("#redo-layout");
 const roomDrawToggle = document.querySelector("#room-draw-toggle");
 const doorToggle = document.querySelector("#door-toggle");
 const addRoomButton = document.querySelector("#add-room");
@@ -75,6 +80,9 @@ const reportSalesCaption = document.querySelector("#report-sales-caption");
 const reportStatusChart = document.querySelector("#report-status-chart");
 const reportSearchRanking = document.querySelector("#report-search-ranking");
 const reportArticles = document.querySelector("#report-articles");
+const reportSourcingSelectedButton = document.querySelector("#report-sourcing-selected");
+const reportClearSelectionButton = document.querySelector("#report-clear-selection");
+const reportSelectedCount = document.querySelector("#report-selected-count");
 const reportSaleTime = document.querySelector("#report-sale-time");
 const reportFilterButtons = Array.from(document.querySelectorAll("[data-report-filter]"));
 const reportTabButtons = Array.from(document.querySelectorAll("[data-report-tab]"));
@@ -248,7 +256,9 @@ const agentReplies = new Map();
 const chatMessageIds = new Set();
 const projectJobToasts = new Map();
 const projectJobsCache = new Map();
-const seenCompletedProjectJobs = new Set();
+const layoutHistory = new LayoutHistory(50);
+const jobNotificationState = new JobNotificationState();
+const gameNotificationKeys = new Set();
 const taskUiNotices = new Set();
 const threadUiNotices = new Set();
 const projectJobAgentMessages = new Map();
@@ -261,10 +271,11 @@ let projectPanel = "output";
 let projectDialogMode = "gateway";
 let projectJobFilter = "all";
 let selectedTaskThreadId = "";
-let unreadCompletedProjectJobs = 0;
+let unreadCompletedProjectJobs = jobNotificationState.unreadIds.size;
 let reportSnapshot = null;
 let reportArticleFilter = "all";
 let reportSaleTimeFilter = "all";
+let reportSelectedArticleKeys = new Set();
 let reportCompetitorStatusFilter = "all";
 let reportOwnedStatusFilter = "all";
 let reportOwnedSearchFilter = "";
@@ -422,6 +433,7 @@ const pointerState = {
   dragging: false,
   panning: false,
 };
+let layoutStroke = null;
 
 const clock = new THREE.Clock();
 let running = true;
@@ -694,12 +706,71 @@ function currentLayoutState() {
   };
 }
 
-function saveLayoutState() {
+function saveLayoutState(beforeState = null) {
+  if (beforeState && !layoutStroke) {
+    layoutHistory.record(beforeState, currentLayoutState());
+  }
   try {
     window.localStorage?.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(currentLayoutState()));
   } catch (error) {
     runtimeClient.logClient?.("warning", error.message, { operation: "saveLayoutState" });
   }
+  updateLayoutHistoryControls();
+}
+
+function updateLayoutHistoryControls() {
+  if (undoLayoutButton) {
+    undoLayoutButton.disabled = !layoutHistory.canUndo;
+    undoLayoutButton.title = layoutHistory.canUndo ? "Undo last layout change (⌘Z / Ctrl+Z)" : "No layout changes to undo";
+  }
+  if (redoLayoutButton) {
+    redoLayoutButton.disabled = !layoutHistory.canRedo;
+    redoLayoutButton.title = layoutHistory.canRedo ? "Redo layout change (⌘⇧Z / Ctrl+Y)" : "No layout changes to redo";
+  }
+}
+
+function rebuildStationVisuals() {
+  for (const [stationId, group] of stationVisuals) {
+    scene.remove(group);
+    stationVisuals.delete(stationId);
+  }
+  for (let index = selectableObjects.length - 1; index >= 0; index -= 1) {
+    if (selectableObjects[index].userData.stationId) selectableObjects.splice(index, 1);
+  }
+  for (const station of workstations) createStationProp(station);
+}
+
+function applyLayoutHistorySnapshot(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.rooms) || !snapshot.rooms.length) return false;
+  setRoomLayout(snapshot.rooms);
+  setDoorLayout(snapshot.doors ?? []);
+  setWorkstationLayout(snapshot.customWorkstations ?? []);
+  for (const [stationId, tileValue] of Object.entries(snapshot.stations ?? {})) {
+    const station = agentWorld.getStation(stationId);
+    const tile = tileFromStored(tileValue);
+    if (station && tile && isInsideTile(tile)) station.position = tileToWorld(tile);
+  }
+  agentWorld.refreshBlockedTiles();
+  agentWorld.restoreAgentTiles(snapshot.agents ?? {});
+  if (!roomLayout.some((room) => room.id === selectedRoomId)) selectedRoomId = roomLayout[0]?.id ?? null;
+  if (selectedStationId && !agentWorld.getStation(selectedStationId)) selectedStationId = null;
+  if (pendingStationPlacementId && !agentWorld.getStation(pendingStationPlacementId)) pendingStationPlacementId = null;
+  rebuildLayoutVisuals();
+  rebuildStationVisuals();
+  saveLayoutState();
+  updateLayoutEditor();
+  updateHud();
+  return true;
+}
+
+function undoLayoutEdit() {
+  const snapshot = layoutHistory.undo(currentLayoutState());
+  if (snapshot) applyLayoutHistorySnapshot(snapshot);
+}
+
+function redoLayoutEdit() {
+  const snapshot = layoutHistory.redo(currentLayoutState());
+  if (snapshot) applyLayoutHistorySnapshot(snapshot);
 }
 
 function stationsInRoom(room) {
@@ -721,23 +792,24 @@ function updateLayoutEditor() {
   if (deleteRoomButton) {
     deleteRoomButton.disabled = !room || roomLayout.length <= 1 || hasAgents || hasStations;
   }
+  updateLayoutHistoryControls();
   if (layoutEditorStatus) {
-    const mode = roomDrawMode ? "modella stanza" : doorMode ? "porte/corridoi" : "sposta oggetti";
-    const roomText = room ? `${room.label} · ${roomCells(room).length} celle` : "nessuna stanza selezionata";
+    const mode = roomDrawMode ? "shape room" : doorMode ? "doors / paths" : "move objects";
+    const roomText = room ? `${room.label} · ${roomCells(room).length} tiles` : "no room selected";
     layoutEditorStatus.textContent = `${roomText} · ${mode}`;
   }
   if (layoutEditorHint) {
     if (!room) {
-      layoutEditorHint.textContent = "Seleziona una stanza dal pannello Stanze, poi scegli cosa modificare.";
+      layoutEditorHint.textContent = "Choose a room from the Rooms panel, then select an editing tool.";
     } else if (pendingStationPlacementId) {
       const station = agentWorld.getStation(pendingStationPlacementId);
-      layoutEditorHint.textContent = `Clicca un tile per piazzare ${station?.label ?? "la workstation selezionata"}.`;
+      layoutEditorHint.textContent = `Click a tile to place ${station?.label ?? "the selected workstation"}.`;
     } else if (roomDrawMode) {
-      layoutEditorHint.textContent = "Clicca celle adiacenti per aggiungerle alla stanza; clicca celle della stanza per rimuoverle.";
+      layoutEditorHint.textContent = "Click or drag to paint the room shape. Drag from an existing tile to erase; the room must stay connected.";
     } else if (doorMode) {
-      layoutEditorHint.textContent = "Clicca celle sulla griglia per aggiungere o rimuovere porte/corridoi camminabili.";
+      layoutEditorHint.textContent = "Click or drag to draw a connected path from a room. Erasing cannot leave disconnected path tiles.";
     } else {
-      layoutEditorHint.textContent = "Clicca un agente o tavolo, poi clicca un tile per spostarlo. Usa i pulsanti per stanze e porte.";
+      layoutEditorHint.textContent = "Select an agent or workstation, then click a tile to move it. Undo/Redo: Ctrl+Z / Ctrl+Y.";
     }
   }
   renderWorkstationControls();
@@ -949,6 +1021,7 @@ function createLinkedWorkstation(agent, presetId, options = {}) {
     return existing;
   }
   const preset = workstationPresets.find((item) => item.id === presetId) ?? workstationPresetForRole(agent.role);
+  const beforeLayout = currentLayoutState();
   const station = addWorkstationToLayout({
     id: uniqueWorkstationId(agent.id, preset.id),
     label: `${agent.label} · ${preset.label}`.slice(0, 80),
@@ -968,7 +1041,7 @@ function createLinkedWorkstation(agent, presetId, options = {}) {
   pendingStationPlacementId = station.id;
   setLayoutMode(true);
   setAutoAgents(false);
-  saveLayoutState();
+  saveLayoutState(beforeLayout);
   updateHud();
   const reason = options.reason ?? "Workstation creata";
   setBootMessage(`${reason}: clicca un tile per piazzare "${station.label}".`);
@@ -987,6 +1060,7 @@ function addLayoutRoom() {
     setBootMessage("Non c'e spazio libero per un'altra stanza nel layout attuale.");
     return;
   }
+  const beforeLayout = currentLayoutState();
   const room = addRoomToLayout({
     ...rect,
     id: `room-${roomLayout.length + 1}`,
@@ -998,7 +1072,7 @@ function addLayoutRoom() {
   selectedRoomId = room.id;
   focusRoom(room);
   setLayoutMode(true);
-  saveLayoutState();
+  saveLayoutState(beforeLayout);
   setBootMessage(`${room.label} aggiunta. Seleziona un agente/tavolo e clicca un tile nella nuova stanza.`);
   updateHud();
 }
@@ -1171,6 +1245,7 @@ function placeSelectionInRoom(roomId) {
     return;
   }
   const target = tileForRoomCenter(room);
+  const beforeLayout = currentLayoutState();
   let moved = false;
   if (selectedStationId) {
     moved = agentWorld.commandMoveStation(selectedStationId, target);
@@ -1188,7 +1263,7 @@ function placeSelectionInRoom(roomId) {
   if (moved) {
     selectedRoomId = room.id;
     focusRoom(room);
-    saveLayoutState();
+    saveLayoutState(beforeLayout);
     updateHud();
   } else {
     setBootMessage(`Non riesco a trovare un tile libero in ${room.label}.`);
@@ -1439,7 +1514,7 @@ function rebuildLayoutVisuals() {
   updateHud();
 }
 
-function toggleSelectedRoomCell(tile) {
+function toggleSelectedRoomCell(tile, shouldExist = null) {
   if (!selectedRoomId) {
     selectedRoomId = roomLayout[0]?.id ?? null;
   }
@@ -1449,6 +1524,8 @@ function toggleSelectedRoomCell(tile) {
     return;
   }
   const removing = roomContainsTile(room, tile);
+  const add = shouldExist === null ? !removing : Boolean(shouldExist);
+  if (removing === add) return false;
   if (removing && agentWorld.isOccupiedTile(tile)) {
     setBootMessage("Non posso rimuovere una cella occupata da un agente.");
     return;
@@ -1457,7 +1534,8 @@ function toggleSelectedRoomCell(tile) {
     setBootMessage("Non posso rimuovere una cella occupata da un tavolo.");
     return;
   }
-  const result = toggleRoomCell(room.id, tile);
+  const beforeLayout = currentLayoutState();
+  const result = setRoomCell(room.id, tile, add);
   if (!result.changed) {
     const reason = result.reason === "occupied-by-room"
       ? `Cella gia usata da ${result.room?.label ?? "un'altra stanza"}.`
@@ -1468,17 +1546,21 @@ function toggleSelectedRoomCell(tile) {
           : result.reason === "room-disconnected"
             ? "Non posso spezzare una stanza in isole separate."
             : "Cella non valida per questa stanza.";
-    setBootMessage(reason);
-    return;
+    if (result.reason !== "unchanged") setBootMessage(reason);
+    return false;
   }
   selectedRoomId = room.id;
   rebuildLayoutVisuals();
-  saveLayoutState();
+  saveLayoutState(beforeLayout);
   setBootMessage(`${room.label}: cella ${result.added ? "aggiunta" : "rimossa"}.`);
+  return true;
 }
 
-function toggleDoorCell(tile) {
-  const removingOnlyPassage = isDoorTile(tile) && !roomForTile(tile);
+function toggleDoorCell(tile, shouldExist = null) {
+  const exists = isDoorTile(tile);
+  const add = shouldExist === null ? !exists : Boolean(shouldExist);
+  if (exists === add) return false;
+  const removingOnlyPassage = !add && exists && !roomForTile(tile);
   if (removingOnlyPassage && agentWorld.isOccupiedTile(tile)) {
     setBootMessage("Non posso rimuovere una porta/corridoio occupata da un agente.");
     return;
@@ -1487,15 +1569,75 @@ function toggleDoorCell(tile) {
     setBootMessage("Non posso rimuovere una porta/corridoio occupata da un tavolo.");
     return;
   }
-  const result = toggleDoorAt(tile);
+  const beforeLayout = currentLayoutState();
+  const result = setDoorAt(tile, add, { allowTemporaryDisconnect: Boolean(layoutStroke && !add) });
   if (!result.changed) {
-    setBootMessage("Cella porta non valida.");
-    return;
+    const reason = result.reason === "inside-room"
+      ? "Le porte e i corridoi devono stare fuori dalle celle della stanza."
+      : result.reason === "path-not-connected"
+        ? "Inizia il percorso da una cella adiacente a una stanza o a un corridoio esistente."
+        : result.reason === "path-disconnected"
+          ? "Non posso rimuovere questa cella: lascerebbe un tratto di corridoio scollegato."
+          : "Cella porta non valida.";
+    if (result.reason !== "unchanged") setBootMessage(reason);
+    return false;
   }
   selectedRoomId = roomForTile(tile)?.id ?? selectedRoomId;
   rebuildLayoutVisuals();
-  saveLayoutState();
+  saveLayoutState(beforeLayout);
   setBootMessage(`Porta/corridoio ${result.added ? "aggiunto" : "rimosso"}.`);
+  return true;
+}
+
+function applyLayoutStrokeTile(tile) {
+  if (!layoutStroke || !tile) return;
+  const key = tileKey(tile);
+  if (layoutStroke.visited.has(key)) return;
+  layoutStroke.visited.add(key);
+  const changed = layoutStroke.tool === "room"
+    ? toggleSelectedRoomCell(tile, layoutStroke.shouldExist)
+    : toggleDoorCell(tile, layoutStroke.shouldExist);
+  layoutStroke.changed ||= Boolean(changed);
+}
+
+function beginLayoutStroke(event) {
+  if (!layoutMode || (!roomDrawMode && !doorMode)) return false;
+  const hit = objectFromPointer(event);
+  const tile = hit?.object?.userData?.tile;
+  if (!tile) return false;
+  const tool = roomDrawMode ? "room" : "door";
+  const exists = tool === "room"
+    ? Boolean(selectedRoomId && roomContainsTile(roomLayout.find((room) => room.id === selectedRoomId), tile))
+    : isDoorTile(tile);
+  layoutStroke = {
+    tool,
+    shouldExist: !exists,
+    before: currentLayoutState(),
+    visited: new Set(),
+    changed: false,
+  };
+  applyLayoutStrokeTile(tile);
+  return true;
+}
+
+function finishLayoutStroke() {
+  if (!layoutStroke) return;
+  const stroke = layoutStroke;
+  layoutStroke = null;
+  let changed = stroke.changed;
+  if (stroke.tool === "door" && !stroke.shouldExist) {
+    const removedDisconnected = pruneDisconnectedDoorPaths();
+    if (removedDisconnected) {
+      rebuildLayoutVisuals();
+      setBootMessage(`Rimossi ${removedDisconnected} tile di corridoio rimasti scollegati.`);
+      changed = true;
+    }
+  }
+  if (changed) {
+    layoutHistory.record(stroke.before, currentLayoutState());
+    saveLayoutState();
+  }
+  updateLayoutHistoryControls();
 }
 
 function deleteSelectedRoom() {
@@ -1521,6 +1663,7 @@ function deleteSelectedRoom() {
 
   const roomIndex = roomLayout.findIndex((item) => item.id === room.id);
   const deletedKeys = new Set(roomCells(room).map(tileKey));
+  const beforeLayout = currentLayoutState();
   const result = removeRoomFromLayout(room.id);
   if (!result.changed) {
     setBootMessage(result.reason === "last-room" ? "Non posso rimuovere l'ultima stanza." : "Stanza non trovata.");
@@ -1529,7 +1672,7 @@ function deleteSelectedRoom() {
   setDoorLayout(doorLayout.filter((door) => !deletedKeys.has(tileKey(door))));
   selectedRoomId = roomLayout[Math.min(roomIndex, roomLayout.length - 1)]?.id ?? null;
   rebuildLayoutVisuals();
-  saveLayoutState();
+  saveLayoutState(beforeLayout);
   setBootMessage(`${room.label} rimossa.`);
 }
 
@@ -3097,6 +3240,12 @@ function showGameNotification({ title = "", subtitle = "", summary = "", tone = 
   if (!jobToastStack || !summary) {
     return;
   }
+  const notificationKey = String(key ?? "").trim();
+  if (notificationKey && gameNotificationKeys.has(notificationKey)) return;
+  if (notificationKey) gameNotificationKeys.add(notificationKey);
+  if (gameNotificationKeys.size > 500) {
+    while (gameNotificationKeys.size > 300) gameNotificationKeys.delete(gameNotificationKeys.values().next().value);
+  }
   const notice = document.createElement("article");
   notice.className = "job-toast job-toast--active";
   if (tone === "success") {
@@ -3104,8 +3253,8 @@ function showGameNotification({ title = "", subtitle = "", summary = "", tone = 
   } else if (tone === "danger") {
     notice.classList.add("job-toast--danger");
   }
-  if (key) {
-    notice.dataset.notificationKey = key;
+  if (notificationKey) {
+    notice.dataset.notificationKey = notificationKey;
   }
   notice.innerHTML = `
     <div class="job-toast__header">
@@ -3130,6 +3279,7 @@ function showGameNotification({ title = "", subtitle = "", summary = "", tone = 
   const dismiss = () => notice.remove();
   notice.querySelector("button")?.addEventListener("click", dismiss);
   jobToastStack.prepend(notice);
+  while (jobToastStack.children.length > 5) jobToastStack.lastElementChild?.remove();
   jobNotificationsButton?.classList.add("is-pulse");
   window.setTimeout(() => jobNotificationsButton?.classList.remove("is-pulse"), 900);
   window.setTimeout(dismiss, 9000);
@@ -3671,6 +3821,9 @@ function handleRuntimeEvent(event) {
     }
     for (const task of event.tasks ?? []) {
       cacheRuntimeTask(task);
+      if (["accepted", "running"].includes(task.state) && task.assigned_agent_id) {
+        agentWorld.assignAgentToWork(task.assigned_agent_id, task.id, task.title || "Working on task", network);
+      }
     }
     for (const historicEvent of (event.events ?? []).slice(-8)) {
       network.log(historicEvent.summary);
@@ -3798,6 +3951,12 @@ function handleRuntimeEvent(event) {
   } else if (event.type === "task.state.changed") {
     const task = event.data?.task;
     cacheRuntimeTask(task);
+    const taskAgentId = task?.assigned_agent_id || event.agent_id;
+    if (["accepted", "running"].includes(event.data?.to) && taskAgentId) {
+      agentWorld.assignAgentToWork(taskAgentId, task.id, task.title || task.description || "Working on task", network);
+    } else if (["completed", "failed", "cancelled"].includes(event.data?.to) && taskAgentId) {
+      agentWorld.releaseAgentFromWork(taskAgentId, task.id, network);
+    }
     renderTaskThreadList();
     if (task?.id === selectedTaskThreadId) {
       renderSelectedTaskThread();
@@ -3827,6 +3986,16 @@ function handleRuntimeEvent(event) {
       const active = event.type === "project.job.queued" || event.type === "project.job.started" || event.type === "project.job.alert";
       agent.runtime.status = active ? "executing" : event.type.endsWith("failed") ? "failed" : "idle";
       agent.runtime.load = active ? 0.82 : 0.08;
+    }
+    if (event.type === "project.job.started" && job?.agent_id) {
+      agentWorld.assignAgentToWork(
+        job.agent_id,
+        job.id,
+        `${projectActionLabelFor(job)} · ${projectNameFor(job)}`,
+        network,
+      );
+    } else if ((event.type === "project.job.completed" || event.type === "project.job.failed") && job?.agent_id) {
+      agentWorld.releaseAgentFromWork(job.agent_id, job.id, network);
     }
     syncProjectJobToast(job, event.type);
     if (event.type === "project.job.alert") {
@@ -4323,7 +4492,7 @@ async function openProjectGateway(options = {}) {
         ? "Memory proposals loaded."
         : "Select an action to run with the current agent.";
     projectDialog.showModal();
-    await refreshProjectJobHistory(true);
+    await refreshProjectJobHistory(false);
   } catch (error) {
     runtimeClient.logClient("error", error.message, { operation: "openProjectGateway", agentId: selectedAgentId });
     setBootMessage(error.message);
@@ -4633,6 +4802,30 @@ function formatReportDate(value) {
   return new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
 }
 
+function reportArticleKey(article) {
+  const itemId = String(article?.item_id || "").trim();
+  const link = String(article?.link || "").trim();
+  return itemId ? `item:${itemId}|${link}` : `link:${link}`;
+}
+
+function reportArticleCanSource(article) {
+  return Boolean(String(article?.link || "").trim() && (
+    String(article?.image_url || "").trim() || String(article?.archive_image_path || "").trim()
+  ));
+}
+
+function selectedReportArticles() {
+  const articles = Array.isArray(reportSnapshot?.articles) ? reportSnapshot.articles : [];
+  return articles.filter((article) => reportSelectedArticleKeys.has(reportArticleKey(article)) && reportArticleCanSource(article));
+}
+
+function updateReportSourcingSelectionControls() {
+  const count = selectedReportArticles().length;
+  if (reportSelectedCount) reportSelectedCount.textContent = `${count} selected`;
+  if (reportSourcingSelectedButton) reportSourcingSelectedButton.disabled = count === 0 || !runtimeClient.connected;
+  if (reportClearSelectionButton) reportClearSelectionButton.disabled = count === 0;
+}
+
 function renderReportArticles() {
   if (!reportArticles) return;
   const articles = Array.isArray(reportSnapshot?.articles) ? reportSnapshot.articles : [];
@@ -4658,10 +4851,14 @@ function renderReportArticles() {
   }
   if (!filtered.length) {
     reportArticles.innerHTML = '<div class="report-status">No articles match this filter.</div>';
+    updateReportSourcingSelectionControls();
     return;
   }
   reportArticles.innerHTML = filtered.map((article) => {
     const status = reportArticleStatus(article);
+    const key = reportArticleKey(article);
+    const selectable = reportArticleCanSource(article);
+    const selected = selectable && reportSelectedArticleKeys.has(key);
     const archivedImage = article.archive_image_path
       ? `/api/vinted/archive?path=${encodeURIComponent(article.archive_image_path)}`
       : "";
@@ -4681,17 +4878,20 @@ function renderReportArticles() {
       ? ` · ${formatReportNumber(article.favorite_count)} likes`
       : "";
     return `
-      <a class="report-article" href="${escapeHtml(article.link)}" target="_blank" rel="noopener noreferrer">
-        ${image}
-        <div class="report-article__body">
-          <div class="report-article__top">
-            <strong title="${escapeHtml(article.name)}">${escapeHtml(article.name)}</strong>
-            <span class="report-pill ${status === "active" ? "report-pill--active" : ""}">${status}</span>
+      <article class="report-article ${selected ? "report-article--selected" : ""}">
+        ${selectable ? `<label class="report-article__select" title="Select for visual sourcing"><input type="checkbox" data-report-article-select="${escapeHtml(key)}" ${selected ? "checked" : ""} aria-label="Select ${escapeHtml(article.name || "article")}" /></label>` : ""}
+        <a class="report-article__link" href="${escapeHtml(article.link)}" target="_blank" rel="noopener noreferrer">
+          ${image}
+          <div class="report-article__body">
+            <div class="report-article__top">
+              <strong title="${escapeHtml(article.name)}">${escapeHtml(article.name)}</strong>
+              <span class="report-pill ${status === "active" ? "report-pill--active" : ""}">${status}</span>
+            </div>
+            <p>${escapeHtml(article.price || "Price unavailable")}</p>
+            <small>${timing}${favorites}</small>
           </div>
-          <p>${escapeHtml(article.price || "Price unavailable")}</p>
-          <small>${timing}${favorites}</small>
-        </div>
-      </a>
+        </a>
+      </article>
     `;
   }).join("");
   reportArticles.querySelectorAll("img").forEach((image) => {
@@ -4707,6 +4907,46 @@ function renderReportArticles() {
       image.replaceWith(placeholder);
     }, { once: true });
   });
+  reportArticles.querySelectorAll("[data-report-article-select]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const key = checkbox.dataset.reportArticleSelect || "";
+      if (checkbox.checked) reportSelectedArticleKeys.add(key);
+      else reportSelectedArticleKeys.delete(key);
+      renderReportArticles();
+    });
+  });
+  updateReportSourcingSelectionControls();
+}
+
+async function startReportSourcingBatch() {
+  const articles = selectedReportArticles();
+  if (!articles.length) return;
+  const confirmed = window.confirm(`Start an isolated AliExpress visual search for ${articles.length} selected article${articles.length === 1 ? "" : "s"}?`);
+  if (!confirmed) return;
+  reportSourcingSelectedButton.disabled = true;
+  reportStatus.textContent = `Starting visual sourcing for ${articles.length} selected article${articles.length === 1 ? "" : "s"}…`;
+  try {
+    const job = await runtimeClient.createVintedReportSourcingBatch(articles.map((article) => ({
+      item_id: String(article.item_id || ""),
+      name: String(article.name || ""),
+      link: String(article.link || ""),
+      image_url: String(article.image_url || ""),
+      archive_image_path: String(article.archive_image_path || ""),
+    })));
+    syncProjectJobToast(job, "project.job.queued");
+    reportStatus.textContent = `Sourcing Agent queued for ${articles.length} selected article${articles.length === 1 ? "" : "s"}. Follow progress in Active jobs.`;
+    showGameNotification({
+      title: "Visual sourcing queued",
+      subtitle: `${articles.length} article${articles.length === 1 ? "" : "s"} assigned to Sourcing Agent`,
+      tone: "active",
+      key: `report-sourcing-${job.id}`,
+    });
+  } catch (error) {
+    reportStatus.textContent = `Could not start visual sourcing: ${error.message}`;
+    reportUiError("ui.vinted-reports.sourcing-batch", error, { phase: "create-sourcing-batch", selected_count: articles.length });
+  } finally {
+    updateReportSourcingSelectionControls();
+  }
 }
 
 function renderReportCompetitors() {
@@ -4855,6 +5095,10 @@ function renderReportOwnedProfiles() {
 
 function renderVintedReport(snapshot) {
   reportSnapshot = snapshot;
+  const eligible = new Set((Array.isArray(snapshot?.articles) ? snapshot.articles : [])
+    .filter(reportArticleCanSource)
+    .map(reportArticleKey));
+  reportSelectedArticleKeys = new Set([...reportSelectedArticleKeys].filter((key) => eligible.has(key)));
   const summary = snapshot?.summary ?? {};
   const metrics = [
     ["Analyzed articles", formatReportNumber(summary.total_items), "Current database"],
@@ -5335,8 +5579,6 @@ function setProjectPanel(panel) {
     pane.hidden = pane.dataset.projectPanel !== projectPanel;
   }
   if (projectPanel === "finished") {
-    unreadCompletedProjectJobs = 0;
-    renderJobNotificationBadge();
     void refreshProjectJobHistory(true);
   } else if (projectPanel === "memory") {
     void refreshWikiProposals();
@@ -5350,11 +5592,20 @@ function renderJobNotificationBadge() {
   if (!jobNotificationCount) {
     return;
   }
-  if (unreadCompletedProjectJobs > 0) {
+  const previousCount = unreadCompletedProjectJobs;
+  unreadCompletedProjectJobs = jobNotificationState.unreadIds.size;
+  const hasUnread = unreadCompletedProjectJobs > 0;
+  jobNotificationsButton?.setAttribute(
+    "aria-label",
+    hasUnread ? `Jobs and notifications, ${unreadCompletedProjectJobs} unread` : "Jobs and notifications"
+  );
+  if (hasUnread) {
     jobNotificationCount.hidden = false;
     jobNotificationCount.textContent = unreadCompletedProjectJobs > 99 ? "99+" : String(unreadCompletedProjectJobs);
-    jobNotificationsButton?.classList.add("is-pulse");
-    window.setTimeout(() => jobNotificationsButton?.classList.remove("is-pulse"), 900);
+    if (unreadCompletedProjectJobs > previousCount) {
+      jobNotificationsButton?.classList.add("is-pulse");
+      window.setTimeout(() => jobNotificationsButton?.classList.remove("is-pulse"), 900);
+    }
     return;
   }
   jobNotificationCount.hidden = true;
@@ -5362,19 +5613,12 @@ function renderJobNotificationBadge() {
 }
 
 function acknowledgeCompletedJobs(jobIds = []) {
-  for (const jobId of jobIds) {
-    seenCompletedProjectJobs.add(jobId);
-  }
-  unreadCompletedProjectJobs = 0;
+  jobNotificationState.acknowledge(jobIds);
   renderJobNotificationBadge();
 }
 
 function markCompletedJobUnread(jobId) {
-  if (!jobId || seenCompletedProjectJobs.has(jobId)) {
-    return;
-  }
-  seenCompletedProjectJobs.add(jobId);
-  unreadCompletedProjectJobs += 1;
+  jobNotificationState.markUnread(jobId);
   renderJobNotificationBadge();
 }
 
@@ -5496,8 +5740,10 @@ async function refreshProjectJobHistory(markSeen = false) {
     const jobs = await runtimeClient.listProjectJobs();
     const filtered = projectJobsForHistory(jobs);
     renderProjectJobHistory(filtered);
+    jobNotificationState.observe(jobs);
+    renderJobNotificationBadge();
     if (markSeen) {
-      acknowledgeCompletedJobs(filtered.map((job) => job.id));
+      acknowledgeCompletedJobs(filtered.filter((job) => job.state === "completed" || job.state === "failed").map((job) => job.id));
     }
   } catch (error) {
     runtimeClient.logClient("error", error.message, { operation: "refreshProjectJobHistory" });
@@ -5954,7 +6200,7 @@ async function connectRuntime() {
       // best effort
     }
     await refreshProjectJobToasts();
-    await refreshProjectJobHistory(true);
+    await refreshProjectJobHistory(false);
   } catch (error) {
     setRuntimeConnection(false);
     setBootMessage(error.message);
@@ -6370,6 +6616,7 @@ function selectFromPointer(event) {
       selectedRoomId = roomForTile(tile)?.id ?? selectedRoomId;
       if (selectedStationId) {
         const placingPendingStation = pendingStationPlacementId === selectedStationId;
+        const beforeLayout = currentLayoutState();
         const moved = agentWorld.commandMoveStation(selectedStationId, tile);
         if (moved) {
           moveStationVisual(selectedStationId);
@@ -6377,7 +6624,7 @@ function selectFromPointer(event) {
             pendingStationPlacementId = null;
             assignLinkedAgentToStation(selectedStationId);
           }
-          saveLayoutState();
+          saveLayoutState(beforeLayout);
           setBootMessage(
             placingPendingStation
               ? `${agentWorld.getStation(selectedStationId)?.label ?? "Workstation"} piazzata e collegata.`
@@ -6387,10 +6634,11 @@ function selectFromPointer(event) {
           setBootMessage("Quel tile non e disponibile per il tavolo selezionato.");
         }
       } else if (selectedAgentId) {
+        const beforeLayout = currentLayoutState();
         const moved = agentWorld.commandPlaceAgent(selectedAgentId, tile, "layout move");
         if (moved) {
           setAutoAgents(false);
-          saveLayoutState();
+          saveLayoutState(beforeLayout);
           setBootMessage(`${network.getAgent(selectedAgentId)?.label ?? "Agente"} spostato.`);
         } else {
           setBootMessage("Quel tile non e disponibile per l'agente selezionato.");
@@ -6428,10 +6676,11 @@ function selectFromPointer(event) {
     selectedStationId = null;
     selectedRoomId = roomForTile(tile)?.id ?? selectedRoomId;
     closeQuickChat();
+    const beforeLayout = currentLayoutState();
     const moved = agentWorld.commandMoveAgent(selectedAgentId, tile, "manual move");
     if (moved) {
       setAutoAgents(false);
-      saveLayoutState();
+      saveLayoutState(beforeLayout);
     }
   }
   updateHud();
@@ -6456,6 +6705,7 @@ canvas.addEventListener("pointerdown", (event) => {
   pointerState.dragging = true;
   pointerState.panning = false;
   canvas.setPointerCapture(event.pointerId);
+  pointerState.layoutStroke = beginLayoutStroke(event);
 });
 
 canvas.addEventListener("pointermove", (event) => {
@@ -6465,6 +6715,13 @@ canvas.addEventListener("pointermove", (event) => {
   const dx = event.clientX - pointerState.x;
   const dy = event.clientY - pointerState.y;
   const total = Math.hypot(event.clientX - pointerState.startX, event.clientY - pointerState.startY);
+  if (pointerState.layoutStroke) {
+    const hit = objectFromPointer(event);
+    if (hit?.object?.userData?.tile) applyLayoutStrokeTile(hit.object.userData.tile);
+    pointerState.x = event.clientX;
+    pointerState.y = event.clientY;
+    return;
+  }
   if (total > 5) {
     pointerState.panning = true;
   }
@@ -6476,9 +6733,19 @@ canvas.addEventListener("pointermove", (event) => {
 });
 
 canvas.addEventListener("pointerup", (event) => {
-  if (!pointerState.panning) {
+  if (pointerState.layoutStroke) {
+    finishLayoutStroke();
+  } else if (!pointerState.panning) {
     selectFromPointer(event);
   }
+  pointerState.layoutStroke = false;
+  pointerState.dragging = false;
+  pointerState.panning = false;
+});
+
+canvas.addEventListener("pointercancel", () => {
+  finishLayoutStroke();
+  pointerState.layoutStroke = false;
   pointerState.dragging = false;
   pointerState.panning = false;
 });
@@ -6491,6 +6758,19 @@ canvas.addEventListener("wheel", (event) => {
 
 window.addEventListener("keydown", (event) => {
   const editing = event.target instanceof HTMLElement && event.target.matches("input, textarea, select");
+  const undoShortcut = (event.metaKey || event.ctrlKey) && event.code === "KeyZ" && !event.shiftKey;
+  const redoShortcut = (event.metaKey && event.shiftKey && event.code === "KeyZ")
+    || (event.ctrlKey && event.code === "KeyY");
+  if (layoutMode && !editing && undoShortcut) {
+    event.preventDefault();
+    undoLayoutEdit();
+    return;
+  }
+  if (layoutMode && !editing && redoShortcut) {
+    event.preventDefault();
+    redoLayoutEdit();
+    return;
+  }
   if (editing && event.code !== "Escape") {
     return;
   }
@@ -6528,6 +6808,8 @@ runToggle.addEventListener("click", () => setRunning(!running));
 autoToggle.addEventListener("click", () => setAutoAgents(!autoAgents));
 layoutToggle?.addEventListener("click", () => setLayoutMode(!layoutMode));
 editorCloseButton?.addEventListener("click", () => setLayoutMode(false));
+undoLayoutButton?.addEventListener("click", undoLayoutEdit);
+redoLayoutButton?.addEventListener("click", redoLayoutEdit);
 roomDrawToggle?.addEventListener("click", () => setRoomDrawMode(!roomDrawMode));
 doorToggle?.addEventListener("click", () => setDoorMode(!doorMode));
 addRoomButton?.addEventListener("click", addLayoutRoom);
@@ -6548,6 +6830,13 @@ reportPeriod?.addEventListener("change", () => {
 reportSaleTime?.addEventListener("change", () => {
   reportSaleTimeFilter = reportSaleTime.value || "all";
   renderReportArticles();
+});
+reportClearSelectionButton?.addEventListener("click", () => {
+  reportSelectedArticleKeys.clear();
+  renderReportArticles();
+});
+reportSourcingSelectedButton?.addEventListener("click", () => {
+  void startReportSourcingBatch();
 });
 reportFilterButtons.forEach((button) => {
   button.addEventListener("click", () => {
@@ -7282,5 +7571,7 @@ setSpeed(1);
 setAutoAgents(true);
 setBootMessage("");
 window.__agentLabBooted = true;
+renderJobNotificationBadge();
+updateLayoutHistoryControls();
 connectRuntime();
 requestAnimationFrame(animate);

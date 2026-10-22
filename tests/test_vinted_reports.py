@@ -14,6 +14,45 @@ from agent_runtime.vinted_reports import (
 
 
 class VintedReportsTests(unittest.TestCase):
+    def test_owned_profile_active_count_excludes_items_checked_as_sold(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            db_path = root / "scraper.db"
+            with sqlite3.connect(db_path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE vinted_profile_snapshots(
+                        id INTEGER PRIMARY KEY, member_id TEXT, profile_url TEXT,
+                        checked_at TEXT, item_count INTEGER, new_count INTEGER,
+                        gone_count INTEGER, still_count INTEGER
+                    );
+                    CREATE TABLE vinted_profile_snapshot_items(
+                        id INTEGER PRIMARY KEY, snapshot_id INTEGER, member_id TEXT,
+                        profile_url TEXT, item_link TEXT, item_id TEXT, item_name TEXT,
+                        price_text TEXT, image_url TEXT, status TEXT, present INTEGER,
+                        snapshot_json TEXT
+                    );
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO vinted_profile_snapshots VALUES (1, '123', 'https://www.vinted.it/member/123', '2026-10-21T10:00:00', 1, 0, 0, 1)"
+                )
+                connection.executemany(
+                    "INSERT INTO vinted_profile_snapshot_items VALUES (?, 1, '123', 'https://www.vinted.it/member/123', ?, ?, ?, '', '', ?, ?, ?) ",
+                    [
+                        (1, "https://www.vinted.it/items/1", "1", "Sold bracelet", "sold", 0,
+                         json.dumps({"profile_sold_at": "2026-10-21T10:00:00", "profile_sold_after_seconds": 3600})),
+                        (2, "https://www.vinted.it/items/2", "2", "Active bracelet", "still_active", 1, "{}"),
+                    ],
+                )
+            save_owned_profile(root, profile_url="https://www.vinted.it/member/123", db_path=db_path)
+
+            report = build_vinted_report(root, db_path=db_path)
+            profile = report["owned_profiles"][0]
+
+        self.assertEqual(1, profile["active_items_count"])
+        self.assertEqual(1, profile["sold_items_count"])
+
     def test_report_aggregates_metrics_series_and_article_cards(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -142,6 +181,26 @@ class VintedReportsTests(unittest.TestCase):
         self.assertTrue(html_path.name.startswith("marketplace-report-"))
         self.assertTrue(removed["history_preserved"])
         self.assertFalse(any(profile["member_id"] == "10" for profile in after_removal["owned_profiles"]))
+
+    def test_report_supports_legacy_trend_schema_without_query_kind(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            db_path = root / "scraper.db"
+            with sqlite3.connect(db_path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE vinted_trend_queries(
+                        query_text TEXT, brand TEXT, status TEXT, enabled INTEGER,
+                        mature_count INTEGER, sold_count INTEGER, sell_through_percent REAL,
+                        confidence_lower_percent REAL, scans_count INTEGER, empty_streak INTEGER,
+                        error_streak INTEGER, last_scan_at TEXT, next_review_at TEXT, last_error TEXT
+                    );
+                    INSERT INTO vinted_trend_queries VALUES
+                        ('charm', 'Pandora', 'learning', 1, 2, 0, 0, 0, 1, 0, 0, '', '', '');
+                    """
+                )
+            report = build_vinted_report(root, db_path=db_path)
+        self.assertEqual("brand_product", report["trend_queries"][0]["query_kind"])
 
 
 if __name__ == "__main__":
