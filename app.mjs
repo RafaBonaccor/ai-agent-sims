@@ -48,6 +48,14 @@ const eventLog = document.querySelector("#event-log");
 const metrics = document.querySelector("#metrics");
 const stationList = document.querySelector("#station-list");
 const roomList = document.querySelector("#room-list");
+const roomDetails = document.querySelector("#room-details");
+const selectedRoomName = document.querySelector("#selected-room-name");
+const selectedRoomMetrics = document.querySelector("#selected-room-metrics");
+const selectedRoomStations = document.querySelector("#selected-room-stations");
+const selectedRoomAgents = document.querySelector("#selected-room-agents");
+const activeWorkCount = document.querySelector("#active-work-count");
+const activeWorkList = document.querySelector("#active-work-list");
+const activeWorkAllButton = document.querySelector("#active-work-all");
 const runtimeStatus = document.querySelector("#runtime-status");
 const addAgentButton = document.querySelector("#add-agent");
 const layoutToggle = document.querySelector("#layout-toggle");
@@ -68,6 +76,10 @@ const workstationAgentCount = document.querySelector("#workstation-agent-count")
 const addWorkstationButton = document.querySelector("#add-workstation");
 const resetLayoutButton = document.querySelector("#reset-layout");
 const themeToggle = document.querySelector("#theme-toggle");
+const atmosphereToggle = document.querySelector("#atmosphere-toggle");
+const worldClock = document.querySelector("#world-clock");
+const worldClockTime = document.querySelector("#world-clock-time");
+const worldClockDate = document.querySelector("#world-clock-date");
 const systemSettingsButton = document.querySelector("#system-settings");
 const reportsDashboardButton = document.querySelector("#reports-dashboard");
 const reportDialog = document.querySelector("#report-dialog");
@@ -90,6 +102,10 @@ const reportPanels = Array.from(document.querySelectorAll("[data-report-panel]")
 const reportCompetitors = document.querySelector("#report-competitors");
 const reportCompetitorCount = document.querySelector("#report-competitor-count");
 const reportCompetitorStatus = document.querySelector("#report-competitor-status");
+const reportKeywords = document.querySelector("#report-keywords");
+const reportKeywordCount = document.querySelector("#report-keyword-count");
+const reportKeywordSearch = document.querySelector("#report-keyword-search");
+const reportKeywordSummary = document.querySelector("#report-keyword-summary");
 const reportOwnedProfiles = document.querySelector("#report-owned-profiles");
 const reportOwnedCount = document.querySelector("#report-owned-count");
 const reportOwnedForm = document.querySelector("#report-owned-form");
@@ -216,6 +232,55 @@ function loadStoredLayout() {
   }
 }
 
+function migrateStoredDefaultMainRoom(layout) {
+  const rooms = Array.isArray(layout?.rooms) ? layout.rooms : [];
+  const main = rooms.find((room) => room?.id === "main");
+  if (!main) return layout;
+  const isPreviousDefault = Number(main.col) === 5 && Number(main.row) === 4
+    && Number(main.columns) === 14 && Number(main.rows) === 10;
+  if (!isPreviousDefault) return layout;
+
+  const previousDefault = new Set();
+  for (let row = 4; row < 14; row += 1) {
+    for (let col = 5; col < 19; col += 1) previousDefault.add(`${col},${row}`);
+  }
+  const cells = roomCells(main);
+  if (cells.length !== previousDefault.size || cells.some((tile) => !previousDefault.has(`${tile.col},${tile.row}`))) {
+    return layout;
+  }
+  const expandedCells = [...cells];
+  const occupied = new Set();
+  for (const room of rooms) {
+    if (room.id === "main") continue;
+    for (const tile of roomCells(room)) occupied.add(`${tile.col},${tile.row}`);
+  }
+  for (const tile of layout.doors ?? []) occupied.add(`${Number(tile.col)},${Number(tile.row)}`);
+  const included = new Set(expandedCells.map((tile) => `${tile.col},${tile.row}`));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let row = 2; row < 16; row += 1) {
+      for (let col = 3; col < 21; col += 1) {
+        const key = `${col},${row}`;
+        if (included.has(key) || occupied.has(key)) continue;
+        const touchesRoom = [
+          `${col - 1},${row}`, `${col + 1},${row}`,
+          `${col},${row - 1}`, `${col},${row + 1}`,
+        ].some((neighbor) => included.has(neighbor));
+        if (!touchesRoom) continue;
+        included.add(key);
+        expandedCells.push({ col, row });
+        changed = true;
+      }
+    }
+  }
+  if (expandedCells.length === cells.length) return layout;
+  return {
+    ...layout,
+    rooms: rooms.map((room) => room.id === "main" ? { ...main, cells: expandedCells } : room),
+  };
+}
+
 function tileFromStored(value) {
   if (!value || !Number.isFinite(Number(value.col)) || !Number.isFinite(Number(value.row))) {
     return null;
@@ -242,7 +307,15 @@ function applyStoredLayoutBeforeWorld(layout) {
   }
 }
 
-const storedLayout = loadStoredLayout();
+const rawStoredLayout = loadStoredLayout();
+const storedLayout = migrateStoredDefaultMainRoom(rawStoredLayout);
+if (storedLayout !== rawStoredLayout) {
+  try {
+    window.localStorage?.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(storedLayout));
+  } catch (_error) {
+    // The expanded in-memory layout still applies when storage is unavailable.
+  }
+}
 applyStoredLayoutBeforeWorld(storedLayout);
 
 const network = new AgentNetwork(defaultScenario);
@@ -256,6 +329,8 @@ const agentReplies = new Map();
 const chatMessageIds = new Set();
 const projectJobToasts = new Map();
 const projectJobsCache = new Map();
+const activeProjectJobs = new Map();
+const activityJobCache = new Map();
 const layoutHistory = new LayoutHistory(50);
 const jobNotificationState = new JobNotificationState();
 const gameNotificationKeys = new Set();
@@ -332,6 +407,53 @@ const PERFORMANCE = {
 };
 
 const THEME_STORAGE_KEY = "agent-protocol-lab-theme-v1";
+const ATMOSPHERE_STORAGE_KEY = "agent-protocol-lab-atmosphere-v1";
+const ATMOSPHERES = {
+  daylight: {
+    label: "Daylight",
+    sky: 0xdaf3ff,
+    ground: 0x514d57,
+    hemisphereIntensity: 1.65,
+    key: 0xfff1d2,
+    keyIntensity: 3.2,
+    fill: 0x9bc9ff,
+    fillIntensity: 0.72,
+    cyan: 0x86edff,
+    cyanIntensity: 5.5,
+    violet: 0xc4adff,
+    violetIntensity: 4.0,
+  },
+  sunset: {
+    label: "Sunset",
+    sky: 0xffc59d,
+    ground: 0x433044,
+    hemisphereIntensity: 1.35,
+    key: 0xff9a62,
+    keyIntensity: 3.4,
+    fill: 0xb28cff,
+    fillIntensity: 0.95,
+    cyan: 0xffbd82,
+    cyanIntensity: 5.2,
+    violet: 0xe879b6,
+    violetIntensity: 6.0,
+  },
+  night: {
+    label: "Night",
+    sky: 0x657bbd,
+    ground: 0x080d20,
+    hemisphereIntensity: 0.82,
+    key: 0x9bb8ff,
+    keyIntensity: 2.05,
+    fill: 0x7566dc,
+    fillIntensity: 1.5,
+    cyan: 0x47e5ff,
+    cyanIntensity: 8.5,
+    violet: 0x9674ff,
+    violetIntensity: 8.0,
+  },
+};
+const ATMOSPHERE_ORDER = Object.keys(ATMOSPHERES);
+const ATMOSPHERE_MODES = ["auto", ...ATMOSPHERE_ORDER];
 const WORLD_THEMES = {
   dark: {
     label: "Dark",
@@ -398,7 +520,21 @@ function loadStoredTheme() {
   }
 }
 
+function loadStoredAtmosphere() {
+  try {
+    const stored = window.localStorage?.getItem(ATMOSPHERE_STORAGE_KEY);
+    return stored === "auto" || Object.hasOwn(ATMOSPHERES, stored) ? stored : "auto";
+  } catch (_error) {
+    return "auto";
+  }
+}
+
 let currentTheme = loadStoredTheme();
+let currentAtmosphereMode = loadStoredAtmosphere();
+let currentAtmosphere = currentAtmosphereMode === "auto"
+  ? atmosphereForLocalTime(new Date())
+  : currentAtmosphereMode;
+let worldLights = null;
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -537,6 +673,7 @@ let pendingAgentQuickChat = null;
 const selectableObjects = [];
 const agentVisuals = new Map();
 const stationVisuals = new Map();
+const ambientVisuals = [];
 const relationVisuals = new Map();
 const messageVisuals = new Map();
 const roomVisuals = new Map();
@@ -676,6 +813,81 @@ function applyTheme(theme, options = {}) {
   }
 }
 
+function atmosphereForLocalTime(date) {
+  const hour = date.getHours();
+  if (hour >= 7 && hour < 17) return "daylight";
+  if ((hour >= 6 && hour < 7) || (hour >= 17 && hour < 20)) return "sunset";
+  return "night";
+}
+
+function applyAtmosphere(mode, options = {}) {
+  currentAtmosphereMode = mode === "auto" || Object.hasOwn(ATMOSPHERES, mode) ? mode : "auto";
+  currentAtmosphere = currentAtmosphereMode === "auto"
+    ? atmosphereForLocalTime(new Date())
+    : currentAtmosphereMode;
+  const preset = ATMOSPHERES[currentAtmosphere];
+  if (worldLights) {
+    worldLights.hemisphere.color.setHex(preset.sky);
+    worldLights.hemisphere.groundColor.setHex(preset.ground);
+    worldLights.hemisphere.intensity = preset.hemisphereIntensity;
+    worldLights.key.color.setHex(preset.key);
+    worldLights.key.intensity = preset.keyIntensity;
+    worldLights.fill.color.setHex(preset.fill);
+    worldLights.fill.intensity = preset.fillIntensity;
+    worldLights.cyanGlow.color.setHex(preset.cyan);
+    worldLights.cyanGlow.intensity = preset.cyanIntensity;
+    worldLights.violetGlow.color.setHex(preset.violet);
+    worldLights.violetGlow.intensity = preset.violetIntensity;
+  }
+  if (atmosphereToggle) {
+    atmosphereToggle.textContent = currentAtmosphereMode === "auto" ? "Auto" : preset.label;
+    atmosphereToggle.setAttribute("aria-label", `Ambient lighting: ${currentAtmosphereMode === "auto" ? `automatic, ${preset.label}` : preset.label}. Click to change`);
+    atmosphereToggle.title = currentAtmosphereMode === "auto"
+      ? `Automatic lighting follows this computer's local time · currently ${preset.label}`
+      : `Manual ambient lighting: ${preset.label} · click to cycle`;
+    atmosphereToggle.dataset.atmosphere = currentAtmosphereMode;
+  }
+  if (options.persist !== false) {
+    try {
+      window.localStorage?.setItem(ATMOSPHERE_STORAGE_KEY, currentAtmosphereMode);
+    } catch (_error) {
+      // Ignore storage failures; the selected lighting remains active for this session.
+    }
+  }
+}
+
+function cycleAtmosphere() {
+  const index = ATMOSPHERE_MODES.indexOf(currentAtmosphereMode);
+  applyAtmosphere(ATMOSPHERE_MODES[(index + 1) % ATMOSPHERE_MODES.length]);
+}
+
+function updateWorldClock() {
+  const now = new Date();
+  if (worldClockTime) {
+    worldClockTime.textContent = new Intl.DateTimeFormat(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).format(now);
+  }
+  if (worldClockDate) {
+    worldClockDate.textContent = new Intl.DateTimeFormat(undefined, {
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+    }).format(now);
+  }
+  if (worldClock) {
+    worldClock.dateTime = now.toISOString();
+    worldClock.title = `Ora locale del computer · ${Intl.DateTimeFormat().resolvedOptions().timeZone || "timezone locale"}`;
+    worldClock.setAttribute("aria-label", `Ora locale del computer: ${worldClockTime?.textContent ?? ""} ${worldClockDate?.textContent ?? ""}`);
+  }
+  if (currentAtmosphereMode === "auto" && atmosphereForLocalTime(now) !== currentAtmosphere) {
+    applyAtmosphere("auto", { persist: false });
+  }
+}
+
 function currentLayoutState() {
   const agents = {};
   for (const agent of network.agents) {
@@ -731,6 +943,7 @@ function updateLayoutHistoryControls() {
 
 function rebuildStationVisuals() {
   for (const [stationId, group] of stationVisuals) {
+    discardAmbientVisuals(group);
     scene.remove(group);
     stationVisuals.delete(stationId);
   }
@@ -1110,6 +1323,87 @@ function makeCanvasTexture(draw, width = 512, height = 128) {
   return texture;
 }
 
+const workstationUiTexture = makeCanvasTexture((context, width, height) => {
+  context.fillStyle = "#071521";
+  context.fillRect(0, 0, width, height);
+  context.fillStyle = "#142c3b";
+  context.fillRect(0, 0, width, 22);
+  context.fillStyle = "#67e8f9";
+  context.fillRect(12, 9, 24, 4);
+  context.fillStyle = "#254354";
+  context.fillRect(45, 9, 62, 4);
+  context.strokeStyle = "rgba(103, 232, 249, 0.18)";
+  context.lineWidth = 1;
+  for (let x = 20; x < width; x += 32) {
+    context.beginPath(); context.moveTo(x, 34); context.lineTo(x, height - 12); context.stroke();
+  }
+  for (let y = 40; y < height; y += 24) {
+    context.beginPath(); context.moveTo(10, y); context.lineTo(width - 10, y); context.stroke();
+  }
+  const bars = [0.3, 0.55, 0.42, 0.78, 0.62, 0.92, 0.68];
+  bars.forEach((level, index) => {
+    context.fillStyle = index === 5 ? "#a78bfa" : "#38bdf8";
+    context.globalAlpha = 0.64;
+    context.fillRect(28 + index * 29, height - 18 - level * 58, 13, level * 58);
+  });
+  context.globalAlpha = 1;
+  context.fillStyle = "#8da8bb";
+  context.fillRect(width - 72, 34, 56, 5);
+  context.fillRect(width - 72, 44, 38, 4);
+}, 256, 128);
+workstationUiTexture.colorSpace = THREE.SRGBColorSpace;
+const workstationUiMaterial = new THREE.MeshBasicMaterial({
+  map: workstationUiTexture,
+  side: THREE.DoubleSide,
+  toneMapped: false,
+});
+const workstationScanMaterial = new THREE.MeshBasicMaterial({
+  color: 0x8bf5ff,
+  transparent: true,
+  opacity: 0.58,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+  toneMapped: false,
+});
+
+function addWorkstationScreen(parent, width, height, position, options = {}) {
+  const display = new THREE.Group();
+  display.position.set(position.x ?? 0, position.y ?? 0, position.z ?? 0);
+  display.rotation.y = options.rotationY ?? 0;
+  display.rotation.x = options.rotationX ?? 0;
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(width, height), workstationUiMaterial);
+  face.position.z = 0.002;
+  display.add(face);
+  const scan = new THREE.Mesh(new THREE.PlaneGeometry(width * 0.92, Math.max(0.012, height * 0.025)), workstationScanMaterial);
+  scan.position.z = 0.006;
+  scan.userData.screenSweep = {
+    minY: -height * 0.43,
+    maxY: height * 0.43,
+    speed: options.speed ?? 0.37,
+    phase: options.phase ?? ((position.x ?? 0) * 0.31 + (position.y ?? 0) * 0.17),
+  };
+  display.add(scan);
+  parent.add(display);
+  return display;
+}
+
+function addWorkstationKeyboard(parent, x, y, z, width = 0.62) {
+  const keyboard = new THREE.Group();
+  keyboard.position.set(x, y, z);
+  const base = new THREE.Mesh(new THREE.BoxGeometry(width, 0.035, 0.22), colorMaterial(0x152331, { roughness: 0.5, metalness: 0.22 }));
+  keyboard.add(base);
+  const keyMaterial = colorMaterial(0x5ecfe4, { emissive: 0x16475b, roughness: 0.38, metalness: 0.18 });
+  for (let row = 0; row < 2; row += 1) {
+    for (let column = 0; column < 7; column += 1) {
+      const key = new THREE.Mesh(new THREE.BoxGeometry(width * 0.085, 0.012, 0.055), keyMaterial);
+      key.position.set(-width * 0.39 + column * width * 0.13, 0.024, -0.05 + row * 0.075);
+      keyboard.add(key);
+    }
+  }
+  parent.add(keyboard);
+  return keyboard;
+}
+
 function drawRoundedRect(labelCtx, x, y, width, height, radius) {
   labelCtx.beginPath();
   if (typeof labelCtx.roundRect === "function") {
@@ -1237,6 +1531,16 @@ function agentsInRoom(room) {
     const state = agentWorld.getAgentState(agent.id);
     return roomContainsTile(room, state?.tile);
   });
+}
+
+function roomAgentStatus(agent, state) {
+  const status = String(agent?.runtime?.status || "").toLowerCase();
+  if (/failed|error|blocked|unauthor|missing/.test(status)) return "Needs help";
+  if (/waiting|queued|pending|login|authenticat/.test(status)) return "Waiting";
+  if (state?.mode === "walking") return "Moving";
+  if (state?.activeWorkIds?.size || /executing|working|running/.test(status)) return "Working";
+  if (/completed|succeeded|success/.test(status)) return "Done";
+  return "Idle";
 }
 
 function placeSelectionInRoom(roomId) {
@@ -1394,6 +1698,7 @@ function createRoomVisual(room) {
     );
     rugRing.rotation.x = Math.PI / 2;
     rugRing.position.set(0, 0.065, -3.75);
+    ambientVisuals.push({ mesh: rugRing, speed: 1.7, phase: 0.4, amplitude: 0.035, opacity: 0.6 });
     group.add(rugRing);
   }
 
@@ -1488,8 +1793,17 @@ function buildEditorGrid() {
   }
 }
 
+function discardAmbientVisuals(group) {
+  const discarded = new Set();
+  group.traverse((child) => discarded.add(child));
+  for (let index = ambientVisuals.length - 1; index >= 0; index -= 1) {
+    if (discarded.has(ambientVisuals[index].mesh)) ambientVisuals.splice(index, 1);
+  }
+}
+
 function clearLayoutVisuals() {
   for (const group of roomVisuals.values()) {
+    discardAmbientVisuals(group);
     scene.remove(group);
   }
   roomVisuals.clear();
@@ -1677,7 +1991,8 @@ function deleteSelectedRoom() {
 }
 
 function buildLights() {
-  scene.add(new THREE.HemisphereLight(0xbfe9ff, 0x070b14, 1.25));
+  const hemisphere = new THREE.HemisphereLight(0xbfe9ff, 0x070b14, 1.25);
+  scene.add(hemisphere);
 
   const key = new THREE.DirectionalLight(0xddeeff, 2.8);
   key.position.set(5, 9, 6);
@@ -1700,6 +2015,8 @@ function buildLights() {
   const violetGlow = new THREE.PointLight(0x9b87f5, 8, 10, 2);
   violetGlow.position.set(3.8, 2.5, -2.8);
   scene.add(violetGlow);
+  worldLights = { hemisphere, key, fill, cyanGlow, violetGlow };
+  applyAtmosphere(currentAtmosphereMode, { persist: false });
 }
 
 function createStationProp(station) {
@@ -1744,7 +2061,18 @@ function createStationProp(station) {
   );
   baseRing.rotation.x = Math.PI / 2;
   baseRing.position.y = 0.085;
+  baseRing.userData.phase = station.position.x * 0.8 + station.position.z * 0.6;
+  ambientVisuals.push({ mesh: baseRing, speed: 2.2, phase: baseRing.userData.phase, amplitude: 0.028, opacity: 0.72 });
   group.add(baseRing);
+
+  const statusLed = addMesh(group, new THREE.SphereGeometry(0.07, 12, 10), new THREE.MeshStandardMaterial({
+    color: 0x64748b,
+    emissive: 0x64748b,
+    emissiveIntensity: 0.45,
+    roughness: 0.28,
+    metalness: 0.08,
+  }), { x: 0.62, y: 0.14, z: 0.48 }, null, false);
+  group.userData.stationStatusLed = statusLed;
 
   if (stationKind === "hub") {
     addMesh(group, new THREE.CylinderGeometry(0.76, 0.9, 0.42, 8), darkMaterial, { y: 0.26 });
@@ -1756,6 +2084,7 @@ function createStationProp(station) {
         { x: Math.cos(i * Math.PI * 0.5) * 0.72, y: 0.72, z: Math.sin(i * Math.PI * 0.5) * 0.72 }
       );
       monitor.lookAt(0, 0.72, 0);
+      addWorkstationScreen(monitor, 0.44, 0.26, { x: 0, y: 0, z: 0.034 }, { phase: i * 0.19 });
     }
   } else if (stationKind === "planning") {
     addMesh(group, new THREE.BoxGeometry(1.7, 0.12, 0.55), darkMaterial, { y: 0.38 });
@@ -1764,6 +2093,7 @@ function createStationProp(station) {
       z: -0.35,
     });
     board.rotation.x = -0.08;
+    addWorkstationScreen(group, 1.62, 0.82, { y: 1.08, z: -0.295 }, { rotationX: -0.08, phase: 0.12 });
     for (let i = 0; i < 5; i += 1) {
       addMesh(group, new THREE.BoxGeometry(0.18, 0.1, 0.035), lightMaterial, {
         x: -0.68 + i * 0.34,
@@ -1773,8 +2103,10 @@ function createStationProp(station) {
     }
   } else if (stationKind === "research") {
     addMesh(group, new THREE.BoxGeometry(1.6, 0.16, 0.72), darkMaterial, { y: 0.46 });
-    addMesh(group, new THREE.BoxGeometry(0.86, 0.56, 0.08), lightMaterial, { y: 0.94, z: -0.22 });
+    addMesh(group, new THREE.BoxGeometry(0.9, 0.62, 0.1), darkMaterial, { y: 0.94, z: -0.22 });
+    addWorkstationScreen(group, 0.76, 0.46, { y: 0.94, z: -0.164 }, { phase: 0.31 });
     addMesh(group, new THREE.BoxGeometry(0.9, 0.06, 0.34), stationMaterial, { y: 0.58, z: 0.24 });
+    addWorkstationKeyboard(group, 0, 0.565, 0.18, 0.64);
   } else if (stationKind === "build") {
     addMesh(group, new THREE.BoxGeometry(1.76, 0.32, 0.82), darkMaterial, { y: 0.34 });
     for (let i = 0; i < 4; i += 1) {
@@ -1792,6 +2124,8 @@ function createStationProp(station) {
     addMesh(group, new THREE.CylinderGeometry(0.48, 0.58, 1.35, 20), sharedMaterials.glass, { y: 0.78 });
     const core = addMesh(group, new THREE.IcosahedronGeometry(0.42, 1), lightMaterial, { y: 0.84 });
     core.userData.spin = 1.2;
+    core.userData.baseY = 0.84;
+    core.userData.phase = station.position.x;
   } else if (stationKind === "marketplace") {
     addMesh(group, new THREE.BoxGeometry(1.75, 0.18, 0.78), darkMaterial, { y: 0.43 });
     for (let index = 0; index < 3; index += 1) {
@@ -1801,7 +2135,13 @@ function createStationProp(station) {
         z: -0.2,
       });
       screen.rotation.x = -0.06;
+      addWorkstationScreen(group, 0.43, 0.32, {
+        x: -0.58 + index * 0.58,
+        y: 0.9,
+        z: -0.165,
+      }, { rotationX: -0.06, phase: index * 0.23 });
     }
+    addWorkstationKeyboard(group, 0.28, 0.535, 0.25, 0.58);
     addMesh(group, new THREE.BoxGeometry(0.42, 0.28, 0.42), stationMaterial, { x: -0.55, y: 0.24, z: 0.58 });
     addMesh(group, new THREE.BoxGeometry(0.34, 0.22, 0.34), stationMaterial, { x: -0.08, y: 0.2, z: 0.62 });
   } else {
@@ -1827,12 +2167,14 @@ function createStationProp(station) {
 
   group.position.set(station.position.x, 0, station.position.z);
   group.userData.stationId = station.id;
-  for (const child of group.children) {
+  group.traverse((child) => {
     child.userData.stationId = station.id;
-  }
+  });
   scene.add(group);
   stationVisuals.set(station.id, group);
-  selectableObjects.push(...group.children.filter((child) => child.isMesh));
+  group.traverse((child) => {
+    if (child.isMesh) selectableObjects.push(child);
+  });
 }
 
 function createAgentVisual(agent) {
@@ -1874,24 +2216,42 @@ function createAgentVisual(agent) {
   const torso = addMesh(group, new THREE.CylinderGeometry(0.28, 0.34, 0.72, 12), bodyMaterial, {
     y: 0.72,
   });
+  const neck = addMesh(group, new THREE.CylinderGeometry(0.095, 0.12, 0.16, 12), darkMaterial, { y: 1.11 });
   const head = addMesh(group, new THREE.SphereGeometry(0.25, 16, 12), headMaterial, { y: 1.22 });
   const visor = addMesh(group, new THREE.BoxGeometry(0.32, 0.08, 0.035), glowMaterial, { y: 1.24, z: 0.22 });
-  const leftLeg = addMesh(group, new THREE.BoxGeometry(0.13, 0.46, 0.14), darkMaterial, {
-    x: -0.11,
-    y: 0.28,
-  });
-  const rightLeg = addMesh(group, new THREE.BoxGeometry(0.13, 0.46, 0.14), darkMaterial, {
-    x: 0.11,
-    y: 0.28,
-  });
-  const leftArm = addMesh(group, new THREE.BoxGeometry(0.11, 0.52, 0.12), bodyMaterial, {
-    x: -0.37,
-    y: 0.72,
-  });
-  const rightArm = addMesh(group, new THREE.BoxGeometry(0.11, 0.52, 0.12), bodyMaterial, {
-    x: 0.37,
-    y: 0.72,
-  });
+  const eyeMaterial = colorMaterial(0xe8fbff, { emissive: 0x71e9ff, roughness: 0.18 });
+  const leftEye = addMesh(group, new THREE.SphereGeometry(0.022, 8, 6), eyeMaterial, { x: -0.075, y: 1.24, z: 0.25 });
+  const rightEye = addMesh(group, new THREE.SphereGeometry(0.022, 8, 6), eyeMaterial, { x: 0.075, y: 1.24, z: 0.25 });
+  const shoulderLeft = addMesh(group, new THREE.SphereGeometry(0.14, 12, 10), bodyMaterial, { x: -0.34, y: 0.98 });
+  const shoulderRight = addMesh(group, new THREE.SphereGeometry(0.14, 12, 10), bodyMaterial, { x: 0.34, y: 0.98 });
+  const chestPanel = addMesh(group, new THREE.BoxGeometry(0.37, 0.28, 0.075), darkMaterial, { y: 0.78, z: 0.29 });
+  const chestLight = addMesh(group, new THREE.SphereGeometry(0.045, 10, 8), glowMaterial, { y: 0.8, z: 0.34 });
+  const backpack = addMesh(group, new THREE.BoxGeometry(0.36, 0.4, 0.16), darkMaterial, { y: 0.8, z: -0.28 });
+  shoulderLeft.position.y = 0.26;
+  shoulderRight.position.y = 0.26;
+  chestPanel.position.set(0, 0.06, 0.29);
+  chestLight.position.set(0, 0.08, 0.34);
+  backpack.position.set(0, 0.08, -0.28);
+  torso.add(shoulderLeft, shoulderRight, chestPanel, chestLight, backpack);
+
+  const createLimbPivot = (x, y) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(x, y, 0);
+    group.add(pivot);
+    return pivot;
+  };
+  const leftArm = createLimbPivot(-0.36, 0.98);
+  const rightArm = createLimbPivot(0.36, 0.98);
+  const leftArmMesh = addMesh(leftArm, new THREE.BoxGeometry(0.13, 0.42, 0.14), bodyMaterial, { y: -0.23 });
+  const rightArmMesh = addMesh(rightArm, new THREE.BoxGeometry(0.13, 0.42, 0.14), bodyMaterial, { y: -0.23 });
+  const leftHand = addMesh(leftArm, new THREE.SphereGeometry(0.09, 10, 8), headMaterial, { y: -0.47 });
+  const rightHand = addMesh(rightArm, new THREE.SphereGeometry(0.09, 10, 8), headMaterial, { y: -0.47 });
+  const leftLeg = createLimbPivot(-0.12, 0.46);
+  const rightLeg = createLimbPivot(0.12, 0.46);
+  const leftLegMesh = addMesh(leftLeg, new THREE.BoxGeometry(0.15, 0.3, 0.16), darkMaterial, { y: -0.14 });
+  const rightLegMesh = addMesh(rightLeg, new THREE.BoxGeometry(0.15, 0.3, 0.16), darkMaterial, { y: -0.14 });
+  const leftBoot = addMesh(leftLeg, new THREE.BoxGeometry(0.17, 0.12, 0.24), darkMaterial, { y: -0.31, z: 0.045 });
+  const rightBoot = addMesh(rightLeg, new THREE.BoxGeometry(0.17, 0.12, 0.24), darkMaterial, { y: -0.31, z: 0.045 });
 
   const diamondTop = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.34, 4), glowMaterial);
   diamondTop.position.y = 1.85;
@@ -1916,6 +2276,16 @@ function createAgentVisual(agent) {
   name.position.set(0, 2.2, 0);
   group.add(name);
 
+  const statusBadge = createTextSprite("IDLE", {
+    background: "rgba(8, 14, 25, 0.92)",
+    color: "#cbd5e1",
+    size: 28,
+    scaleX: 1.18,
+    scaleY: 0.34,
+  });
+  statusBadge.position.set(0, 2.58, 0);
+  group.add(statusBadge);
+
   const bubble = createTextSprite("", {
     background: "rgba(8, 14, 25, 0.94)",
     color: "#f3f8ff",
@@ -1923,16 +2293,19 @@ function createAgentVisual(agent) {
     scaleX: 1.75,
     scaleY: 0.44,
   });
-  bubble.position.set(0, 2.62, 0);
+  bubble.position.set(0, 2.96, 0);
   bubble.visible = false;
   group.add(bubble);
 
-  for (const child of group.children) {
+  group.traverse((child) => {
     child.userData.agentId = agent.id;
-  }
+  });
 
   scene.add(group);
-  selectableObjects.push(torso, head, visor, leftLeg, rightLeg, leftArm, rightArm, diamondTop, diamondBottom);
+  selectableObjects.push(
+    torso, neck, head, visor, leftEye, rightEye, shoulderLeft, shoulderRight, chestPanel, chestLight, backpack,
+    leftArmMesh, rightArmMesh, leftHand, rightHand, leftLegMesh, rightLegMesh, leftBoot, rightBoot, diamondTop, diamondBottom,
+  );
   agentVisuals.set(agent.id, {
     group,
     torso,
@@ -1941,10 +2314,13 @@ function createAgentVisual(agent) {
     rightLeg,
     leftArm,
     rightArm,
+    chestLight,
+    selectionScale: 1,
     diamondTop,
     diamondBottom,
     selectionRing,
     bubble,
+    statusBadge,
     name,
   });
 }
@@ -2029,6 +2405,12 @@ function createMessageVisual(message) {
   packet.castShadow = true;
   scene.add(packet);
 
+  const packetHalo = new THREE.Mesh(
+    new THREE.TorusGeometry(0.18 + message.priority * 0.018, 0.012, 8, 28),
+    new THREE.MeshBasicMaterial({ color: message.color, transparent: true, opacity: 0.68, depthWrite: false })
+  );
+  scene.add(packetHalo);
+
   const label = createTextSprite(protocol.messageTypes[message.type]?.shortLabel ?? message.type, {
     background: "rgba(8, 14, 25, 0.94)",
     color: "#f3f8ff",
@@ -2039,10 +2421,10 @@ function createMessageVisual(message) {
   label.visible = message.priority >= 3;
   scene.add(label);
 
-  messageVisuals.set(message.id, { line, packet, label });
+  messageVisuals.set(message.id, { line, packet, packetHalo, label });
 }
 
-function updateMessageVisuals() {
+function updateMessageVisuals(elapsed = clock.elapsedTime) {
   const liveIds = new Set(network.messages.map((message) => message.id));
 
   for (const message of network.messages) {
@@ -2060,6 +2442,12 @@ function updateMessageVisuals() {
     visual.line.geometry.computeBoundingSphere();
     const packetPosition = curve.getPoint(message.progress);
     visual.packet.position.copy(packetPosition);
+    visual.packet.scale.setScalar(1 + Math.sin(elapsed * 9 + message.progress * 12) * 0.12);
+    visual.packetHalo.position.copy(packetPosition);
+    visual.packetHalo.rotation.z = elapsed * 1.6;
+    visual.packetHalo.scale.setScalar(0.9 + Math.sin(elapsed * 7 + message.progress * 8) * 0.12);
+    visual.packetHalo.material.opacity = 0.5 + Math.sin(elapsed * 8 + message.progress * 10) * 0.18;
+    visual.line.material.opacity = 0.66 + Math.sin(elapsed * 5 + message.progress * 6) * 0.12;
     visual.label.position.copy(packetPosition).add(new THREE.Vector3(0, 0.34, 0));
   }
 
@@ -2067,11 +2455,13 @@ function updateMessageVisuals() {
     if (liveIds.has(id)) {
       continue;
     }
-    scene.remove(visual.line, visual.packet, visual.label);
+    scene.remove(visual.line, visual.packet, visual.packetHalo, visual.label);
     visual.line.geometry.dispose();
     visual.line.material.dispose();
     visual.packet.geometry.dispose();
     visual.packet.material.dispose();
+    visual.packetHalo.geometry.dispose();
+    visual.packetHalo.material.dispose();
     visual.label.material.map?.dispose();
     visual.label.material.dispose();
     messageVisuals.delete(id);
@@ -2126,22 +2516,58 @@ function updateAgents(elapsed) {
     visual.group.rotation.y = state.facing;
 
     const walking = state.mode === "walking";
-    const stride = Math.sin(state.walkPhase) * (walking ? 0.42 : 0.08);
+    const runtimeStatus = String(agent.runtime.status || "").toLowerCase();
+    const alertStatus = /failed|error|blocked|unauthor|not found|missing/.test(runtimeStatus);
+    const waitingStatus = /waiting|queued|pending|login|authenticat/.test(runtimeStatus);
+    const completedStatus = /completed|succeeded|success/.test(runtimeStatus);
+    const workingStatus = state.activeWorkIds.size > 0 || /executing|working|running/.test(runtimeStatus);
+    const badge = alertStatus
+      ? { label: "NEEDS HELP", color: "#fecdd3", border: "#fb7185" }
+      : waitingStatus
+        ? { label: "WAITING", color: "#fde68a", border: "#f59e0b" }
+        : completedStatus
+          ? { label: "DONE", color: "#bbf7d0", border: "#4ade80" }
+          : walking
+            ? { label: "MOVING", color: "#bae6fd", border: "#38bdf8" }
+            : workingStatus
+              ? { label: "WORKING", color: "#a5f3fc", border: "#22d3ee" }
+              : { label: "IDLE", color: "#cbd5e1", border: "#64748b" };
+    replaceSpriteText(visual.statusBadge, badge.label, {
+      background: "rgba(8, 14, 25, 0.92)",
+      color: badge.color,
+      border: badge.border,
+      size: 27,
+      width: 420,
+      height: 128,
+      radius: 34,
+    });
+    const phase = elapsed + state.seed;
+    const breath = Math.sin(phase * 2.2) * 0.012;
+    const stride = Math.sin(state.walkPhase) * (walking ? 0.46 : 0.035);
+    const workMotion = workingStatus && !walking ? Math.sin(phase * 10) : 0;
     visual.leftLeg.rotation.x = stride;
     visual.rightLeg.rotation.x = -stride;
-    visual.leftArm.rotation.x = -stride * 0.8;
-    visual.rightArm.rotation.x = stride * 0.8;
-    visual.torso.position.y = 0.72 + Math.sin(state.walkPhase * 2) * (walking ? 0.035 : 0.012);
-    visual.head.position.y = 1.22 + Math.sin(elapsed * 2.5 + state.seed) * 0.015;
-    visual.diamondTop.rotation.y += 0.018;
-    visual.diamondBottom.rotation.y += 0.018;
-
+    visual.leftArm.rotation.x = -stride * 0.82 + workMotion * 0.08;
+    visual.rightArm.rotation.x = stride * 0.82 - workMotion * 0.08;
+    visual.leftArm.rotation.z = Math.sin(phase * (workingStatus ? 8 : 1.5)) * (workingStatus ? 0.11 : 0.025);
+    visual.rightArm.rotation.z = -Math.sin(phase * (workingStatus ? 8 : 1.5) + 0.5) * (workingStatus ? 0.11 : 0.025);
+    visual.torso.position.y = 0.72 + breath + Math.abs(Math.sin(state.walkPhase * 2)) * (walking ? 0.035 : 0);
+    visual.head.position.y = 1.22 + Math.sin(phase * 2.5) * 0.018;
+    visual.head.rotation.z = Math.sin(phase * 0.8) * (workingStatus ? 0.045 : 0.025);
+    visual.diamondTop.rotation.y = Math.PI * 0.25 + elapsed * 0.85 + state.seed;
+    visual.diamondBottom.rotation.y = Math.PI * 0.25 - elapsed * 0.7 - state.seed;
+    visual.diamondTop.position.y = 1.85 + Math.sin(phase * 2.4) * 0.035;
+    visual.diamondBottom.position.y = 1.52 + Math.sin(phase * 2.4 + 0.4) * 0.025;
     const selected = selectedAgentId === agent.id;
-    const scale = selected ? 1.1 : 1;
+    const workPulse = workingStatus ? 1 + Math.sin(elapsed * 5 + state.seed) * 0.045 : 1;
+    visual.selectionScale += ((selected ? 1.1 : 1) - visual.selectionScale) * 0.16;
+    const scale = visual.selectionScale * workPulse;
     visual.diamondTop.scale.setScalar(scale);
     visual.diamondBottom.scale.setScalar(scale);
     visual.selectionRing.visible = selected;
     visual.selectionRing.material.opacity = 0.64 + Math.sin(elapsed * 3) * 0.14;
+    visual.selectionRing.scale.setScalar(selected ? 1 + Math.sin(phase * 3.2) * 0.045 : 1);
+    visual.chestLight.scale.setScalar(1 + Math.sin(phase * (workingStatus ? 8 : 2)) * (workingStatus ? 0.18 : 0.07));
 
     const reply = agentReplies.get(agent.id);
     if (reply && reply.expiresAt <= performance.now()) {
@@ -2168,14 +2594,49 @@ function updateStations(elapsed) {
     if (!group) {
       continue;
     }
+    const owner = station.agentId
+      ? network.getAgent(station.agentId)
+      : network.agents.find((agent) => agentWorld.getAgentState(agent.id)?.stationId === station.id);
+    const ownerState = owner ? agentWorld.getAgentState(owner.id) : null;
+    const ownerStatus = String(owner?.runtime?.status ?? "").toLowerCase();
+    const stationState = /failed|error|blocked|unauthor|not found|missing/.test(ownerStatus)
+      ? { color: 0xfb7185, pulse: 0.05, scanSpeed: 0.12 }
+      : ownerState?.activeWorkIds?.size || /executing|working|running/.test(ownerStatus)
+        ? { color: 0x22d3ee, pulse: 0.16, scanSpeed: 0.78 }
+        : /waiting|queued|pending|login|authenticat/.test(ownerStatus)
+          ? { color: 0xfbbf24, pulse: 0.08, scanSpeed: 0.22 }
+          : /completed|succeeded|success/.test(ownerStatus)
+            ? { color: 0x4ade80, pulse: 0.04, scanSpeed: 0.18 }
+            : { color: 0x64748b, pulse: 0.025, scanSpeed: 0.32 };
+    const led = group.userData.stationStatusLed;
+    if (led) {
+      led.material.color.setHex(stationState.color);
+      led.material.emissive.setHex(stationState.color);
+      led.scale.setScalar(1 + Math.sin(elapsed * (stationState.pulse > 0.1 ? 8 : 2) + station.position.x) * stationState.pulse);
+    }
     group.traverse((child) => {
       if (child.userData.spin) {
-        child.rotation.y += child.userData.spin * 0.012;
-        child.position.y = 0.84 + Math.sin(elapsed * 2) * 0.05;
+        child.rotation.y = elapsed * child.userData.spin;
+        child.position.y = (child.userData.baseY ?? 0.84) + Math.sin(elapsed * 2 + (child.userData.phase ?? 0)) * 0.05;
+      }
+      if (child.userData.screenSweep) {
+        const sweep = child.userData.screenSweep;
+        const progress = ((elapsed * stationState.scanSpeed + sweep.phase) % 1 + 1) % 1;
+        child.position.y = THREE.MathUtils.lerp(sweep.minY, sweep.maxY, progress);
       }
     });
     const selected = selectedStationId === station.id;
-    group.scale.setScalar(selected ? 1.04 : 1);
+    const targetScale = selected ? 1.045 : 1;
+    group.userData.displayScale = (group.userData.displayScale ?? 1) + (targetScale - (group.userData.displayScale ?? 1)) * 0.14;
+    group.scale.setScalar(group.userData.displayScale);
+  }
+}
+
+function updateAmbientVisuals(elapsed) {
+  for (const item of ambientVisuals) {
+    const wave = Math.sin(elapsed * item.speed + item.phase);
+    item.mesh.material.opacity = item.opacity + wave * 0.12;
+    item.mesh.scale.setScalar(1 + wave * item.amplitude);
   }
 }
 
@@ -2258,8 +2719,17 @@ function updateHud() {
   `;
 
   eventLog.innerHTML = network.events
-    .slice(0, 6)
-    .map((event) => `<li><time>${event.timeLabel}</time><span>${event.text}</span></li>`)
+    .slice(0, 8)
+    .map((event) => {
+      const activityState = String(event.activityState || "").toLowerCase();
+      const stateBadge = activityState
+        ? `<small class="event-log__state" data-state="${escapeHtml(activityState)}">${escapeHtml(jobToastStatus({ state: activityState }) || activityState)}</small>`
+        : "";
+      const content = `<time>${escapeHtml(event.timeLabel)}</time><span>${escapeHtml(event.text)}</span>${stateBadge}`;
+      return event.jobId
+        ? `<li><button class="event-log__open" type="button" data-activity-job="${escapeHtml(event.jobId)}" aria-label="Open job details">${content}</button></li>`
+        : `<li>${content}</li>`;
+    })
     .join("");
 
   stationList.innerHTML = workstations
@@ -2308,6 +2778,56 @@ function updateHud() {
         `;
       })
       .join("");
+  }
+
+  const room = roomLayout.find((item) => item.id === selectedRoomId);
+  if (roomDetails && selectedRoomName && selectedRoomMetrics && selectedRoomStations && selectedRoomAgents) {
+    if (!room) {
+      roomDetails.hidden = true;
+    } else {
+      roomDetails.hidden = false;
+      selectedRoomName.textContent = room.label;
+      const roomStations = workstations.filter((item) => roomContainsTile(room, worldToTile(item.position)));
+      const roomAgentList = network.agents.filter((agentItem) => {
+        const stateItem = agentWorld.getAgentState(agentItem.id);
+        const stationItem = agentWorld.getStation(stateItem?.stationId);
+        return roomContainsTile(room, stateItem?.tile)
+          || Boolean(stationItem && roomContainsTile(room, worldToTile(stationItem.position)));
+      });
+      const roomAgentIds = new Set(roomAgentList.map((agentItem) => agentItem.id));
+      const roomJobs = [...activityJobCache.values()].filter((job) => (
+        roomAgentIds.has(job.agent_id) && ["queued", "running", "scheduled"].includes(String(job.state || ""))
+      )).sort((left, right) => String(right.updated_at || right.created_at || "").localeCompare(String(left.updated_at || left.created_at || "")));
+      const projectJobIds = new Set(roomJobs.map((job) => job.id));
+      const activeTaskCount = roomAgentList.reduce((count, agentItem) => {
+        const stateItem = agentWorld.getAgentState(agentItem.id);
+        return count + [...(stateItem?.activeWorkIds ?? [])].filter((id) => !projectJobIds.has(id)).length;
+      }, 0);
+      selectedRoomMetrics.innerHTML = [
+        [roomAgentList.length, "agents"], [roomStations.length, "stations"], [roomJobs.length + activeTaskCount, "active work"],
+      ].map(([value, label]) => `<span><strong>${value}</strong><small>${label}</small></span>`).join("");
+      selectedRoomStations.innerHTML = roomStations.length
+        ? roomStations.map((item) => `<span class="room-details__station"><i style="--station-color:${escapeHtml(item.color)}"></i>${escapeHtml(item.label)}</span>`).join("")
+        : '<span class="room-details__empty">No workstations in this room.</span>';
+      selectedRoomAgents.innerHTML = roomAgentList.length
+        ? roomAgentList.map((agentItem) => {
+          const stateItem = agentWorld.getAgentState(agentItem.id);
+          const statusLabel = roomAgentStatus(agentItem, stateItem);
+          const activeJob = roomJobs.find((job) => job.agent_id === agentItem.id);
+          const jobText = activeJob
+            ? `${projectActionLabelFor(activeJob)} · ${projectNameFor(activeJob)}`
+            : stateItem?.activeWorkIds?.size
+              ? stateItem.jobLabel
+              : stateItem?.jobLabel || agentItem.runtime.status;
+          return `<div class="room-details__agent-row">
+            <button class="room-details__agent" type="button" data-room-agent="${escapeHtml(agentItem.id)}">
+              <i style="--agent-color:${escapeHtml(agentItem.color)}"></i><span><strong>${escapeHtml(agentItem.label)}</strong><small>${escapeHtml(statusLabel)} · ${escapeHtml(jobText)}</small></span>
+            </button>
+            ${activeJob ? `<button class="room-details__job" type="button" data-room-job="${escapeHtml(activeJob.id)}" aria-label="Open job details">↗</button>` : ""}
+          </div>`;
+        }).join("")
+        : '<span class="room-details__empty">No agents assigned to this room yet.</span>';
+    }
   }
   updateLayoutEditor();
 }
@@ -2939,12 +3459,13 @@ function animate(now = 0) {
 
   updateAgents(elapsed);
   updateStations(elapsed);
+  updateAmbientVisuals(elapsed);
   updateTiles();
   if (now >= nextRelationRefresh) {
     updateRelationVisuals();
     nextRelationRefresh = now + PERFORMANCE.relationRefreshMs;
   }
-  updateMessageVisuals();
+  updateMessageVisuals(elapsed);
   updateQuickChatPosition();
   renderer.render(scene, camera);
 
@@ -3952,6 +4473,20 @@ function handleRuntimeEvent(event) {
     const task = event.data?.task;
     cacheRuntimeTask(task);
     const taskAgentId = task?.assigned_agent_id || event.agent_id;
+    const taskAgent = taskAgentId ? network.getAgent(taskAgentId) : null;
+    if (taskAgent) {
+      const nextTaskState = event.data?.to;
+      if (nextTaskState === "running" || nextTaskState === "accepted") {
+        taskAgent.runtime.status = "executing";
+        taskAgent.runtime.load = 0.82;
+      } else if (nextTaskState === "completed") {
+        taskAgent.runtime.status = "completed";
+        taskAgent.runtime.load = 0.08;
+      } else if (nextTaskState === "failed") {
+        taskAgent.runtime.status = "failed";
+        taskAgent.runtime.load = 0.08;
+      }
+    }
     if (["accepted", "running"].includes(event.data?.to) && taskAgentId) {
       agentWorld.assignAgentToWork(taskAgentId, task.id, task.title || task.description || "Working on task", network);
     } else if (["completed", "failed", "cancelled"].includes(event.data?.to) && taskAgentId) {
@@ -3981,10 +4516,28 @@ function handleRuntimeEvent(event) {
     queueMemoryCouncilSignal("memory", 1);
   } else if (event.type?.startsWith("project.job.")) {
     const job = event.data?.job;
+    if (job?.id) {
+      activityJobCache.set(job.id, job);
+      while (activityJobCache.size > 100) activityJobCache.delete(activityJobCache.keys().next().value);
+      if (["scheduled", "queued", "running"].includes(job.state)) {
+        activeProjectJobs.set(job.id, job);
+      } else {
+        activeProjectJobs.delete(job.id);
+      }
+      renderActiveWorkOverview();
+    }
     const agent = job?.agent_id ? network.getAgent(job.agent_id) : null;
     if (agent) {
-      const active = event.type === "project.job.queued" || event.type === "project.job.started" || event.type === "project.job.alert";
-      agent.runtime.status = active ? "executing" : event.type.endsWith("failed") ? "failed" : "idle";
+      const active = event.type === "project.job.queued" || event.type === "project.job.started";
+      agent.runtime.status = event.type === "project.job.alert"
+        ? "waiting"
+        : active
+          ? "executing"
+          : event.type.endsWith("failed")
+            ? "failed"
+            : event.type.endsWith("completed")
+              ? "completed"
+              : "idle";
       agent.runtime.load = active ? 0.82 : 0.08;
     }
     if (event.type === "project.job.started" && job?.agent_id) {
@@ -4020,7 +4573,14 @@ function handleRuntimeEvent(event) {
   }
 
   if (event.summary) {
-    network.log(event.summary);
+    const job = event.data?.job;
+    const task = event.data?.task;
+    network.log(event.summary, {
+      jobId: job?.id || "",
+      taskId: task?.id || "",
+      agentId: job?.agent_id || task?.assigned_agent_id || event.agent_id || "",
+      activityState: job?.state || task?.state || "",
+    });
   }
   updateHud();
 }
@@ -4795,6 +5355,17 @@ function formatReportNumber(value) {
   return new Intl.NumberFormat("en-US").format(Number(value) || 0);
 }
 
+function formatReportDuration(seconds) {
+  if (seconds == null || seconds === "" || !Number.isFinite(Number(seconds))) return "—";
+  const total = Math.max(0, Math.floor(Number(seconds)));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
 function formatReportDate(value) {
   if (!value) return "—";
   const parsed = new Date(value);
@@ -5141,6 +5712,34 @@ function renderVintedReport(snapshot) {
       <strong>${formatReportNumber(row.seen)}</strong>
     </div>
   `).join("") : '<div class="report-status">No search history yet.</div>';
+
+  const keywordRows = Array.isArray(snapshot.keyword_metrics) ? snapshot.keyword_metrics : [];
+  reportKeywordCount.textContent = formatReportNumber(keywordRows.length);
+  const keywordTotals = keywordRows.reduce((totals, row) => {
+    totals.searches += Number(row.search_runs) || 0;
+    totals.sold += Number(row.sold_items) || 0;
+    totals.active += Number(row.active_items) || 0;
+    return totals;
+  }, { searches: 0, sold: 0, active: 0 });
+  reportKeywordSummary.innerHTML = [
+    ["Keywords tracked", formatReportNumber(keywordRows.length)],
+    ["Search runs", formatReportNumber(keywordTotals.searches)],
+    ["Tracked sold", formatReportNumber(keywordTotals.sold)],
+    ["Tracked active", formatReportNumber(keywordTotals.active)],
+  ].map(([label, value]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("");
+  reportKeywords.innerHTML = keywordRows.length ? keywordRows.map((row) => `
+    <tr data-keyword-row data-keyword="${escapeHtml(String(row.keyword || "").toLowerCase())}">
+      <td><strong>${escapeHtml(row.keyword || "—")}</strong><small>Last searched ${escapeHtml(formatReportDate(row.last_searched_at))}</small></td>
+      <td>${formatReportNumber(row.search_runs)}</td><td>${formatReportNumber(row.run_result_count)}</td>
+      <td>${formatReportNumber(row.items_seen)}</td><td>${formatReportNumber(row.sold_items)}</td>
+      <td>${formatReportNumber(row.active_items)}</td><td>${formatReportNumber(row.unavailable_items)}</td>
+      <td>${Number(row.sell_through_percent || 0).toFixed(1)}%</td>
+      <td>${row.average_price == null ? "—" : `€${Number(row.average_price).toFixed(2)}`}</td>
+      <td>${row.average_likes == null ? "—" : Number(row.average_likes).toFixed(1)}</td>
+      <td>${escapeHtml(formatReportDuration(row.average_sale_seconds))}</td>
+      <td>${escapeHtml(formatReportDuration(row.median_sale_seconds))}</td>
+    </tr>
+  `).join("") : '<tr><td colspan="12" class="report-status">No keyword-level tracking data for this period yet.</td></tr>';
 
   reportStatus.textContent = `Updated ${formatReportDate(snapshot.generated_at)} · ${formatReportNumber(summary.unavailable_items)} unavailable articles preserved`;
   renderReportArticles();
@@ -5612,6 +6211,43 @@ function renderJobNotificationBadge() {
   jobNotificationCount.textContent = "0";
 }
 
+function renderActiveWorkOverview(jobs = null) {
+  if (!activeWorkList || !activeWorkCount) return;
+  if (Array.isArray(jobs)) {
+    activeProjectJobs.clear();
+    for (const job of jobs) {
+      if (["scheduled", "queued", "running"].includes(job.state)) {
+        activeProjectJobs.set(job.id, job);
+      }
+    }
+  }
+  const active = [...activeProjectJobs.values()]
+    .sort((left, right) => String(right.updated_at ?? right.created_at ?? "").localeCompare(String(left.updated_at ?? left.created_at ?? "")));
+  activeWorkCount.textContent = String(active.length);
+  activeWorkAllButton?.setAttribute("aria-label", `Open all jobs and notifications (${active.length} active)`);
+  if (!active.length) {
+    activeWorkList.innerHTML = '<p class="active-work__empty">Nessun job attivo. I nuovi lavori appariranno qui.</p>';
+    return;
+  }
+  activeWorkList.innerHTML = active.slice(0, 4).map((job) => {
+    const status = jobToastStatus(job);
+    const detail = `${projectAgentLabelFor(job)} · ${status}`;
+    return `
+      <div class="active-work__job">
+        <button class="active-work__open" type="button" data-active-work-job="${escapeHtml(job.id)}" aria-label="Apri ${escapeHtml(projectActionLabelFor(job))}, ${escapeHtml(status)}">
+          <span class="active-work__job-top"><strong>${escapeHtml(projectActionLabelFor(job))}</strong><span>${escapeHtml(status)}</span></span>
+          <small>${escapeHtml(projectNameFor(job))} · ${escapeHtml(detail)}</small>
+          <span class="active-work__progress" role="progressbar" aria-label="Job in corso" aria-valuetext="${escapeHtml(status)}"><i></i></span>
+        </button>
+        <button class="button button--danger button--compact active-work__stop" type="button" data-active-work-stop="${escapeHtml(job.id)}" aria-label="Stop ${escapeHtml(projectActionLabelFor(job))}">Stop</button>
+      </div>
+    `;
+  }).join("");
+  if (active.length > 4) {
+    activeWorkList.insertAdjacentHTML("beforeend", `<p class="active-work__more">+${active.length - 4} altri · apri Jobs per vedere tutto</p>`);
+  }
+}
+
 function acknowledgeCompletedJobs(jobIds = []) {
   jobNotificationState.acknowledge(jobIds);
   renderJobNotificationBadge();
@@ -5738,6 +6374,7 @@ async function refreshProjectJobHistory(markSeen = false) {
   }
   try {
     const jobs = await runtimeClient.listProjectJobs();
+    renderActiveWorkOverview(jobs);
     const filtered = projectJobsForHistory(jobs);
     renderProjectJobHistory(filtered);
     jobNotificationState.observe(jobs);
@@ -6818,6 +7455,7 @@ addWorkstationButton?.addEventListener("click", addEditorWorkstation);
 workstationAgentSelect?.addEventListener("change", renderWorkstationControls);
 resetLayoutButton?.addEventListener("click", resetSavedLayout);
 themeToggle?.addEventListener("click", () => applyTheme(currentTheme === "light" ? "dark" : "light"));
+atmosphereToggle?.addEventListener("click", cycleAtmosphere);
 reportsDashboardButton?.addEventListener("click", () => {
   void openVintedReports();
 });
@@ -6861,6 +7499,24 @@ reportTabButtons.forEach((button) => {
 reportCompetitorStatus?.addEventListener("change", () => {
   reportCompetitorStatusFilter = reportCompetitorStatus.value || "all";
   renderReportCompetitors();
+});
+eventLog?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-activity-job]");
+  if (!button) return;
+  const job = activityJobCache.get(button.dataset.activityJob) || projectJobsCache.get(button.dataset.activityJob);
+  if (!job) {
+    setBootMessage("Job details are not in the local activity cache. Open Jobs & Notifications to reload history.");
+    return;
+  }
+  if (job.agent_id && network.getAgent(job.agent_id)) selectedAgentId = job.agent_id;
+  openJobOutput(job);
+  updateHud();
+});
+reportKeywordSearch?.addEventListener("input", () => {
+  const query = reportKeywordSearch.value.trim().toLowerCase();
+  reportKeywords.querySelectorAll("[data-keyword-row]").forEach((row) => {
+    row.hidden = !String(row.dataset.keyword || "").includes(query);
+  });
 });
 reportOwnedForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -6958,6 +7614,25 @@ roomList?.addEventListener("click", (event) => {
   if (layoutMode) {
     setBootMessage(`Editor: ${room.label} selezionata. Usa "Porta qui" o i controlli stanza/porte.`);
   }
+  updateHud();
+});
+
+roomDetails?.addEventListener("click", (event) => {
+  const jobButton = event.target.closest("[data-room-job]");
+  if (jobButton) {
+    const job = activityJobCache.get(jobButton.dataset.roomJob) || projectJobsCache.get(jobButton.dataset.roomJob);
+    if (job) openJobOutput(job);
+    return;
+  }
+  const agentButton = event.target.closest("[data-room-agent]");
+  if (!agentButton) return;
+  const agent = network.getAgent(agentButton.dataset.roomAgent);
+  if (!agent) return;
+  selectedAgentId = agent.id;
+  selectedStationId = null;
+  const position = agentWorld.getAgentPosition(agent.id);
+  cameraTarget.set(position.x, 0, position.z);
+  updateCamera();
   updateHud();
 });
 
@@ -7232,6 +7907,24 @@ jobNotificationsButton?.addEventListener("click", async () => {
   syncProjectDialogMode();
   syncProjectJobFilterButtons();
   setProjectPanel("finished");
+});
+activeWorkAllButton?.addEventListener("click", () => jobNotificationsButton?.click());
+activeWorkList?.addEventListener("click", (event) => {
+  const stopButton = event.target.closest("[data-active-work-stop]");
+  if (stopButton) {
+    event.stopPropagation();
+    stopButton.disabled = true;
+    void stopProjectJob(stopButton.dataset.activeWorkStop, stopButton);
+    return;
+  }
+  const button = event.target.closest("[data-active-work-job]");
+  if (!button) return;
+  const job = activeProjectJobs.get(button.dataset.activeWorkJob);
+  if (job) {
+    projectDialogMode = "gateway";
+    syncProjectDialogMode();
+    openJobOutput(job);
+  }
 });
 
 document.querySelector("#save-project-preset").addEventListener("click", async () => {
@@ -7565,6 +8258,10 @@ window.addEventListener("unhandledrejection", (event) => {
 
 setupDraggablePopups();
 applyTheme(currentTheme, { persist: false });
+applyAtmosphere(currentAtmosphereMode, { persist: false });
+updateWorldClock();
+window.setInterval(updateWorldClock, 1000);
+document.addEventListener("visibilitychange", updateWorldClock);
 buildScene();
 resize();
 setSpeed(1);

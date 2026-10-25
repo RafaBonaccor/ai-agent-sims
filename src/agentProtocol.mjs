@@ -362,12 +362,13 @@ export class AgentNetwork {
     });
   }
 
-  log(text) {
+  log(text, metadata = {}) {
     this.eventCounter += 1;
     this.events.unshift({
       id: `event-${this.eventCounter}`,
       timeLabel: formatTime(this.time),
       text,
+      ...metadata,
     });
     this.events = this.events.slice(0, 80);
   }

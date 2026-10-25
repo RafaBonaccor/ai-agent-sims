@@ -136,7 +136,7 @@ class DiscordGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("final answer", result.final_response)
 
-    async def test_send_codex_result_sends_all_messages(self):
+    async def test_send_codex_result_sends_final_response_without_intermediate_output(self):
         gateway = DiscordGateway(self.runtime, DiscordGatewayConfig())
         sent: list[str] = []
 
@@ -151,7 +151,7 @@ class DiscordGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         await gateway.send_codex_result(send, result)
 
-        self.assertEqual(["> 🧠 step 1", "```text\n$ echo hello\nhello\n```", "final answer"], sent)
+        self.assertEqual(["final answer"], sent)
 
     async def test_codex_model_status_and_updates_are_exposed(self):
         gateway = DiscordGateway(self.runtime, DiscordGatewayConfig())
@@ -283,11 +283,16 @@ class DiscordProjectBridgeTests(unittest.IsolatedAsyncioTestCase):
 
         self.bridge._collect_attachment_inputs = fake_collect
 
-        job = await self.bridge.submit_vinted_upload(
-            content="title: Charm\ndescription: Test\nprice: 7.00",
-            attachments=[DiscordAttachment(url="https://example.test/meta.txt", filename="meta.txt", content_type="text/plain")],
-            agent_id="researcher",
-        )
+        with patch.object(
+            self.bridge,
+            "_structure_vinted_upload_payload_from_photos_with_ai",
+            return_value={"title": "Charm", "description": "Test", "category": "Braccialetti", "model": "test-model"},
+        ):
+            job = await self.bridge.submit_vinted_upload(
+                content="title: Charm\ndescription: Test\nprice: 7.00",
+                attachments=[DiscordAttachment(url="https://example.test/meta.txt", filename="meta.txt", content_type="text/plain")],
+                agent_id="researcher",
+            )
 
         self.assertEqual("main-scraper", job.project_id)
         manifest_path = Path(self.bridge.project_gateway.request.parameters["items-file"])
@@ -314,11 +319,16 @@ class DiscordProjectBridgeTests(unittest.IsolatedAsyncioTestCase):
 
         self.bridge._collect_attachment_inputs = fake_collect
 
-        job = await self.bridge.submit_vinted_upload(
-            content="",
-            attachments=[DiscordAttachment(url="https://example.test/meta.txt", filename="meta.txt", content_type="text/plain")],
-            agent_id="researcher",
-        )
+        with patch.object(
+            self.bridge,
+            "_structure_vinted_upload_payload_from_photos_with_ai",
+            return_value={"title": "Charm", "description": "Test", "category": "Braccialetti", "model": "test-model"},
+        ):
+            job = await self.bridge.submit_vinted_upload(
+                content="",
+                attachments=[DiscordAttachment(url="https://example.test/meta.txt", filename="meta.txt", content_type="text/plain")],
+                agent_id="researcher",
+            )
 
         manifest_path = Path(self.bridge.project_gateway.request.parameters["items-file"])
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -417,10 +427,10 @@ class DiscordProjectBridgeTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(
             self.bridge,
-            "_structure_vinted_upload_payload_with_ai",
+            "_structure_vinted_upload_payload_from_photos_with_ai",
             side_effect=ValueError("OPENAI_API_KEY not found in the environment or project secret store."),
         ):
-            with self.assertRaisesRegex(ValueError, "Discord AI structuring failed: OPENAI_API_KEY"):
+            with self.assertRaisesRegex(ValueError, "Discord photo analysis failed: OPENAI_API_KEY"):
                 await self.bridge.submit_vinted_upload(
                     content='{"title":"Charm Pandora","description":"Silver charm"}',
                     attachments=[DiscordAttachment(url="https://example.test/photo.png", filename="photo.png", content_type="image/png")],

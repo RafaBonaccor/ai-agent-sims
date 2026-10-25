@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from agent_runtime.vinted_reports import (
+    _best_item_name,
     build_vinted_report,
     deactivate_owned_profile,
     save_owned_profile,
@@ -14,6 +15,71 @@ from agent_runtime.vinted_reports import (
 
 
 class VintedReportsTests(unittest.TestCase):
+    def test_generic_profile_labels_do_not_overwrite_real_listing_title(self) -> None:
+        self.assertEqual("Charm kitty portafortuna", _best_item_name("Charm", "Charm kitty portafortuna"))
+        self.assertEqual("Charm Japan compatibile Pandora", _best_item_name("No Label", "Charm Japan compatibile Pandora"))
+        self.assertEqual("Pandora", _best_item_name("Pandora", ""))
+
+    def test_keyword_metrics_combine_runs_and_tracked_outcomes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            db_path = root / "scraper.db"
+            now = datetime.now().replace(microsecond=0)
+            sold_at = now - timedelta(minutes=20)
+            first_seen = sold_at - timedelta(hours=2)
+            with sqlite3.connect(db_path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE vinted_items(link TEXT PRIMARY KEY, item_id TEXT);
+                    CREATE TABLE vinted_unavailable_items(item_link TEXT PRIMARY KEY, item_id TEXT);
+                    CREATE TABLE vinted_search_hits(
+                        item_link TEXT, search_term TEXT, first_seen_at TEXT, last_seen_at TEXT, times_seen INTEGER
+                    );
+                    CREATE TABLE vinted_search_runs(
+                        search_term TEXT, query_label TEXT, created_at TEXT, item_count INTEGER
+                    );
+                    CREATE TABLE vinted_deal_sale_tracking(
+                        item_link TEXT PRIMARY KEY, item_id TEXT, item_name TEXT,
+                        first_seen_at TEXT, last_checked_at TEXT, sold_at TEXT,
+                        status TEXT, payload_json TEXT
+                    );
+                    """
+                )
+                connection.executemany(
+                    "INSERT INTO vinted_items VALUES (?, ?)",
+                    [("https://example/items/sold", "sold"), ("https://example/items/active", "active")],
+                )
+                connection.executemany(
+                    "INSERT INTO vinted_search_hits VALUES (?, 'charm', ?, ?, ?)",
+                    [
+                        ("https://example/items/sold", first_seen.isoformat(), now.isoformat(), 3),
+                        ("https://example/items/active", now.isoformat(), now.isoformat(), 1),
+                    ],
+                )
+                connection.executemany(
+                    "INSERT INTO vinted_search_runs VALUES ('charm', 'charm', ?, ?)",
+                    [(now.isoformat(), 2), ((now - timedelta(hours=1)).isoformat(), 4)],
+                )
+                connection.executemany(
+                    "INSERT INTO vinted_deal_sale_tracking VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        ("https://example/items/sold", "sold", "Sold charm", first_seen.isoformat(), now.isoformat(), sold_at.isoformat(), "sold", json.dumps({"price_value": 15.0, "favorite_count": 30, "deal_sale_duration_seconds": 7200})),
+                        ("https://example/items/active", "active", "Active charm", now.isoformat(), now.isoformat(), "", "active", json.dumps({"price_value": 25.0, "favorite_count": 10})),
+                    ],
+                )
+
+            report = build_vinted_report(root, days=7, db_path=db_path)
+
+        charm = next(row for row in report["keyword_metrics"] if row["keyword"] == "charm")
+        self.assertEqual(2, charm["search_runs"])
+        self.assertEqual(6, charm["run_result_count"])
+        self.assertEqual(2, charm["items_seen"])
+        self.assertEqual(1, charm["sold_items"])
+        self.assertEqual(1, charm["active_items"])
+        self.assertEqual(50.0, charm["sell_through_percent"])
+        self.assertEqual(20.0, charm["average_price"])
+        self.assertEqual(7200, charm["average_sale_seconds"])
+
     def test_owned_profile_active_count_excludes_items_checked_as_sold(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -177,6 +243,8 @@ class VintedReportsTests(unittest.TestCase):
         self.assertIn("My shop", html)
         self.assertIn("Silver charm", html)
         self.assertIn("Category trend cohorts", html)
+        self.assertIn("Keyword performance", html)
+        self.assertIn("Results returned", html)
         self.assertIn("collane", html)
         self.assertTrue(html_path.name.startswith("marketplace-report-"))
         self.assertTrue(removed["history_preserved"])

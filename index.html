@@ -32,6 +32,11 @@
         <button id="reports-dashboard" class="button" type="button">Reports</button>
         <button id="system-settings" class="button button--icon" type="button" aria-label="System settings">⚙</button>
         <button id="theme-toggle" class="button" type="button">White</button>
+        <time class="world-clock" id="world-clock" aria-label="Ora locale del computer">
+          <span id="world-clock-time">--:--:--</span>
+          <small id="world-clock-date">--</small>
+        </time>
+        <button id="atmosphere-toggle" class="button" type="button" aria-label="Ambient lighting follows local time" title="Ambient lighting follows local time">Auto</button>
         <button id="run-toggle" class="button button--primary" type="button">Pausa</button>
         <button id="auto-toggle" class="button button--primary" type="button">Auto</button>
         <div class="segmented" id="speed-control" aria-label="Velocita">
@@ -129,6 +134,35 @@
       <section class="panel-section">
         <p class="section-label">Stanze</p>
         <div class="room-list" id="room-list"></div>
+      </section>
+
+      <section class="panel-section room-details" id="room-details" aria-label="Dettagli stanza selezionata">
+        <div>
+          <p class="section-label">Stanza selezionata</p>
+          <h2 id="selected-room-name">Main Room</h2>
+        </div>
+        <div class="room-details__metrics" id="selected-room-metrics"></div>
+        <div>
+          <p class="room-details__label">Postazioni</p>
+          <div class="room-details__stations" id="selected-room-stations"></div>
+        </div>
+        <div>
+          <p class="room-details__label">Agenti e lavoro</p>
+          <div class="room-details__agents" id="selected-room-agents"></div>
+        </div>
+      </section>
+
+      <section class="panel-section active-work" aria-label="Lavori attivi">
+        <div class="active-work__heading">
+          <div>
+            <p class="section-label">Operations</p>
+            <h2>Active work <span id="active-work-count">0</span></h2>
+          </div>
+          <button class="button button--compact" id="active-work-all" type="button">Jobs</button>
+        </div>
+        <div class="active-work__list" id="active-work-list" aria-live="polite">
+          <p class="active-work__empty">In attesa dei job…</p>
+        </div>
       </section>
     </aside>
 
@@ -770,6 +804,7 @@
           <button class="report-tab report-tab--active" type="button" data-report-tab="overview">Overview</button>
           <button class="report-tab" type="button" data-report-tab="owned">My Profiles <span id="report-owned-count">0</span></button>
           <button class="report-tab" type="button" data-report-tab="competitors">Competitors <span id="report-competitor-count">0</span></button>
+          <button class="report-tab" type="button" data-report-tab="keywords">Keywords <span id="report-keyword-count">0</span></button>
         </nav>
 
         <div class="report-panel" data-report-panel="overview">
@@ -871,6 +906,23 @@
             </div>
             <p class="report-competitor-rule">A seller becomes confirmed after appearing in at least 3 distinct deals for the same search keyword.</p>
             <div class="report-competitors" id="report-competitors"></div>
+          </section>
+        </div>
+
+        <div class="report-panel" data-report-panel="keywords" hidden>
+          <section class="report-keywords-section">
+            <div class="report-card__heading">
+              <div><span class="section-label">Search intelligence</span><h3>Keyword performance</h3></div>
+              <label class="report-sale-time-filter"><span>Filter keywords</span><input id="report-keyword-search" type="search" placeholder="charm, Pandora…" /></label>
+            </div>
+            <p class="report-competitor-rule">Metrics cover the selected report period. Sell-through uses tracked sold and active articles only; unavailable pages are excluded. Search history is retained independently from article status.</p>
+            <div class="report-keyword-summary" id="report-keyword-summary"></div>
+            <div class="report-keyword-table-wrap">
+              <table class="report-keyword-table">
+                <thead><tr><th>Keyword</th><th>Searches</th><th>Results returned</th><th>Items seen</th><th>Sold</th><th>Active</th><th>Unavailable</th><th>Sell-through</th><th>Avg. price</th><th>Avg. likes</th><th>Avg. sale time</th><th>Median</th></tr></thead>
+                <tbody id="report-keywords"></tbody>
+              </table>
+            </div>
           </section>
         </div>
       </div>

@@ -11,10 +11,10 @@ const defaultRoomLayout = [
   {
     id: "main",
     label: "Main Room",
-    col: 5,
-    row: 4,
-    columns: 14,
-    rows: 10,
+    col: 3,
+    row: 2,
+    columns: 18,
+    rows: 14,
     color: "#1f8d6a",
   },
 ];

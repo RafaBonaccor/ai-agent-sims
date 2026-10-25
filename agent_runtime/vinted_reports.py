@@ -137,6 +137,20 @@ def _safe_payload(value: object) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+_GENERIC_ITEM_NAMES = {"charm", "pandora", "no label", "no brand", "articolo", "item"}
+
+
+def _best_item_name(candidate: object, fallback: object = "") -> str:
+    """Do not let a profile-card brand/category label replace a real title."""
+    candidate_text = str(candidate or "").strip()
+    fallback_text = str(fallback or "").strip()
+    if candidate_text and candidate_text.casefold() not in _GENERIC_ITEM_NAMES:
+        return candidate_text
+    if fallback_text and fallback_text.casefold() not in _GENERIC_ITEM_NAMES:
+        return fallback_text
+    return candidate_text or fallback_text or "Marketplace item"
+
+
 def _elapsed_seconds(start: str, end: str) -> int | None:
     try:
         return max(int((datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds()), 0)
@@ -172,6 +186,122 @@ def _count(connection: sqlite3.Connection, table: str, where: str = "", values: 
     return int(connection.execute(f"SELECT COUNT(*) FROM {table}{suffix}", values).fetchone()[0])
 
 
+def _build_keyword_metrics(connection: sqlite3.Connection, since: datetime) -> list[dict[str, Any]]:
+    """Aggregate search history and tracked outcomes by normalized query term."""
+    cutoff = since.isoformat(timespec="seconds")
+    metrics: dict[str, dict[str, Any]] = {}
+
+    def entry_for(term: object) -> dict[str, Any] | None:
+        label = " ".join(str(term or "").split()).strip()
+        if not label:
+            return None
+        key = label.casefold()
+        if key not in metrics:
+            metrics[key] = {
+                "keyword": label, "search_runs": 0, "run_result_count": 0,
+                "items_seen": 0, "times_seen": 0, "active_items": 0,
+                "sold_items": 0, "unavailable_items": 0, "prices": [],
+                "likes": [], "sale_seconds": [], "last_searched_at": "",
+            }
+        return metrics[key]
+
+    hit_columns = _table_columns(connection, "vinted_search_hits")
+    if {"search_term", "times_seen"}.issubset(hit_columns):
+        if {"item_link", "last_seen_at"}.issubset(hit_columns):
+            tracking_columns = _table_columns(connection, "vinted_deal_sale_tracking")
+            tracking_select = ""
+            tracking_join = ""
+            if "item_link" in tracking_columns:
+                tracking_select = ", t.status AS tracked_status, t.payload_json AS tracked_payload, t.first_seen_at AS tracked_first_seen, t.sold_at AS tracked_sold_at"
+                tracking_join = " LEFT JOIN vinted_deal_sale_tracking t ON t.item_link = h.item_link"
+            rows = connection.execute(
+                "SELECT h.item_link, h.search_term, h.times_seen, h.last_seen_at" + tracking_select +
+                " FROM vinted_search_hits h" + tracking_join +
+                " WHERE h.last_seen_at >= ? OR h.first_seen_at >= ?",
+                (cutoff, cutoff),
+            ).fetchall()
+            seen_by_term: dict[str, set[str]] = {}
+            for row in rows:
+                entry = entry_for(row["search_term"])
+                if entry is None:
+                    continue
+                key = str(row["search_term"] or "").strip().casefold()
+                item_link = str(row["item_link"] or "")
+                if item_link:
+                    seen_by_term.setdefault(key, set()).add(item_link)
+                entry["times_seen"] += int(row["times_seen"] or 0)
+                entry["last_searched_at"] = max(entry["last_searched_at"], str(row["last_seen_at"] or ""))
+                payload = _safe_payload(row["tracked_payload"] if "tracked_payload" in row.keys() else "")
+                status = str(row["tracked_status"] or "") if "tracked_status" in row.keys() else ""
+                if status == "sold":
+                    entry["sold_items"] += 1
+                    seconds, _source = _sale_duration(
+                        str(row["tracked_first_seen"] or ""),
+                        str(row["tracked_sold_at"] or ""),
+                        payload,
+                    ) if "tracked_first_seen" in row.keys() else (None, "")
+                    if seconds is not None:
+                        entry["sale_seconds"].append(seconds)
+                elif status in {"unavailable", "gone"}:
+                    entry["unavailable_items"] += 1
+                elif status:
+                    entry["active_items"] += 1
+                price = payload.get("price_value")
+                likes = payload.get("favorite_count")
+                if isinstance(price, (int, float)):
+                    entry["prices"].append(float(price))
+                if isinstance(likes, (int, float)):
+                    entry["likes"].append(int(likes))
+            for key, item_links in seen_by_term.items():
+                metrics[key]["items_seen"] = len(item_links)
+        else:
+            rows = connection.execute(
+                "SELECT search_term, SUM(times_seen) AS times_seen FROM vinted_search_hits GROUP BY search_term"
+            ).fetchall()
+            for row in rows:
+                entry = entry_for(row["search_term"])
+                if entry is not None:
+                    entry["times_seen"] = int(row["times_seen"] or 0)
+
+    run_columns = _table_columns(connection, "vinted_search_runs")
+    if {"created_at", "item_count"}.issubset(run_columns):
+        term_column = "search_term" if "search_term" in run_columns else "'' AS search_term"
+        label_column = "query_label" if "query_label" in run_columns else "'' AS query_label"
+        rows = connection.execute(
+            f"SELECT {term_column}, {label_column}, created_at, item_count FROM vinted_search_runs WHERE created_at >= ?",
+            (cutoff,),
+        ).fetchall()
+        for row in rows:
+            entry = entry_for(row["search_term"] or row["query_label"])
+            if entry is None:
+                continue
+            entry["search_runs"] += 1
+            entry["run_result_count"] += int(row["item_count"] or 0)
+            entry["last_searched_at"] = max(entry["last_searched_at"], str(row["created_at"] or ""))
+
+    results: list[dict[str, Any]] = []
+    for entry in metrics.values():
+        active = entry["active_items"]
+        sold = entry["sold_items"]
+        denominator = active + sold
+        sale_seconds = entry["sale_seconds"]
+        prices = entry["prices"]
+        likes = entry["likes"]
+        results.append({
+            "keyword": entry["keyword"], "search_runs": entry["search_runs"],
+            "run_result_count": entry["run_result_count"], "items_seen": entry["items_seen"],
+            "times_seen": entry["times_seen"], "active_items": active, "sold_items": sold,
+            "unavailable_items": entry["unavailable_items"],
+            "sell_through_percent": round((sold / denominator) * 100, 1) if denominator else 0.0,
+            "average_price": round(sum(prices) / len(prices), 2) if prices else None,
+            "average_likes": round(sum(likes) / len(likes), 1) if likes else None,
+            "average_sale_seconds": round(sum(sale_seconds) / len(sale_seconds)) if sale_seconds else None,
+            "median_sale_seconds": round(median(sale_seconds)) if sale_seconds else None,
+            "last_searched_at": entry["last_searched_at"],
+        })
+    return sorted(results, key=lambda item: (item["sold_items"], item["search_runs"], item["items_seen"], item["times_seen"]), reverse=True)
+
+
 def build_vinted_report(
     project_root: str | Path,
     *,
@@ -195,6 +325,7 @@ def build_vinted_report(
         "daily_sales": [],
         "status_distribution": [],
         "top_searches": [],
+        "keyword_metrics": [],
         "articles": [],
         "competitor_profiles": [],
         "trend_queries": [],
@@ -432,6 +563,7 @@ def build_vinted_report(
                     """
                 ).fetchall()
             ]
+        keyword_metrics = _build_keyword_metrics(connection, since)
 
         competitor_profiles: list[dict[str, Any]] = []
         competitor_columns = _table_columns(connection, "vinted_competitors")
@@ -547,7 +679,7 @@ def build_vinted_report(
                     key = str(row["item_id"] or row["link"] or "")
                     known_items[key] = {
                         "item_id": str(row["item_id"] or ""), "link": str(row["link"] or ""),
-                        "name": str(row["name"] or "Marketplace item"), "price": str(row["price_text"] or ""),
+                        "name": _best_item_name(row["name"]), "price": str(row["price_text"] or ""),
                         "image_url": "", "status": "observed", "first_seen_at": str(row["first_seen_at"] or ""),
                         "last_seen_at": str(row["last_seen_at"] or ""), "sold_at": "",
                         "sold_after_seconds": None, "sold_after_text": "",
@@ -570,7 +702,7 @@ def build_vinted_report(
                     base = known_items.get(key, {})
                     known_items[key] = {
                         **base, "item_id": item_id, "link": link,
-                        "name": str(row["item_name"] or payload.get("name", "") or base.get("name", "Marketplace item")),
+                        "name": _best_item_name(row["item_name"], payload.get("name") or base.get("name", "")),
                         "price": str(payload.get("price", "") or payload.get("price_text", "") or base.get("price", "")),
                         "image_url": str(payload.get("image_url", "") or base.get("image_url", "")),
                         "status": status, "first_seen_at": str(row["first_seen_at"] or base.get("first_seen_at", "")),
@@ -620,7 +752,7 @@ def build_vinted_report(
                     is_gone = snapshot_status in {"gone", "unavailable"} or not bool(row["present"])
                     known_items[key] = {
                         **base, "item_id": item_id, "link": link,
-                        "name": str(row["item_name"] or payload.get("name", "") or base.get("name", "Marketplace item")),
+                        "name": _best_item_name(row["item_name"], payload.get("name") or base.get("name", "")),
                         "price": str(row["price_text"] or payload.get("price", "") or base.get("price", "")),
                         "image_url": str(row["image_url"] or payload.get("image_url", "") or base.get("image_url", "")),
                         "status": "sold" if is_sold else "gone" if is_gone and base.get("status") != "sold" else "unknown" if snapshot_status == "unknown" else base.get("status", "active"),
@@ -696,6 +828,7 @@ def build_vinted_report(
             {"label": "Unavailable", "value": unavailable, "tone": "unavailable"},
         ],
         "top_searches": top_searches,
+        "keyword_metrics": keyword_metrics,
         "articles": articles,
         "competitor_profiles": competitor_profiles,
         "trend_queries": trend_queries,
@@ -730,6 +863,7 @@ def render_vinted_report_html(snapshot: dict[str, Any]) -> str:
     articles = snapshot.get("articles") if isinstance(snapshot.get("articles"), list) else []
     daily_sales = snapshot.get("daily_sales") if isinstance(snapshot.get("daily_sales"), list) else []
     top_searches = snapshot.get("top_searches") if isinstance(snapshot.get("top_searches"), list) else []
+    keyword_metrics = snapshot.get("keyword_metrics") if isinstance(snapshot.get("keyword_metrics"), list) else []
 
     def text(value: object, fallback: str = "—") -> str:
         normalized = str(value if value not in (None, "") else fallback)
@@ -821,6 +955,17 @@ def render_vinted_report_html(snapshot: dict[str, Any]) -> str:
         for row in top_searches
         if isinstance(row, dict)
     ) or "<li>No search history available.</li>"
+    keyword_rows = "".join(
+        f'<tr data-keyword-row data-keyword="{text(row.get("keyword"), "").lower()}">'
+        f'<td>{text(row.get("keyword"))}</td><td>{number(row.get("search_runs"))}</td>'
+        f'<td>{number(row.get("run_result_count"))}</td><td>{number(row.get("items_seen"))}</td><td>{number(row.get("sold_items"))}</td>'
+        f'<td>{number(row.get("active_items"))}</td><td>{number(row.get("unavailable_items"))}</td>'
+        f'<td>{float(row.get("sell_through_percent") or 0):.1f}%</td>'
+        f'<td>{text(row.get("average_price"))}</td><td>{text(row.get("average_likes"))}</td>'
+        f'<td>{text(_format_duration(row.get("average_sale_seconds")))}</td>'
+        f'<td>{text(_format_duration(row.get("median_sale_seconds")))}</td></tr>'
+        for row in keyword_metrics if isinstance(row, dict)
+    ) or '<tr><td colspan="12">No keyword-level tracking data available for this period.</td></tr>'
     generated_at = text(snapshot.get("generated_at"))
     period_days = number(snapshot.get("period_days"))
     return f"""<!doctype html>
@@ -829,18 +974,21 @@ def render_vinted_report_html(snapshot: dict[str, Any]) -> str:
 :root{{--bg:#08111d;--panel:#101d2d;--soft:#15263a;--line:#294058;--ink:#edf7ff;--muted:#93a9bd;--cyan:#5ee7f2;--green:#4ade80;--red:#fb7185;--yellow:#facc15}}
 *{{box-sizing:border-box}}body{{margin:0;background:linear-gradient(145deg,#07101b,#0c1725);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}main{{max-width:1400px;margin:auto;padding:32px}}header{{display:flex;justify-content:space-between;gap:20px;align-items:end;margin-bottom:22px}}h1{{margin:4px 0;font-size:30px}}h2{{margin:0 0 14px;font-size:18px}}p,small{{color:var(--muted)}}.eyebrow{{color:var(--cyan);font-size:11px;font-weight:800;letter-spacing:.15em;text-transform:uppercase}}.metrics{{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}}.metric,.card{{border:1px solid var(--line);border-radius:14px;background:rgba(16,29,45,.94)}}.metric{{padding:15px}}.metric span,.metric strong{{display:block}}.metric span{{color:var(--muted);font-size:11px}}.metric strong{{margin-top:8px;font-size:23px}}.grid{{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin:12px 0}}.card{{padding:18px;overflow:auto}}.bars{{display:flex;align-items:end;gap:4px;height:170px;border-bottom:1px solid var(--line)}}.bar-wrap{{display:flex;flex:1;height:100%;min-width:5px;align-items:end;position:relative}}.bar-wrap i{{display:block;width:100%;min-height:3px;border-radius:5px 5px 0 0;background:linear-gradient(var(--cyan),#247e97)}}.bar-wrap small{{display:none}}ul{{list-style:none;padding:0;margin:0}}li{{display:flex;justify-content:space-between;padding:9px;border-bottom:1px solid var(--line)}}section.card{{margin-top:12px}}table{{width:100%;border-collapse:collapse;min-width:850px}}th,td{{padding:10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:middle}}th{{position:sticky;top:0;background:var(--panel);color:var(--muted);font-size:10px;text-transform:uppercase}}td small{{display:block;font-size:10px}}a{{color:var(--cyan);text-decoration:none}}.pill{{padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;text-transform:uppercase;background:#26384a}}.confirmed{{color:var(--green);background:#163a2b}}.priority{{color:var(--red);background:#442330}}.active{{color:var(--cyan);background:#183948}}.candidate{{color:var(--yellow);background:#40391a}}.filters{{display:flex;flex-wrap:wrap;gap:9px;margin:12px 0 15px}}.filters label{{display:grid;gap:4px;color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase}}.filters input,.filters select{{min-width:150px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:var(--soft);color:var(--ink)}}.visible-count{{margin-left:auto;align-self:end;color:var(--muted);font-size:11px}}.article-cell{{display:flex;align-items:center;gap:10px;min-width:220px}}.article-cell img,.thumb-placeholder{{flex:0 0 54px;width:54px;height:54px;border-radius:9px;object-fit:cover;background:#1c3045}}.article-cell img.broken{{display:none}}.thumb-placeholder{{display:grid;place-items:center;color:var(--muted);font-size:20px}}tr[hidden]{{display:none}}@media(max-width:900px){{main{{padding:18px}}.metrics{{grid-template-columns:repeat(2,1fr)}}.grid{{grid-template-columns:1fr}}header{{align-items:start;flex-direction:column}}.visible-count{{width:100%;margin-left:0}}}}
 .owned-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}}.owned-card{{padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--soft)}}.owned-card small{{display:block}}.owned-metrics{{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:12px}}.owned-metrics span{{padding:8px;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:11px}}.owned-metrics b{{display:block;color:var(--ink)}}
+.keyword-search{{margin:8px 0 12px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:var(--soft);color:var(--ink);min-width:240px}}
 </style></head><body><main>
 <header><div><div class="eyebrow">Marketplace intelligence</div><h1>Performance report</h1><p>Saved data snapshot for the last {period_days} days.</p></div><small>Generated {generated_at}</small></header>
 <section class="metrics">{metrics_html}</section>
 <div class="grid"><article class="card"><h2>Confirmed sales trend</h2><div class="bars">{bars_html}</div></article><article class="card"><h2>Top searches</h2><ul>{searches_html}</ul></article></div>
 <section class="card"><h2>My profiles</h2><p>Owned inventory is separated from competitor intelligence.</p><div class="owned-grid">{owned_cards}</div></section>
 <section class="card"><h2>Competitors</h2><p>A seller is confirmed after at least 3 distinct deals for the same search keyword.</p><div class="filters"><label>Status<select id="competitor-status"><option value="all">All statuses</option><option>priority</option><option>confirmed</option><option>active</option><option>candidate</option></select></label><label>Keyword<input id="competitor-keyword" type="search" placeholder="charm, pandora…"></label><span class="visible-count" id="competitor-count"></span></div><table><thead><tr><th>Seller</th><th>Status</th><th>Top keyword</th><th>Keyword deals</th><th>Items</th><th>Gone/sold</th><th>Max likes</th><th>Score</th></tr></thead><tbody>{competitor_rows}</tbody></table></section>
+<section class="card"><h2>Keyword performance</h2><p>Search activity and tracked listing outcomes for the selected report period. Sell-through excludes unavailable listings.</p><input class="keyword-search" id="keyword-search" type="search" placeholder="Filter keywords…"><table><thead><tr><th>Keyword</th><th>Search runs</th><th>Results returned</th><th>Items observed</th><th>Sold</th><th>Still active</th><th>Unavailable</th><th>Sell-through</th><th>Avg. price</th><th>Avg. likes</th><th>Avg. time to sell</th><th>Median time</th></tr></thead><tbody>{keyword_rows}</tbody></table></section>
 <section class="card"><h2>Category trend cohorts</h2><p>The umbrella category is a market benchmark; leaf categories are compared with each other. Only mature observations enter sell-through. Technical failures and unavailable pages do not count as unsold stock.</p><table><thead><tr><th>Segment / kind</th><th>Status</th><th>Mature sample</th><th>Sold ≤ window</th><th>Sell-through</th><th>95% lower bound</th><th>Scans</th><th>Next probe</th></tr></thead><tbody>{trend_rows}</tbody></table></section>
 <section class="card"><h2>Tracked articles</h2><div class="filters"><label>Status<select id="article-status"><option value="all">All statuses</option><option value="sold">Sold</option><option value="active">Active</option><option value="unavailable">Unavailable</option></select></label><label>Keyword<input id="article-keyword" type="search" placeholder="Search keyword…"></label><label>Sale time<select id="article-sale-time"><option value="all">Any duration</option><option value="under-1">Under 1 hour</option><option value="1-6">1–6 hours</option><option value="6-24">6–24 hours</option><option value="over-24">Over 24 hours</option></select></label><span class="visible-count" id="article-count"></span></div><table><thead><tr><th>Photo / article</th><th>Status</th><th>Price</th><th>Likes</th><th>Search</th><th>Sold after</th><th>First seen</th></tr></thead><tbody>{article_rows}</tbody></table></section>
 </main><script>
 const rows=(name)=>[...document.querySelectorAll(`[data-${{name}}-row]`)];
 function filterCompetitors(){{const status=document.querySelector('#competitor-status').value;const keyword=document.querySelector('#competitor-keyword').value.trim().toLowerCase();let visible=0;for(const row of rows('competitor')){{const show=(status==='all'||row.dataset.status===status)&&(!keyword||row.dataset.keyword.includes(keyword));row.hidden=!show;if(show)visible++}}document.querySelector('#competitor-count').textContent=`${{visible}} visible`;}}
 function filterArticles(){{const status=document.querySelector('#article-status').value;const keyword=document.querySelector('#article-keyword').value.trim().toLowerCase();const timing=document.querySelector('#article-sale-time').value;let visible=0;for(const row of rows('article')){{const hours=Number(row.dataset.saleHours);let timeOk=timing==='all'||(timing==='under-1'&&hours>=0&&hours<1)||(timing==='1-6'&&hours>=1&&hours<6)||(timing==='6-24'&&hours>=6&&hours<24)||(timing==='over-24'&&hours>=24);const show=(status==='all'||row.dataset.status===status)&&(!keyword||row.dataset.keyword.includes(keyword))&&timeOk;row.hidden=!show;if(show)visible++}}document.querySelector('#article-count').textContent=`${{visible}} visible`;}}
+document.querySelector('#keyword-search').addEventListener('input',event=>{{const keyword=event.target.value.trim().toLowerCase();for(const row of rows('keyword'))row.hidden=!row.dataset.keyword.includes(keyword);}});
 for(const id of ['competitor-status','competitor-keyword'])document.querySelector(`#${{id}}`).addEventListener('input',filterCompetitors);
 for(const id of ['article-status','article-keyword','article-sale-time'])document.querySelector(`#${{id}}`).addEventListener('input',filterArticles);
 filterCompetitors();filterArticles();
