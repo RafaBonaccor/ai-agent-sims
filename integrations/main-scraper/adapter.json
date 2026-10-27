@@ -210,6 +210,8 @@
       "arguments": ["run", "vinted_continuous", "--stdout-json", "--quiet", "--format", "none"],
       "parameters": [
         { "id": "profile-urls", "label": "Profiles to monitor", "type": "list", "default": "", "namePlaceholder": "Profile name", "placeholder": "Marketplace profile URL or numeric ID", "addLabel": "+ Add profile", "help": "Each profile is checked on the slower profile interval. The database records active, new and disappeared listings." },
+        { "id": "saved-competitors", "label": "Saved competitors", "type": "competitor-list", "help": "Select saved competitor profiles to add them to this monitoring job. They are merged with any URLs entered above." },
+        { "id": "profile-categories", "label": "Profile categories", "type": "text", "default": "", "placeholder": "e.g. Charms e ciondoli, Braccialetti", "help": "Optional. Use the exact category labels found in the profile detail. Leave empty to keep every category." },
         { "id": "competitor-keywords", "label": "Competitor keywords", "type": "text", "default": "charm, pandora", "placeholder": "charm, pandora, bracciale charm", "help": "Search terms scanned repeatedly to find interesting listings and discover their sellers." },
         { "id": "competitor-category", "label": "Competitor category", "type": "select", "default": "Gioielli donna", "options": [
           { "value": "Nessuna categoria rapida", "label": "No quick category" },
@@ -253,6 +255,7 @@
       "arguments": ["run", "vinted_profile", "--stdout-json", "--quiet", "--format", "none"],
       "parameters": [
         { "id": "profile-urls", "label": "Profile URLs", "type": "list", "default": "https://www.vinted.it/member/262102939", "namePlaceholder": "Profile name", "placeholder": "Vinted profile URL or numeric ID", "addLabel": "+ Add profile" },
+        { "id": "profile-categories", "label": "Profile categories", "type": "text", "default": "", "placeholder": "e.g. Charms e ciondoli, Braccialetti", "help": "Optional. Exact category labels shown in the seller detail; blank monitors all categories." },
         { "id": "interval-seconds", "label": "After the first check, repeat every", "type": "duration", "default": 3600, "min": 0, "step": 1, "help": "Start always runs one check immediately. Use 0 to run once and stop." },
         { "id": "daily-report-hour", "label": "Daily Discord digest hour", "type": "number", "default": 10, "min": 0, "max": 23, "step": 1, "help": "Local hour. After each cycle, if this hour has passed, one daily summary is sent." },
         { "id": "max-items", "label": "Max profile items", "type": "number", "default": 0, "min": 0, "step": 1 },
@@ -277,6 +280,7 @@
       "arguments": ["run", "vinted_profile", "--stdout-json", "--quiet", "--format", "none", "--interval-seconds", "0", "--discord-profile-report"],
       "parameters": [
         { "id": "profile-urls", "label": "Profile URLs", "type": "list", "default": "https://www.vinted.it/member/262102939", "namePlaceholder": "Profile name", "placeholder": "Vinted profile URL or numeric ID", "addLabel": "+ Add profile" },
+        { "id": "profile-categories", "label": "Profile categories", "type": "text", "default": "", "placeholder": "e.g. Charms e ciondoli, Braccialetti", "help": "Optional. Exact category labels shown in the seller detail; blank monitors all categories." },
         { "id": "max-items", "label": "Max profile items", "type": "number", "default": 0, "min": 0, "step": 1 },
         { "id": "db-path", "label": "SQLite DB path", "type": "text", "default": "data/scraper.db", "defaultFromUiSetting": "vinted_db_path", "placeholder": "data/scraper.db" },
         { "id": "discord-webhook-url", "label": "Discord webhook", "type": "text", "default": "", "defaultFromUiSetting": "vinted_discord_webhook_url", "placeholder": "https://discord.com/api/webhooks/..." },
@@ -288,6 +292,28 @@
         ] },
         { "id": "browser-user-data-dir", "label": "Browser user data dir", "type": "text", "default": "", "defaultFromUiSetting": "browser_user_data_dir", "placeholder": "/Users/.../Google/Chrome" },
         { "id": "browser-profile-directory", "label": "Browser profile directory", "type": "text", "default": "Default", "defaultFromUiSetting": "browser_profile_directory", "placeholder": "Default" },
+        "refresh-browser-profile"
+      ]
+    },
+    "vinted.profile_sale_check": {
+      "label": "Check sold competitor listings",
+      "description": "On-demand, explicit listing-page check for one seller. A listing is marked sold only when its page shows the Sold state.",
+      "risk": "browser-read",
+      "timeoutSeconds": 0,
+      "arguments": ["run", "vinted_profile", "--stdout-json", "--quiet", "--format", "none", "--interval-seconds", "0", "--check-listing-statuses"],
+      "parameters": [
+        { "id": "profile-urls", "label": "Profile URL", "type": "list", "default": "", "namePlaceholder": "Profile name", "placeholder": "Marketplace profile URL or numeric ID", "addLabel": "+ Add profile" },
+        { "id": "profile-categories", "label": "Profile categories", "type": "text", "default": "", "placeholder": "e.g. Charms e ciondoli, Braccialetti", "help": "Optional. Exact category labels shown in the seller detail; blank checks all categories." },
+        { "id": "max-items", "label": "Max listings to check", "type": "number", "default": 0, "min": 0, "step": 1, "help": "Use 0 to check every current listing saved for this profile." },
+        { "id": "db-path", "label": "SQLite DB path", "type": "text", "default": "data/scraper.db", "defaultFromUiSetting": "vinted_db_path" },
+        { "id": "browser-mode", "label": "Browser mode", "type": "select", "default": "chrome_normale", "defaultFromUiSetting": "browser_mode", "options": [
+          { "value": "chrome_normale", "label": "Chrome normale" },
+          { "value": "sessione_persistente", "label": "Sessione persistente" },
+          { "value": "profilo_personalizzato", "label": "Profilo personalizzato" },
+          { "value": "isolated", "label": "Isolated" }
+        ] },
+        { "id": "browser-user-data-dir", "label": "Browser user data dir", "type": "text", "default": "", "defaultFromUiSetting": "browser_user_data_dir" },
+        { "id": "browser-profile-directory", "label": "Browser profile directory", "type": "text", "default": "Default", "defaultFromUiSetting": "browser_profile_directory" },
         "refresh-browser-profile"
       ]
     },

@@ -236,6 +236,17 @@ export class RuntimeClient {
     return this.request(`/api/vinted/reports?days=${encodeURIComponent(days)}&limit=${encodeURIComponent(limit)}`);
   }
 
+  getVintedCompetitorReport(memberId, limit = 5000) {
+    return this.request(`/api/vinted/reports/competitors/${encodeURIComponent(memberId)}?limit=${encodeURIComponent(limit)}`);
+  }
+
+  checkVintedCompetitorSales(memberId, category = "") {
+    const query = category ? `?category=${encodeURIComponent(category)}` : "";
+    return this.request(`/api/vinted/reports/competitors/${encodeURIComponent(memberId)}/check-sales${query}`, {
+      method: "POST",
+    });
+  }
+
   createVintedReportSourcingBatch(items, maxResults = 40) {
     return this.request("/api/vinted/reports/sourcing-batch", {
       method: "POST",

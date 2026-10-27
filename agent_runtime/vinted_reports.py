@@ -151,6 +151,152 @@ def _best_item_name(candidate: object, fallback: object = "") -> str:
     return candidate_text or fallback_text or "Marketplace item"
 
 
+def _build_competitor_items(
+    connection: sqlite3.Connection, member_id: str, *, limit: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Build one seller's listing history from every persisted observation.
+
+    The competitor registry is a summary table. The listing rows themselves
+    live in search, sale-tracking and profile-snapshot tables, so this merges
+    them by item id/link without dropping removed or sold articles.
+    """
+    known: dict[str, dict[str, Any]] = {}
+    items_columns = _table_columns(connection, "vinted_items")
+    if {"seller_member_id", "link"}.issubset(items_columns):
+        optional = lambda name, fallback: name if name in items_columns else f"{fallback} AS {name}"
+        rows = connection.execute(
+            f"""
+            SELECT {optional('item_id', "''")}, link, {optional('name', "''")},
+                   {optional('price_text', "''")}, {optional('favorite_count', '0')},
+                   {optional('first_seen_at', "''")}, {optional('last_seen_at', "''")}
+            FROM vinted_items WHERE seller_member_id = ?
+            """,
+            (member_id,),
+        ).fetchall()
+        for row in rows:
+            key = str(row["item_id"] or row["link"] or "")
+            if not key:
+                continue
+            known[key] = {
+                "item_id": str(row["item_id"] or ""), "link": str(row["link"] or ""),
+                "name": _best_item_name(row["name"]), "price": str(row["price_text"] or ""),
+                "image_url": "", "favorite_count": row["favorite_count"], "status": "active",
+                "first_seen_at": str(row["first_seen_at"] or ""), "last_seen_at": str(row["last_seen_at"] or ""),
+                "sold_at": "", "sold_after_seconds": None, "sold_after_text": "",
+                "search_term": "", "sale_duration_source": "", "category": "",
+            }
+
+    tracking_columns = _table_columns(connection, "vinted_deal_sale_tracking")
+    if {"item_link", "payload_json"}.issubset(tracking_columns):
+        rows = connection.execute("SELECT * FROM vinted_deal_sale_tracking ORDER BY first_seen_at", ()).fetchall()
+        for row in rows:
+            payload = _safe_payload(row["payload_json"])
+            if str(payload.get("seller_member_id", "") or "") != member_id:
+                continue
+            item_id = str(row["item_id"] or payload.get("item_id", "") or "")
+            link = str(row["item_link"] or payload.get("link", "") or "")
+            key = item_id or link
+            if not key:
+                continue
+            base = known.get(key, {})
+            status = str(row["status"] or "active")
+            sold_at = str(row["sold_at"] or "")
+            duration, source = _sale_duration(str(row["first_seen_at"] or ""), sold_at, payload) if status == "sold" and sold_at else (None, "")
+            known[key] = {
+                **base, "item_id": item_id, "link": link,
+                "name": _best_item_name(row["item_name"] if "item_name" in row.keys() else "", payload.get("name") or base.get("name", "")),
+                "price": str(payload.get("price", "") or payload.get("price_text", "") or base.get("price", "")),
+                "image_url": str(payload.get("image_url", "") or base.get("image_url", "")),
+                "favorite_count": payload.get("favorite_count", base.get("favorite_count")), "status": status,
+                "first_seen_at": str(row["first_seen_at"] or base.get("first_seen_at", "")),
+                "last_seen_at": str(row["last_checked_at"] or base.get("last_seen_at", "")), "sold_at": sold_at,
+                "sold_after_seconds": duration, "sold_after_text": _format_duration(duration),
+                "search_term": str(payload.get("search_term", "") or base.get("search_term", "")),
+                "sale_duration_source": source, "category": str(payload.get("category", "") or base.get("category", "")),
+            }
+
+    snapshot_columns = _table_columns(connection, "vinted_profile_snapshot_items")
+    if {"member_id", "item_link", "snapshot_json"}.issubset(snapshot_columns):
+        rows = connection.execute(
+            """
+            SELECT psi.*, s.checked_at, s.item_count AS snapshot_item_count FROM vinted_profile_snapshot_items psi
+            JOIN vinted_profile_snapshots s ON s.id = psi.snapshot_id
+            WHERE psi.member_id = ? ORDER BY s.checked_at, psi.id
+            """,
+            (member_id,),
+        ).fetchall()
+        for row in rows:
+            # Older versions could persist a zero-item response as every
+            # prior item gone. Treat that snapshot as incomplete in reports;
+            # the scraper now prevents these snapshots from being created.
+            if int(row["snapshot_item_count"] or 0) == 0:
+                continue
+            payload = _safe_payload(row["snapshot_json"])
+            item_id = str(row["item_id"] or payload.get("item_id", "") or "")
+            link = str(row["item_link"] or payload.get("link", "") or "")
+            key = item_id or link
+            if not key:
+                continue
+            base = known.get(key, {})
+            snapshot_status = str(row["status"] or "")
+            explicit_sold = snapshot_status == "sold" or str(payload.get("profile_item_status", "") or "") == "sold"
+            absent = not bool(row["present"])
+            status = "sold" if explicit_sold else "gone" if absent else "active"
+            sold_at = str(base.get("sold_at", "") or payload.get("profile_sold_at", ""))
+            duration = base.get("sold_after_seconds") or payload.get("profile_sold_after_seconds")
+            known[key] = {
+                **base, "item_id": item_id, "link": link,
+                "name": _best_item_name(row["item_name"], payload.get("name") or base.get("name", "")),
+                "price": str(row["price_text"] or payload.get("price", "") or base.get("price", "")),
+                "image_url": str(row["image_url"] or payload.get("image_url", "") or base.get("image_url", "")),
+                "status": status, "first_seen_at": str(payload.get("profile_first_seen_at", "") or base.get("first_seen_at", row["checked_at"])),
+                "last_seen_at": str(payload.get("profile_last_seen_at", "") or row["checked_at"]), "sold_at": sold_at,
+                "sold_after_seconds": duration, "sold_after_text": _format_duration(duration),
+                "search_term": str(base.get("search_term", "")), "sale_duration_source": str(base.get("sale_duration_source", "")),
+                "category": str(payload.get("category", "") or base.get("category", "")),
+            }
+
+    items = sorted(known.values(), key=lambda row: str(row.get("sold_at") or row.get("last_seen_at") or row.get("first_seen_at") or ""), reverse=True)
+    sold = [row for row in items if row.get("status") == "sold"]
+    durations = [int(row["sold_after_seconds"]) for row in sold if isinstance(row.get("sold_after_seconds"), (int, float))]
+    metrics = {
+        "known_items_count": len(items), "active_items_count": sum(row.get("status") == "active" for row in items),
+        "sold_items_count": len(sold), "gone_items_count": sum(row.get("status") == "gone" for row in items),
+        "average_sale_seconds": round(sum(durations) / len(durations)) if durations else None,
+        "average_sale_text": _format_duration(round(sum(durations) / len(durations))) if durations else "",
+        "categories": sorted({str(row.get("category", "") or "").strip() for row in items if str(row.get("category", "") or "").strip()}, key=str.casefold),
+    }
+    return items[:limit], metrics
+
+
+def build_vinted_competitor_report(
+    project_root: str | Path, member_id: str, *, limit: int = 5000, db_path: str | Path | None = None
+) -> dict[str, Any]:
+    """Return the on-demand listing history for one competitor profile."""
+    root = Path(project_root).expanduser().resolve()
+    database = Path(db_path).expanduser().resolve() if db_path else (root / DEFAULT_REPORT_DB).resolve()
+    normalized_member_id = str(member_id or "").strip()
+    if not normalized_member_id or not database.exists():
+        return {"available": False, "seller_member_id": normalized_member_id, "items": []}
+    with closing(sqlite3.connect(database)) as connection:
+        connection.row_factory = sqlite3.Row
+        competitor_columns = _table_columns(connection, "vinted_competitors")
+        if not competitor_columns or "seller_member_id" not in competitor_columns:
+            return {"available": False, "seller_member_id": normalized_member_id, "items": []}
+        row = connection.execute("SELECT * FROM vinted_competitors WHERE seller_member_id = ?", (normalized_member_id,)).fetchone()
+        if row is None:
+            return {"available": False, "seller_member_id": normalized_member_id, "items": []}
+        items, metrics = _build_competitor_items(connection, normalized_member_id, limit=max(1, min(int(limit or 5000), 5000)))
+        return {
+            "available": True, "seller_member_id": normalized_member_id,
+            "seller_name": str(row["seller_name"] or "") or f"Seller {normalized_member_id}",
+            "seller_profile_url": str(row["seller_profile_url"] or ""),
+            "status": str(row["status"] or "candidate"),
+            "manual_priority": bool(row["manual_priority"]) if "manual_priority" in row.keys() else False,
+            "generated_at": datetime.now().isoformat(timespec="seconds"), "items": items, **metrics,
+        }
+
+
 def _elapsed_seconds(start: str, end: str) -> int | None:
     try:
         return max(int((datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds()), 0)

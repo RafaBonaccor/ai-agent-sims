@@ -100,6 +100,7 @@ const reportFilterButtons = Array.from(document.querySelectorAll("[data-report-f
 const reportTabButtons = Array.from(document.querySelectorAll("[data-report-tab]"));
 const reportPanels = Array.from(document.querySelectorAll("[data-report-panel]"));
 const reportCompetitors = document.querySelector("#report-competitors");
+const reportCompetitorDetail = document.querySelector("#report-competitor-detail");
 const reportCompetitorCount = document.querySelector("#report-competitor-count");
 const reportCompetitorStatus = document.querySelector("#report-competitor-status");
 const reportKeywords = document.querySelector("#report-keywords");
@@ -352,8 +353,14 @@ let reportArticleFilter = "all";
 let reportSaleTimeFilter = "all";
 let reportSelectedArticleKeys = new Set();
 let reportCompetitorStatusFilter = "all";
+let reportSelectedCompetitorId = "";
+let reportCompetitorItemFilter = "all";
+const reportCompetitorDetails = new Map();
+const reportCompetitorSaleChecks = new Set();
+const reportCompetitorSaleCheckJobs = new Map();
 let reportOwnedStatusFilter = "all";
 let reportOwnedSearchFilter = "";
+let projectCompetitorProfiles = [];
 
 const providerDefaults = {
   simulated: { model: "native-simulator", baseUrl: "" },
@@ -4525,6 +4532,16 @@ function handleRuntimeEvent(event) {
         activeProjectJobs.delete(job.id);
       }
       renderActiveWorkOverview();
+      const checkedCompetitorId = reportCompetitorSaleCheckJobs.get(job.id);
+      if (checkedCompetitorId && (job.state === "completed" || job.state === "failed")) {
+        reportCompetitorSaleCheckJobs.delete(job.id);
+        reportCompetitorSaleChecks.delete(checkedCompetitorId);
+        reportCompetitorDetails.delete(checkedCompetitorId);
+        if (reportSelectedCompetitorId === checkedCompetitorId) {
+          renderReportCompetitors();
+          if (job.state === "completed") loadReportCompetitorDetail(checkedCompetitorId);
+        }
+      }
     }
     const agent = job?.agent_id ? network.getAgent(job.agent_id) : null;
     if (agent) {
@@ -4668,6 +4685,17 @@ function renderProjectParameters() {
           </label>
         `;
       }
+      if (type === "competitor-list") {
+        const profiles = Array.isArray(projectCompetitorProfiles) ? projectCompetitorProfiles : [];
+        const rows = profiles.length ? profiles.map((profile) => {
+          const url = String(profile.seller_profile_url || "").trim();
+          if (!url) return "";
+          const name = String(profile.seller_name || `Seller ${profile.seller_member_id || ""}`).trim();
+          const status = String(profile.status || "candidate");
+          return `<label class="project-competitor-option"><input type="checkbox" data-project-competitor-profile value="${escapeHtml(url)}" /><span><b>${escapeHtml(name)}</b><small>${escapeHtml(status)} · ${escapeHtml(profile.seller_member_id || "")}</small></span></label>`;
+        }).join("") : '<p class="project-parameter-help">No saved competitors yet. Run Competitor discovery or enter a profile URL manually.</p>';
+        return `<section class="project-competitor-list"><span>${escapeHtml(label)}</span><div>${rows}</div>${projectParameterHelpHtml(parameter)}</section>`;
+      }
       const value = parameter.default !== undefined && parameter.default !== null ? ` value="${String(parameter.default).replaceAll('"', "&quot;")}"` : "";
       return `<label class="${checkedClass}"><span>${label}</span><input data-project-parameter="${id}" type="${type}"${value}${placeholder}${min}${max}${step} />${projectParameterHelpHtml(parameter)}</label>`;
     })
@@ -4709,6 +4737,13 @@ function readProjectParameters() {
     if (value !== "") {
       parameters[input.dataset.projectParameter] = input.type === "number" ? Number(value) : value;
     }
+  }
+  const competitorUrls = [...projectParameters.querySelectorAll("[data-project-competitor-profile]:checked")]
+    .map((input) => String(input.value || "").trim())
+    .filter(Boolean);
+  if (competitorUrls.length) {
+    const manualUrls = String(parameters["profile-urls"] || "").split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+    parameters["profile-urls"] = [...new Set([...manualUrls, ...competitorUrls])].join("\n");
   }
   return parameters;
 }
@@ -5034,6 +5069,12 @@ async function openProjectGateway(options = {}) {
   projectResult.textContent = "Caricamento progetti...";
   try {
     availableProjects = await runtimeClient.listProjects();
+    try {
+      const report = await runtimeClient.getVintedReports(3650, 5000);
+      projectCompetitorProfiles = Array.isArray(report?.competitor_profiles) ? report.competitor_profiles : [];
+    } catch {
+      projectCompetitorProfiles = [];
+    }
     const ready = availableProjects.filter((project) => project.enabled && project.available);
     projectSelect.innerHTML = ready.map((project) => `<option value="${project.id}">${project.name}</option>`).join("");
     if (!ready.length && panel !== "memory") {
@@ -5525,6 +5566,9 @@ function renderReportCompetitors() {
   const profiles = Array.isArray(reportSnapshot?.competitor_profiles)
     ? reportSnapshot.competitor_profiles
     : [];
+  if (reportSelectedCompetitorId && !profiles.some((profile) => profile.seller_member_id === reportSelectedCompetitorId)) {
+    reportSelectedCompetitorId = "";
+  }
   if (reportCompetitorCount) reportCompetitorCount.textContent = formatReportNumber(profiles.length);
   const filtered = reportCompetitorStatusFilter === "all"
     ? profiles
@@ -5532,6 +5576,77 @@ function renderReportCompetitors() {
   if (!filtered.length) {
     reportCompetitors.innerHTML = '<div class="report-status">No competitor profiles match this filter.</div>';
     return;
+  }
+  if (reportCompetitorDetail) {
+    const selectedSummary = profiles.find((profile) => profile.seller_member_id === reportSelectedCompetitorId);
+    const selected = selectedSummary ? { ...selectedSummary, ...(reportCompetitorDetails.get(reportSelectedCompetitorId) || {}) } : null;
+    if (!selected) {
+      reportCompetitorDetail.hidden = true;
+      reportCompetitorDetail.innerHTML = "";
+    } else {
+      const sellerName = selected.seller_name || `Seller ${selected.seller_member_id || "unknown"}`;
+      const detailLoaded = reportCompetitorDetails.has(reportSelectedCompetitorId);
+      const allItems = Array.isArray(selected.items) ? selected.items : [];
+      const items = reportCompetitorItemFilter === "all" ? allItems : allItems.filter((item) => (item.status || "active") === reportCompetitorItemFilter);
+      const itemCards = !detailLoaded ? '<div class="report-status">Loading saved listing history…</div>' : items.length ? items.map((item) => {
+        const status = item.status || "active";
+        const image = item.image_url
+          ? `<img src="${escapeHtml(item.image_url)}" alt="" loading="lazy" />`
+          : '<span class="report-competitor-item__placeholder">◇</span>';
+        const outcome = status === "sold"
+          ? `Sold in ${item.sold_after_text || "unknown time"}${item.sold_at ? ` · ${formatReportDate(item.sold_at)}` : ""}`
+          : status === "gone" ? "Removed / no longer active" : `Last seen ${formatReportDate(item.last_seen_at || item.first_seen_at)}`;
+        return `<a class="report-competitor-item" href="${escapeHtml(item.link || selected.seller_profile_url || "#")}" target="_blank" rel="noopener noreferrer">
+          ${image}<span><strong>${escapeHtml(item.name || "Marketplace item")}</strong><small>${escapeHtml(item.price || "Price unavailable")} · ${escapeHtml(outcome)}</small><small>${escapeHtml(item.search_term ? `Search: ${item.search_term}` : "")}</small></span>
+          <span class="report-competitor-item__meta"><b>${item.favorite_count == null ? "—" : formatReportNumber(item.favorite_count)} likes</b><em class="report-pill report-pill--competitor-${escapeHtml(status)}">${escapeHtml(status)}</em></span>
+        </a>`;
+      }).join("") : '<div class="report-status">No listing history has been collected for this competitor yet.</div>';
+      const averageSale = selected.average_sale_text || "—";
+      const known = Number(selected.known_items_count) || 0;
+      const active = Number(selected.active_items_count) || 0;
+      const sold = Number(selected.sold_items_count) || 0;
+      const gone = Number(selected.gone_items_count) || 0;
+      const categories = [...new Set([
+        ...(Array.isArray(selected.categories) ? selected.categories : []),
+        "Charms e ciondoli", "Braccialetti", "Collane", "Anelli", "Orecchini", "Spille", "Altro",
+      ])].sort((left, right) => left.localeCompare(right, "it"));
+      const categoryOptions = categories.map((category) => `<option value="${escapeHtml(category)}"></option>`).join("");
+      const distribution = known ? [
+        ["active", active], ["sold", sold], ["gone", gone],
+      ].filter(([, count]) => count > 0).map(([status, count]) => `<i data-status="${status}" style="--competitor-segment:${(Number(count) / known) * 100}%" title="${status}: ${count}"></i>`).join("") : "";
+      reportCompetitorDetail.hidden = false;
+      reportCompetitorDetail.innerHTML = `<header class="report-competitor-detail__heading">
+        <div class="report-competitor-detail__identity"><span class="section-label">Competitor intelligence</span><h4>${escapeHtml(sellerName)}</h4><small>Member ID ${escapeHtml(selected.seller_member_id || "—")} · last observed ${escapeHtml(formatReportDate(selected.last_seen_at))}</small></div>
+        <div class="report-competitor-detail__actions"><a class="button button--compact" href="${escapeHtml(selected.seller_profile_url || "#")}" target="_blank" rel="noopener noreferrer">Open profile ↗</a><label class="report-competitor-category"><span>Category</span><input data-competitor-sales-category list="competitor-category-${escapeHtml(selected.seller_member_id || "")}" placeholder="All categories" /><datalist id="competitor-category-${escapeHtml(selected.seller_member_id || "")}">${categoryOptions}</datalist></label><button class="button button--compact button--primary" type="button" data-competitor-check-sales ${reportCompetitorSaleChecks.has(reportSelectedCompetitorId) ? "disabled" : ""}>${reportCompetitorSaleChecks.has(reportSelectedCompetitorId) ? "Checking sold listings…" : "Check sold listings"}</button><button class="button button--compact" type="button" data-competitor-detail-close>Close</button></div>
+      </header>
+      <div class="report-competitor-detail__metrics">
+        <span data-tone="known"><b>${formatReportNumber(known)}</b> listings known</span><span data-tone="active"><b>${formatReportNumber(active)}</b> live now</span>
+        <span data-tone="sold"><b>${formatReportNumber(sold)}</b> confirmed sold</span><span data-tone="gone"><b>${formatReportNumber(gone)}</b> removed / unknown</span>
+        <span data-tone="time"><b>${escapeHtml(averageSale)}</b> avg. sale time</span>
+      </div>
+      <div class="report-competitor-detail__distribution"><div>${distribution || '<i data-status="empty" style="--competitor-segment:100%"></i>'}</div><span><b>${formatReportNumber(sold)}</b> sold confirmed · <b>${formatReportNumber(active)}</b> currently active</span></div>
+      <div class="report-competitor-detail__toolbar"><div class="report-competitor-detail__filters">
+        ${[["all", "All", known], ["active", "Active", active], ["sold", "Sold", sold], ["gone", "Removed", gone]].map(([status, label, count]) => `<button type="button" data-competitor-item-filter="${status}" class="${reportCompetitorItemFilter === status ? "is-active" : ""}">${label} <b>${formatReportNumber(count)}</b></button>`).join("")}
+      </div><small>${formatReportNumber(items.length)} of ${formatReportNumber(allItems.length)} listing${allItems.length === 1 ? "" : "s"} shown · “Removed” is never counted as sold without platform confirmation.</small></div>
+      <div class="report-competitor-items">${itemCards}</div>`;
+      reportCompetitorDetail.querySelector("[data-competitor-detail-close]")?.addEventListener("click", () => {
+        reportSelectedCompetitorId = "";
+        renderReportCompetitors();
+      });
+      reportCompetitorDetail.querySelector("[data-competitor-check-sales]")?.addEventListener("click", () => {
+        const category = reportCompetitorDetail.querySelector("[data-competitor-sales-category]")?.value || "";
+        startReportCompetitorSaleCheck(reportSelectedCompetitorId, category);
+      });
+      reportCompetitorDetail.querySelectorAll("img").forEach((image) => {
+        image.addEventListener("error", () => image.replaceWith(Object.assign(document.createElement("span"), { className: "report-competitor-item__placeholder", textContent: "◇" })), { once: true });
+      });
+      reportCompetitorDetail.querySelectorAll("[data-competitor-item-filter]").forEach((button) => {
+        button.addEventListener("click", () => {
+          reportCompetitorItemFilter = button.dataset.competitorItemFilter || "all";
+          renderReportCompetitors();
+        });
+      });
+    }
   }
   reportCompetitors.innerHTML = filtered.map((profile) => {
     const sellerName = profile.seller_name || `Seller ${profile.seller_member_id || "unknown"}`;
@@ -5560,10 +5675,52 @@ function renderReportCompetitors() {
       <div class="report-competitor__footer">
         <span>Score <b>${formatReportNumber(profile.score)}</b></span>
         <span>Last seen ${escapeHtml(formatReportDate(profile.last_seen_at))}</span>
-      </div>`;
-    if (!profile.seller_profile_url) return `<article class="report-competitor">${content}</article>`;
-    return `<a class="report-competitor" href="${escapeHtml(profile.seller_profile_url)}" target="_blank" rel="noopener noreferrer">${content}</a>`;
+      </div><span class="report-competitor__open">View listing history →</span>`;
+    return `<button class="report-competitor" type="button" data-competitor-detail="${escapeHtml(profile.seller_member_id || "")}" aria-label="View listing history for ${escapeHtml(sellerName)}">${content}</button>`;
   }).join("");
+  reportCompetitors.querySelectorAll("[data-competitor-detail]").forEach((button) => {
+    button.addEventListener("click", () => {
+      reportSelectedCompetitorId = button.dataset.competitorDetail || "";
+      reportCompetitorItemFilter = "all";
+      renderReportCompetitors();
+      reportCompetitorDetail?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      loadReportCompetitorDetail(reportSelectedCompetitorId);
+    });
+  });
+}
+
+async function startReportCompetitorSaleCheck(memberId, category = "") {
+  if (!memberId || reportCompetitorSaleChecks.has(memberId) || !runtimeClient.connected) return;
+  reportCompetitorSaleChecks.add(memberId);
+  renderReportCompetitors();
+  try {
+    const job = await runtimeClient.checkVintedCompetitorSales(memberId, category);
+    reportCompetitorSaleCheckJobs.set(job.id, memberId);
+    syncProjectJobToast(job, "project.job.queued");
+    reportStatus.textContent = `Sold-listing verification started${category ? ` for ${category}` : ""}. The competitor report will refresh when the job completes.`;
+    showGameNotification({ title: "Sold listings check started", subtitle: "Vinted Analyst is verifying this seller's listings", tone: "active", key: `competitor-sales-${job.id}` });
+  } catch (error) {
+    reportCompetitorSaleChecks.delete(memberId);
+    reportStatus.textContent = `Could not start sold-listing check: ${error.message}`;
+    reportUiError("ui.vinted-reports.competitor-sales", error, { phase: "create-sale-check", member_id: memberId });
+  } finally {
+    renderReportCompetitors();
+  }
+}
+
+async function loadReportCompetitorDetail(memberId) {
+  if (!memberId || reportCompetitorDetails.has(memberId) || !runtimeClient.connected) return;
+  try {
+    const detail = await runtimeClient.getVintedCompetitorReport(memberId);
+    reportCompetitorDetails.set(memberId, detail);
+    if (reportSelectedCompetitorId === memberId) renderReportCompetitors();
+  } catch (error) {
+    if (reportSelectedCompetitorId === memberId && reportCompetitorDetail) {
+      reportCompetitorDetail.hidden = false;
+      reportCompetitorDetail.innerHTML = `<div class="report-status">Could not load competitor history: ${escapeHtml(error.message)}</div>`;
+    }
+    reportUiError("ui.vinted-reports.competitor-detail", error, { phase: "load-competitor-detail", member_id: memberId });
+  }
 }
 
 function renderReportOwnedProfiles() {
@@ -5666,6 +5823,7 @@ function renderReportOwnedProfiles() {
 
 function renderVintedReport(snapshot) {
   reportSnapshot = snapshot;
+  reportCompetitorDetails.clear();
   const eligible = new Set((Array.isArray(snapshot?.articles) ? snapshot.articles : [])
     .filter(reportArticleCanSource)
     .map(reportArticleKey));

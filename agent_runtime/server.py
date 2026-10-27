@@ -51,6 +51,7 @@ from .vinted_ai import (
 )
 from .error_reporting import RuntimeErrorReporter
 from .vinted_reports import (
+    build_vinted_competitor_report,
     build_vinted_report,
     deactivate_owned_profile,
     save_owned_profile,
@@ -643,6 +644,36 @@ async def vinted_reports(
     try:
         return build_vinted_report(PROJECT_ROOT, days=days, limit=limit)
     except (OSError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/api/vinted/reports/competitors/{member_id}")
+async def vinted_competitor_report(member_id: str, limit: int = Query(default=5000, ge=1, le=5000)) -> dict[str, object]:
+    report = build_vinted_competitor_report(PROJECT_ROOT, member_id, limit=limit)
+    if not report.get("available"):
+        raise HTTPException(status_code=404, detail="Competitor profile not found")
+    return report
+
+
+@app.post("/api/vinted/reports/competitors/{member_id}/check-sales", response_model=ProjectJob, status_code=202)
+async def check_vinted_competitor_sales(member_id: str, category: str = Query(default="", max_length=160)) -> ProjectJob:
+    """Queue an explicit listing-page sold-state verification for one competitor."""
+    report = build_vinted_competitor_report(PROJECT_ROOT, member_id, limit=1)
+    if not report.get("available"):
+        raise HTTPException(status_code=404, detail="Competitor profile not found")
+    profile_url = str(report.get("seller_profile_url", "") or "").strip()
+    if not profile_url:
+        raise HTTPException(status_code=422, detail="The competitor has no saved profile URL")
+    try:
+        return await project_gateway().create_job(
+            ProjectJobCreate(
+                project_id="main-scraper",
+                action="vinted.profile_sale_check",
+                parameters={"profile-urls": profile_url, "profile-categories": category.strip(), "max-items": 0, "db-path": "data/scraper.db"},
+                agent_id="vinted-analyst",
+            )
+        )
+    except (KeyError, PermissionError, ValueError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 

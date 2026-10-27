@@ -7,6 +7,7 @@ from pathlib import Path
 
 from agent_runtime.vinted_reports import (
     _best_item_name,
+    build_vinted_competitor_report,
     build_vinted_report,
     deactivate_owned_profile,
     save_owned_profile,
@@ -15,6 +16,54 @@ from agent_runtime.vinted_reports import (
 
 
 class VintedReportsTests(unittest.TestCase):
+    def test_competitor_profile_includes_listing_history_and_sale_timing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            db_path = root / "scraper.db"
+            now = datetime.now().replace(microsecond=0)
+            first_seen = now - timedelta(hours=3)
+            with sqlite3.connect(db_path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE vinted_items(
+                        link TEXT PRIMARY KEY, item_id TEXT, name TEXT, price_text TEXT,
+                        favorite_count INTEGER, seller_name TEXT, seller_profile_url TEXT, seller_member_id TEXT, first_seen_at TEXT, last_seen_at TEXT
+                    );
+                    CREATE TABLE vinted_competitors(
+                        seller_member_id TEXT PRIMARY KEY, seller_name TEXT, seller_profile_url TEXT,
+                        status TEXT, top_deal_keyword TEXT, same_keyword_deal_count INTEGER,
+                        interesting_item_count INTEGER, distinct_search_terms INTEGER, gone_item_count INTEGER,
+                        max_favorite_count INTEGER, score REAL, last_seen_at TEXT, manual_priority INTEGER
+                    );
+                    CREATE TABLE vinted_deal_sale_tracking(
+                        item_link TEXT PRIMARY KEY, item_id TEXT, item_name TEXT, first_seen_at TEXT,
+                        last_checked_at TEXT, sold_at TEXT, status TEXT, payload_json TEXT
+                    );
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO vinted_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    ("https://example/items/1", "1", "Gold star charm", "15,00 €", 22, "Seller 55", "https://example/member/55", "55", first_seen.isoformat(), now.isoformat()),
+                )
+                connection.execute(
+                    "INSERT INTO vinted_competitors VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    ("55", "Seller 55", "https://example/member/55", "priority", "charm", 3, 1, 1, 0, 22, 90, now.isoformat(), 1),
+                )
+                connection.execute(
+                    "INSERT INTO vinted_deal_sale_tracking VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    ("https://example/items/1", "1", "Gold star charm", first_seen.isoformat(), now.isoformat(), now.isoformat(), "sold", json.dumps({"seller_member_id": "55", "favorite_count": 22, "deal_sale_duration_seconds": 10_800, "image_url": "https://img/1.jpg", "search_term": "charm"})),
+                )
+
+            report = build_vinted_competitor_report(root, "55", db_path=db_path)
+
+        profile = report
+        self.assertEqual("55", profile["seller_member_id"])
+        self.assertEqual(1, profile["sold_items_count"])
+        self.assertEqual(10_800, profile["average_sale_seconds"])
+        self.assertEqual("Gold star charm", profile["items"][0]["name"])
+        self.assertEqual("sold", profile["items"][0]["status"])
+        self.assertEqual(10_800, profile["items"][0]["sold_after_seconds"])
+
     def test_generic_profile_labels_do_not_overwrite_real_listing_title(self) -> None:
         self.assertEqual("Charm kitty portafortuna", _best_item_name("Charm", "Charm kitty portafortuna"))
         self.assertEqual("Charm Japan compatibile Pandora", _best_item_name("No Label", "Charm Japan compatibile Pandora"))
