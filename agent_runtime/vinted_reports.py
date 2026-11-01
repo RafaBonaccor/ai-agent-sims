@@ -926,8 +926,13 @@ def build_vinted_report(
                     and known_items.get(str(row["item_id"] or row["item_link"] or ""), {}).get("status") != "sold"
                 )
 
+            # Unknown is an inconclusive profile check, not useful inventory
+            # data. Keep the raw snapshot for auditability, but do not surface
+            # these transient rows in the owned-profile report.
             profile_items = sorted(
-                known_items.values(), key=lambda item: str(item.get("sold_at") or item.get("last_seen_at") or item.get("first_seen_at") or ""), reverse=True
+                (item for item in known_items.values() if item.get("status") != "unknown"),
+                key=lambda item: str(item.get("sold_at") or item.get("last_seen_at") or item.get("first_seen_at") or ""),
+                reverse=True,
             )
             sold_items = [item for item in profile_items if item.get("status") == "sold"]
             active_items = [item for item in profile_items if item.get("status") == "active"]
@@ -1056,17 +1061,34 @@ def render_vinted_report_html(snapshot: dict[str, Any]) -> str:
         f'<td>{number(row.get("scans_count"))}</td><td>{text(row.get("next_review_at"))}</td></tr>'
         for row in trend_queries if isinstance(row, dict)
     ) or '<tr><td colspan="8">No trend cohorts collected yet.</td></tr>'
+    def owned_profile_card(profile: dict[str, Any]) -> str:
+        visible_items = [
+            item for item in profile.get("items", [])
+            if isinstance(item, dict) and item.get("status") == "active"
+        ][:8]
+        thumbnails = "".join(
+            f'<a class="owned-thumb" href="{text(item.get("link"), "#")}" target="_blank" rel="noopener" title="{text(item.get("name"), "Marketplace item")}">'
+            + (f'<img src="{text(item.get("image_url"), "")}" alt="{text(item.get("name"), "Marketplace item")}" loading="lazy" onerror="this.classList.add(\'broken\')">'
+               if item.get("image_url") else '<span class="thumb-placeholder">◇</span>')
+            + f'<span>{text(item.get("name"), "Marketplace item")}</span></a>'
+            for item in visible_items
+        ) or '<small class="owned-no-items">No active items with thumbnails.</small>'
+        return (
+            '<article class="owned-card">'
+            f'<div><a href="{text(profile.get("profile_url"), "#")}\"><strong>{text(profile.get("display_name"))}</strong></a><small>Member ID {text(profile.get("member_id"))}</small></div>'
+            '<div class="owned-metrics">'
+            f'<span><b>{number(profile.get("known_items_count"))}</b> known</span>'
+            f'<span><b>{number(profile.get("active_items_count"))}</b> active</span>'
+            f'<span><b>{number(profile.get("sold_items_count"))}</b> sold</span>'
+            f'<span><b>{text(profile.get("average_sale_text"))}</b> avg. sale</span>'
+            f'<span><b>{number(profile.get("snapshots_count"))}</b> snapshots</span>'
+            '</div>'
+            f'<div class="owned-thumbnails">{thumbnails}</div>'
+            '</article>'
+        )
+
     owned_cards = "".join(
-        '<article class="owned-card">'
-        f'<div><a href="{text(profile.get("profile_url"), "#")}"><strong>{text(profile.get("display_name"))}</strong></a><small>Member ID {text(profile.get("member_id"))}</small></div>'
-        '<div class="owned-metrics">'
-        f'<span><b>{number(profile.get("known_items_count"))}</b> known</span>'
-        f'<span><b>{number(profile.get("active_items_count"))}</b> active</span>'
-        f'<span><b>{number(profile.get("sold_items_count"))}</b> sold</span>'
-        f'<span><b>{text(profile.get("average_sale_text"))}</b> avg. sale</span>'
-        f'<span><b>{number(profile.get("snapshots_count"))}</b> snapshots</span>'
-        '</div></article>'
-        for profile in owned_profiles if isinstance(profile, dict)
+        owned_profile_card(profile) for profile in owned_profiles if isinstance(profile, dict)
     ) or '<p>No owned profiles configured.</p>'
     def article_display_status(row: dict[str, Any]) -> str:
         if str(row.get("status", "")) == "sold":
@@ -1119,7 +1141,7 @@ def render_vinted_report_html(snapshot: dict[str, Any]) -> str:
 <title>Marketplace Intelligence Report</title><style>
 :root{{--bg:#08111d;--panel:#101d2d;--soft:#15263a;--line:#294058;--ink:#edf7ff;--muted:#93a9bd;--cyan:#5ee7f2;--green:#4ade80;--red:#fb7185;--yellow:#facc15}}
 *{{box-sizing:border-box}}body{{margin:0;background:linear-gradient(145deg,#07101b,#0c1725);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}main{{max-width:1400px;margin:auto;padding:32px}}header{{display:flex;justify-content:space-between;gap:20px;align-items:end;margin-bottom:22px}}h1{{margin:4px 0;font-size:30px}}h2{{margin:0 0 14px;font-size:18px}}p,small{{color:var(--muted)}}.eyebrow{{color:var(--cyan);font-size:11px;font-weight:800;letter-spacing:.15em;text-transform:uppercase}}.metrics{{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}}.metric,.card{{border:1px solid var(--line);border-radius:14px;background:rgba(16,29,45,.94)}}.metric{{padding:15px}}.metric span,.metric strong{{display:block}}.metric span{{color:var(--muted);font-size:11px}}.metric strong{{margin-top:8px;font-size:23px}}.grid{{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin:12px 0}}.card{{padding:18px;overflow:auto}}.bars{{display:flex;align-items:end;gap:4px;height:170px;border-bottom:1px solid var(--line)}}.bar-wrap{{display:flex;flex:1;height:100%;min-width:5px;align-items:end;position:relative}}.bar-wrap i{{display:block;width:100%;min-height:3px;border-radius:5px 5px 0 0;background:linear-gradient(var(--cyan),#247e97)}}.bar-wrap small{{display:none}}ul{{list-style:none;padding:0;margin:0}}li{{display:flex;justify-content:space-between;padding:9px;border-bottom:1px solid var(--line)}}section.card{{margin-top:12px}}table{{width:100%;border-collapse:collapse;min-width:850px}}th,td{{padding:10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:middle}}th{{position:sticky;top:0;background:var(--panel);color:var(--muted);font-size:10px;text-transform:uppercase}}td small{{display:block;font-size:10px}}a{{color:var(--cyan);text-decoration:none}}.pill{{padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;text-transform:uppercase;background:#26384a}}.confirmed{{color:var(--green);background:#163a2b}}.priority{{color:var(--red);background:#442330}}.active{{color:var(--cyan);background:#183948}}.candidate{{color:var(--yellow);background:#40391a}}.filters{{display:flex;flex-wrap:wrap;gap:9px;margin:12px 0 15px}}.filters label{{display:grid;gap:4px;color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase}}.filters input,.filters select{{min-width:150px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:var(--soft);color:var(--ink)}}.visible-count{{margin-left:auto;align-self:end;color:var(--muted);font-size:11px}}.article-cell{{display:flex;align-items:center;gap:10px;min-width:220px}}.article-cell img,.thumb-placeholder{{flex:0 0 54px;width:54px;height:54px;border-radius:9px;object-fit:cover;background:#1c3045}}.article-cell img.broken{{display:none}}.thumb-placeholder{{display:grid;place-items:center;color:var(--muted);font-size:20px}}tr[hidden]{{display:none}}@media(max-width:900px){{main{{padding:18px}}.metrics{{grid-template-columns:repeat(2,1fr)}}.grid{{grid-template-columns:1fr}}header{{align-items:start;flex-direction:column}}.visible-count{{width:100%;margin-left:0}}}}
-.owned-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}}.owned-card{{padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--soft)}}.owned-card small{{display:block}}.owned-metrics{{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:12px}}.owned-metrics span{{padding:8px;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:11px}}.owned-metrics b{{display:block;color:var(--ink)}}
+.owned-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}}.owned-card{{padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--soft);min-width:0}}.owned-card small{{display:block}}.owned-metrics{{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:12px}}.owned-metrics span{{padding:8px;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:11px}}.owned-metrics b{{display:block;color:var(--ink)}}.owned-thumbnails{{display:flex;gap:8px;overflow-x:auto;padding:12px 0 2px}}.owned-thumb{{flex:0 0 76px;width:76px;color:var(--muted);font-size:10px;overflow:hidden}}.owned-thumb img,.owned-thumb .thumb-placeholder{{display:grid;width:76px;height:76px;object-fit:cover;border-radius:9px;background:#1c3045}}.owned-thumb img.broken{{display:none}}.owned-thumb span:last-child{{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px}}.owned-no-items{{padding:12px 0}}
 .keyword-search{{margin:8px 0 12px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:var(--soft);color:var(--ink);min-width:240px}}
 </style></head><body><main>
 <header><div><div class="eyebrow">Marketplace intelligence</div><h1>Performance report</h1><p>Saved data snapshot for the last {period_days} days.</p></div><small>Generated {generated_at}</small></header>

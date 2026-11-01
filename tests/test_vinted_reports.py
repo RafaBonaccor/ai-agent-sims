@@ -153,20 +153,26 @@ class VintedReportsTests(unittest.TestCase):
                     "INSERT INTO vinted_profile_snapshots VALUES (1, '123', 'https://www.vinted.it/member/123', '2026-10-21T10:00:00', 1, 0, 0, 1)"
                 )
                 connection.executemany(
-                    "INSERT INTO vinted_profile_snapshot_items VALUES (?, 1, '123', 'https://www.vinted.it/member/123', ?, ?, ?, '', '', ?, ?, ?) ",
+                    "INSERT INTO vinted_profile_snapshot_items VALUES (?, 1, '123', 'https://www.vinted.it/member/123', ?, ?, ?, '', ?, ?, ?, ?) ",
                     [
-                        (1, "https://www.vinted.it/items/1", "1", "Sold bracelet", "sold", 0,
+                        (1, "https://www.vinted.it/items/1", "1", "Sold bracelet", "", "sold", 0,
                          json.dumps({"profile_sold_at": "2026-10-21T10:00:00", "profile_sold_after_seconds": 3600})),
-                        (2, "https://www.vinted.it/items/2", "2", "Active bracelet", "still_active", 1, "{}"),
+                        (2, "https://www.vinted.it/items/2", "2", "Active bracelet", "https://images.example/bracelet.webp", "still_active", 1, "{}"),
+                        (3, "https://www.vinted.it/items/3", "3", "Unknown listing", "", "unknown", 1, "{}"),
                     ],
                 )
             save_owned_profile(root, profile_url="https://www.vinted.it/member/123", db_path=db_path)
 
             report = build_vinted_report(root, db_path=db_path)
             profile = report["owned_profiles"][0]
+            html_path = write_vinted_report_html(root, db_path=db_path)
+            html = html_path.read_text(encoding="utf-8")
 
         self.assertEqual(1, profile["active_items_count"])
         self.assertEqual(1, profile["sold_items_count"])
+        self.assertNotIn("Unknown listing", [item["name"] for item in profile["items"]])
+        self.assertIn("images.example/bracelet.webp", html)
+        self.assertIn("owned-thumbnails", html)
 
     def test_report_aggregates_metrics_series_and_article_cards(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
