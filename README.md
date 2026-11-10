@@ -50,6 +50,7 @@ il timer effettivo resta nel runtime nativo.
 - [Progetti esterni](#progetti-esterni)
 - [The Main Scraper](#the-main-scraper)
 - [Browser ibrido](#browser-ibrido-scraper-batch--controllo-live)
+- [RunPod Manager](#runpod-manager)
 - [Vast.ai e ComfyUI media generation](#vastai-e-comfyui-media-generation)
 - [File principali](#file-principali)
 - [Controlli](#controlli)
@@ -794,6 +795,43 @@ Il backend `mock` valida il contratto runtime senza aprire Chrome. Il backend
 `test_agent_browser_tools.py` passa dal loop agente -> tool registry -> browser
 control, quindi verifica il percorso che useranno gli agenti con toolset
 `browser`.
+
+## RunPod Manager
+
+Il gioco include un'area infrastrutturale separata chiamata **RunPod Manager** e
+un agente dedicato. Non condivide browser, credenziali, scheduler o database con
+The Main Scraper: serve esclusivamente a preparare una pipeline media basata su
+RunPod e ComfyUI.
+
+Apri l'ingranaggio del gioco e compila la sezione `RunPod Manager`:
+
+- `RunPod API key`, salvata nel secret store locale e mai esposta agli agenti;
+- `Network Volume ID`, data center e mount path persistente;
+- un Template ID ComfyUI oppure una container image;
+- GPU preferita, tetto di costo orario, porta ComfyUI e policy quando il Pod e
+  inattivo.
+
+Dal pannello puoi testare l'inventario GPU e Pod, creare un Pod, avviarlo,
+fermarlo, terminarlo, verificare `/system_stats` di ComfyUI e inviare un
+workflow JSON a `/prompt`. Creazione, stop, terminazione e invio workflow non
+sono automatici: richiedono sempre un click esplicito; creazione e terminazione
+mostrano inoltre una conferma perché possono generare costi o eliminare il disco
+locale del Pod.
+
+Il backend espone queste chiamate, tutte senza mai rivelare la chiave al browser:
+
+- `GET /api/runpod/status` e `GET /api/runpod/gpus`;
+- `POST /api/runpod/pods`, `POST /api/runpod/pods/{id}/start`,
+  `POST /api/runpod/pods/{id}/stop`, `DELETE /api/runpod/pods/{id}`;
+- `GET /api/runpod/pods/{id}/comfyui/health`,
+  `POST /api/runpod/pods/{id}/comfyui/prompt` e
+  `GET /api/runpod/pods/{id}/comfyui/history/{prompt_id}`.
+
+Salva prima le impostazioni (chiave, volume e template oppure immagine), poi usa
+`List GPUs`, scegli/copia un GPU ID nel campo `Preferred GPU`, e infine `Create
+Pod`. Un Pod ComfyUI esposto sulla porta `8188` usa normalmente l'URL
+`https://<pod-id>-8188.proxy.runpod.net`; l'accesso pubblico al proxy va
+protetto prima di usarlo in produzione.
 
 ## Vast.ai e ComfyUI media generation
 

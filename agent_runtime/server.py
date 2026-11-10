@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
+import sqlite3
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,7 +12,7 @@ from typing import Annotated
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -54,13 +56,28 @@ from .vinted_reports import (
     build_vinted_competitor_report,
     build_vinted_report,
     deactivate_owned_profile,
+    ignore_owned_profile_item,
     save_owned_profile,
     write_vinted_report_html,
 )
+from .linkedin_reports import (
+    LinkedInReportError, archive_linkedin_media, archived_media_path,
+    get_linkedin_post, list_linkedin_posts, save_linkedin_rewrite,
+)
+from .linkedin_publisher import (
+    LinkedInPublishError, attach_source_image_to_draft, create_draft, draft_attachment_path, list_drafts, publish_draft,
+    publisher_status, update_draft,
+)
+from .runpod_manager import RunPodManager, RunPodManagerError
+from .appium_manager import AppiumManager, AppiumManagerError
+from .runpod_batches import RunPodBatchError, RunPodBatchService
+from .runpod_gpu_watch import RunPodGpuWatch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
+RUNPOD_WORKFLOW_LIBRARY_PATH = PROJECT_ROOT / "config" / "runpod_workflows.json"
+COMFYUI_PROMPT_PRESETS_PATH = PROJECT_ROOT / "config" / "comfyui_prompt_presets.json"
 LOGGER = configure_logging(PROJECT_ROOT)
 
 
@@ -82,6 +99,25 @@ class MarketplaceSourcingBatchRequest(BaseModel):
     max_results: int = Field(default=40, ge=1, le=200)
 
 
+class LinkedInRewriteRequest(BaseModel):
+    instruction: str = Field(default="", max_length=500)
+    prompt: str | None = Field(default=None, max_length=15000)
+
+
+class LinkedInDraftRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=3000)
+    source_post_id: str = Field(default="", max_length=200)
+
+
+class LinkedInPublishRequest(BaseModel):
+    expected_body: str = Field(min_length=1, max_length=3000)
+
+
+class AppiumLaunchRequest(BaseModel):
+    device_id: str = Field(min_length=1, max_length=255)
+    bundle_id: str = Field(min_length=3, max_length=255)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     secrets = SecretStore(DATA_DIR / "secrets.json")
@@ -95,8 +131,28 @@ async def lifespan(app: FastAPI):
     app.state.project_gateway = ProjectGateway(
         PROJECT_ROOT, runtime.publish, runtime.store, error_reporter=error_reporter
     )
+    app.state.runpod_batches = RunPodBatchService(
+        DATA_DIR / "runpod_batches",
+        lambda: RunPodManager(runtime.get_system_settings().runpod, secrets.get_runpod_api_key()),
+        lambda: list(getattr(app.state, "runpod_gpu_watch", None).status().get("gpu_ids") or []) if getattr(app.state, "runpod_gpu_watch", None) else [],
+        lambda region, gpus: app.state.runpod_gpu_watch.record_inventory(region, gpus, "batch-deploy") if getattr(app.state, "runpod_gpu_watch", None) else None,
+    )
+    loop = asyncio.get_running_loop()
+    def gpu_available(event: dict[str, object]) -> None:
+        # A GPU availability edge is also the durable queue wake-up signal.
+        app.state.runpod_batches.resume_waiting_batches()
+        asyncio.run_coroutine_threadsafe(runtime.publish(RuntimeEvent(
+            type="runpod.gpu.available", entity_id=str(event.get("id", "")), agent_id="runpod-manager",
+            summary=f"GPU available: {event.get('name', event.get('id', 'RunPod GPU'))}", data=event,
+        )), loop)
+    app.state.runpod_gpu_watch = RunPodGpuWatch(DATA_DIR / "runpod_gpu_watch.json", lambda: RunPodManager(runtime.get_system_settings().runpod, secrets.get_runpod_api_key()), gpu_available)
+    if bool(app.state.runpod_gpu_watch.status().get("enabled")):
+        app.state.runpod_gpu_watch.start()
     app.state.discord_gateway = build_discord_gateway()
-    app.state.ai_news_briefing = MorningBriefingScheduler(runtime)
+    app.state.ai_news_briefing = MorningBriefingScheduler(
+        runtime,
+        on_task_created=app.state.discord_gateway.watch_task_result,
+    )
     app.state.wiki_maintenance_task = _start_wiki_maintenance_task(runtime)
     await app.state.ai_news_briefing.start()
     await app.state.discord_gateway.start()
@@ -105,6 +161,7 @@ async def lifespan(app: FastAPI):
         app.state.wiki_maintenance_task.cancel()
         await asyncio.gather(app.state.wiki_maintenance_task, return_exceptions=True)
     await app.state.discord_gateway.shutdown()
+    app.state.runpod_gpu_watch.shutdown()
     await app.state.ai_news_briefing.shutdown()
     await app.state.project_gateway.shutdown()
     await runtime.shutdown()
@@ -149,6 +206,49 @@ class ErrorReportRequest(BaseModel):
 
 class SecretValue(BaseModel):
     api_key: str = Field(min_length=8, max_length=4096)
+
+
+class RunPodCreateRequest(BaseModel):
+    name: str = Field(default="Agent Lab ComfyUI", min_length=1, max_length=120)
+    gpu_id: str = Field(default="", max_length=160)
+
+
+class RunPodWorkflowRequest(BaseModel):
+    workflow: dict[str, object] = Field(default_factory=dict)
+    media_name: str = Field(default="", max_length=500)
+    media_kind: str = Field(default="", pattern=r"^(|image|video)$")
+    media_loader_id: str = Field(default="", max_length=120)
+
+
+class RunPodComfyUiUploadRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=240)
+    data_base64: str = Field(min_length=1, max_length=40_000_000)
+    overwrite: bool = True
+
+
+class RunPodBatchCreateRequest(BaseModel):
+    workflow: dict[str, object] = Field(default_factory=dict)
+    media_loader_id: str = Field(default="", max_length=120)
+    auto_deploy: bool = True
+    auto_shutdown: bool = True
+    min_vram_gb: int = Field(default=0, ge=0, le=512)
+    workflow_id: str = Field(default="", max_length=120)
+    creative_prompt: str = Field(default="", max_length=12000)
+
+
+class RunPodBatchMediaRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=240)
+    data_base64: str = Field(min_length=1, max_length=40_000_000)
+
+
+class RunPodGpuWatchRequest(BaseModel):
+    enabled: bool = True
+    gpu_ids: list[str] = Field(default_factory=list, max_length=12)
+    interval_seconds: int = Field(default=60, ge=30, le=3600)
+
+class CreativePromptRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=240)
+    image_base64: str = Field(min_length=1, max_length=40_000_000)
 
 
 class BrowserSessionCreate(BaseModel):
@@ -332,6 +432,64 @@ async def get_system_settings() -> SystemSettings:
     return runtime().get_system_settings()
 
 
+@app.get("/api/appium/status")
+async def appium_status() -> dict[str, object]:
+    try:
+        return AppiumManager(runtime().get_system_settings().appium).status()
+    except AppiumManagerError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/appium/start")
+async def appium_start() -> dict[str, object]:
+    try:
+        result = AppiumManager(runtime().get_system_settings().appium).start_server()
+        return {**result, "status": AppiumManager(runtime().get_system_settings().appium).status()}
+    except AppiumManagerError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/appium/stop")
+async def appium_stop() -> dict[str, object]:
+    try:
+        result = AppiumManager(runtime().get_system_settings().appium).stop_server()
+        return {**result, "status": AppiumManager(runtime().get_system_settings().appium).status()}
+    except AppiumManagerError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/api/appium/apps")
+def appium_list_apps(device_id: str = Query(min_length=1, max_length=255)) -> dict[str, object]:
+    try:
+        manager = AppiumManager(runtime().get_system_settings().appium)
+        return {"device_id": device_id, "apps": manager.list_ios_apps(device_id)}
+    except AppiumManagerError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/appium/launch")
+def appium_launch_app(request: AppiumLaunchRequest) -> dict[str, object]:
+    try:
+        manager = AppiumManager(runtime().get_system_settings().appium)
+        return manager.launch_ios_app(request.device_id, request.bundle_id)
+    except AppiumManagerError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/appium/end-session")
+def appium_end_session() -> dict[str, object]:
+    return AppiumManager(runtime().get_system_settings().appium).close_device_session()
+
+
+@app.get("/api/appium/screenshot")
+def appium_screenshot() -> Response:
+    try:
+        image = AppiumManager(runtime().get_system_settings().appium).get_device_screenshot()
+        return Response(image, media_type="image/png", headers={"Cache-Control": "no-store"})
+    except AppiumManagerError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
 @app.put("/api/system-settings", response_model=SystemSettings)
 async def update_system_settings(settings: SystemSettings) -> SystemSettings:
     updated = await runtime().update_system_settings(settings)
@@ -416,6 +574,416 @@ async def delete_accordi_admin_secret() -> dict[str, object]:
     secrets().delete_accordi_admin_token()
     LOGGER.info("secret_deleted scope=accordi-admin")
     return secrets().status()
+
+
+@app.put("/api/secrets/runpod")
+async def set_runpod_secret(value: SecretValue) -> dict[str, object]:
+    try:
+        secrets().set_runpod_api_key(value.api_key)
+        LOGGER.info("secret_updated scope=runpod")
+        return secrets().status()
+    except (RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.delete("/api/secrets/runpod")
+async def delete_runpod_secret() -> dict[str, object]:
+    secrets().delete_runpod_api_key()
+    LOGGER.info("secret_deleted scope=runpod")
+    return secrets().status()
+
+
+@app.get("/api/runpod/status")
+async def runpod_status() -> dict[str, object]:
+    return RunPodManager(runtime().get_system_settings().runpod, secrets().get_runpod_api_key()).status()
+
+
+def runpod_manager() -> RunPodManager:
+    return RunPodManager(runtime().get_system_settings().runpod, secrets().get_runpod_api_key())
+
+
+def runpod_http_error(error: RunPodManagerError) -> HTTPException:
+    message = str(error)
+    status_code = 502 if message.startswith(("HTTP ", "Request to ", "Non-JSON")) else 422
+    return HTTPException(status_code=status_code, detail=message)
+
+
+def runpod_workflow_presets() -> list[dict[str, str]]:
+    try:
+        raw = json.loads(RUNPOD_WORKFLOW_LIBRARY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=500, detail=f"RunPod workflow library could not be read: {error}") from error
+    presets = raw.get("presets") if isinstance(raw, dict) else []
+    if not isinstance(presets, list):
+        raise HTTPException(status_code=500, detail="RunPod workflow library must contain a presets list.")
+    result: list[dict[str, str]] = []
+    for item in presets:
+        if not isinstance(item, dict):
+            continue
+        preset_id = str(item.get("id", "")).strip()
+        path = str(item.get("path", "")).strip()
+        if not preset_id or not path:
+            continue
+        result.append({
+            "id": preset_id,
+            "name": str(item.get("name", preset_id)).strip() or preset_id,
+            "description": str(item.get("description", "")).strip(),
+            "path": path,
+            "input_kind": str(item.get("input_kind", "")),
+            "output_kind": str(item.get("output_kind", "")),
+            "min_vram_gb": str(item.get("min_vram_gb", "")),
+            "creative_presets": item.get("creative_presets", []),
+        })
+    return result
+
+@app.get("/api/comfyui/prompt-presets")
+async def comfyui_prompt_presets() -> dict[str, object]:
+    try:
+        raw = json.loads(COMFYUI_PROMPT_PRESETS_PATH.read_text(encoding="utf-8"))
+        return {"presets": raw.get("presets", []) if isinstance(raw, dict) else []}
+    except (OSError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=500, detail=f"Creative prompt presets could not be read: {error}") from error
+
+@app.post("/api/comfyui/generate-prompt")
+async def generate_comfyui_prompt(request: CreativePromptRequest) -> dict[str, object]:
+    from .vinted_ai import _build_openai_client
+    key = secrets().get_project()
+    if not key: raise HTTPException(status_code=422, detail="Project API key is not configured.")
+    model_settings = runtime().get_system_settings().model
+    try:
+        client = _build_openai_client(api_key=key, base_url=str(model_settings.base_url or "").strip() or None)
+        content = request.image_base64 if request.image_base64.startswith("data:") else f"data:image/jpeg;base64,{request.image_base64}"
+        response = client.chat.completions.create(model=str(model_settings.model or "gpt-5.4-mini"), messages=[{"role":"system","content":"Return one concise Wan image-to-video prompt only. Preserve exact product identity. Describe camera motion, lighting and a simple coherent background. No text, logos, faces or invented details."},{"role":"user","content":[{"type":"text","text":"Write a vertical product-video prompt from this image."},{"type":"image_url","image_url":{"url":content}}]}], max_tokens=220, temperature=0.45)
+        prompt = str(response.choices[0].message.content or "").strip()
+        if not prompt: raise RuntimeError("Provider returned an empty prompt")
+        return {"prompt": prompt, "model": str(model_settings.model or "gpt-5.4-mini")}
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Creative prompt generation failed: {type(error).__name__}: {error}") from error
+
+
+def runpod_workflow_preset(preset_id: str) -> dict[str, str]:
+    requested = str(preset_id or "").strip()
+    preset = next((item for item in runpod_workflow_presets() if item["id"] == requested), None)
+    if preset is None:
+        raise HTTPException(status_code=404, detail="RunPod workflow preset not found.")
+    return preset
+
+
+def describe_runpod_workflow_loaders(workflow: dict[str, object]) -> list[dict[str, str]]:
+    loaders: list[dict[str, str]] = []
+    for node_id, node in workflow.items():
+        if not isinstance(node, dict):
+            continue
+        class_type = str(node.get("class_type", ""))
+        normalized = class_type.lower()
+        inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
+        if normalized == "loadimage":
+            loaders.append({"id": str(node_id), "kind": "image", "class_type": class_type, "input": "image", "current": str(inputs.get("image", ""))})
+        elif "loadvideo" in normalized:
+            input_name = "video_name" if "video_name" in inputs and "video" not in inputs else "video"
+            loaders.append({"id": str(node_id), "kind": "video", "class_type": class_type, "input": input_name, "current": str(inputs.get(input_name, ""))})
+    return loaders
+
+
+@app.get("/api/runpod/workflows")
+async def list_runpod_workflows() -> dict[str, object]:
+    presets = runpod_workflow_presets()
+    return {
+        "workflows": [
+            {
+                **{key: value for key, value in preset.items() if key != "path"},
+                "available": (PROJECT_ROOT / str(preset["path"])).is_file() if not Path(str(preset["path"])).expanduser().is_absolute() else Path(str(preset["path"])).expanduser().is_file(),
+            }
+            for preset in presets
+        ]
+    }
+
+
+@app.get("/api/runpod/workflows/{preset_id}")
+async def get_runpod_workflow(preset_id: str) -> dict[str, object]:
+    preset = runpod_workflow_preset(preset_id)
+    path = Path(str(preset["path"])).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Workflow file is missing: {path.name}")
+    try:
+        workflow = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=422, detail=f"Workflow JSON is invalid: {error}") from error
+    if not isinstance(workflow, dict) or "nodes" in workflow or "links" in workflow:
+        raise HTTPException(status_code=422, detail="Saved workflow is not ComfyUI API format.")
+    loaders = describe_runpod_workflow_loaders(workflow)
+    if not loaders:
+        raise HTTPException(status_code=422, detail="Saved workflow has no LoadImage or LoadVideo node.")
+    return {"id": preset["id"], "name": preset["name"], "description": preset["description"], "workflow": workflow, "loaders": loaders}
+
+@app.get("/api/runpod/workflows/{preset_id}/availability")
+async def get_runpod_workflow_availability(preset_id: str) -> dict[str, object]:
+    preset = runpod_workflow_preset(preset_id)
+    manager = runpod_manager()
+    region = str(manager.settings.data_center_id or "").strip()
+    if not region and manager.settings.network_volume_id:
+        volume = manager.get_network_volume(manager.settings.network_volume_id)
+        region = str(volume.get("dataCenter") or volume.get("dataCenterId") or "").strip()
+    if not region:
+        raise HTTPException(status_code=422, detail="Network Volume region is not configured.")
+    try:
+        minimum = int(str(preset.get("min_vram_gb") or 0))
+        allowed = {str(value).strip() for value in (app.state.runpod_gpu_watch.status().get("gpu_ids") or []) if str(value).strip()}
+        inventory = manager.list_gpu_types(region)
+        app.state.runpod_gpu_watch.record_inventory(region, inventory, f"workflow:{preset_id}")
+        candidates = [gpu for gpu in inventory if str(gpu.get("id", "")) in allowed and bool(gpu.get("available")) and int(gpu.get("memory_gb") or 0) >= minimum]
+        return {"workflow_id": preset_id, "region": region, "min_vram_gb": minimum, "available": candidates, "waiting": not bool(candidates)}
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+@app.get("/api/runpod/gpus")
+async def runpod_gpus(data_center_id: str = Query(default="", max_length=80)) -> dict[str, object]:
+    try:
+        target_data_center = data_center_id.strip()
+        gpus = runpod_manager().list_gpu_types(target_data_center)
+        app.state.runpod_gpu_watch.record_inventory(target_data_center, gpus, "gpu-picker")
+        return {
+            "gpus": gpus,
+            "data_center_id": target_data_center,
+            "region_filtered": bool(target_data_center),
+        }
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+@app.get("/api/runpod/gpu-watch")
+async def runpod_gpu_watch_status() -> dict[str, object]:
+    return app.state.runpod_gpu_watch.status()
+
+
+@app.get("/api/runpod/gpu-watch/history")
+async def runpod_gpu_watch_history(limit: int = Query(default=500, ge=1, le=5000)) -> dict[str, object]:
+    history = app.state.runpod_gpu_watch.history(limit)
+    return {"checks": history, "count": len(history)}
+
+
+@app.get("/api/runpod/gpu-watch/history/summary")
+async def runpod_gpu_watch_history_summary() -> dict[str, object]:
+    hours = app.state.runpod_gpu_watch.availability_by_hour()
+    return {"hours": hours, "count": len(hours), "timezone": "local"}
+
+
+@app.put("/api/runpod/gpu-watch")
+async def configure_runpod_gpu_watch(request: RunPodGpuWatchRequest) -> dict[str, object]:
+    try:
+        return app.state.runpod_gpu_watch.configure(request.enabled, request.gpu_ids, request.interval_seconds)
+    except (RunPodManagerError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/runpod/gpu-watch/check")
+async def check_runpod_gpu_watch() -> dict[str, object]:
+    try:
+        return app.state.runpod_gpu_watch.check_now()
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+@app.get("/api/runpod/datacenters")
+async def runpod_datacenters() -> dict[str, object]:
+    try:
+        return {"datacenters": runpod_manager().list_datacenters()}
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+@app.get("/api/runpod/network-volumes")
+async def runpod_network_volumes() -> dict[str, object]:
+    try:
+        return {"network_volumes": runpod_manager().list_network_volumes()}
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+@app.get("/api/runpod/network-volumes/{volume_id}")
+async def runpod_network_volume(volume_id: str) -> dict[str, object]:
+    try:
+        return runpod_manager().get_network_volume(volume_id)
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+@app.post("/api/runpod/pods")
+async def create_runpod_pod(request: RunPodCreateRequest) -> dict[str, object]:
+    try:
+        return runpod_manager().create_pod(name=request.name, gpu_id=request.gpu_id)
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+@app.post("/api/runpod/pods/{pod_id}/start")
+async def start_runpod_pod(pod_id: str) -> dict[str, object]:
+    try:
+        return runpod_manager().start_pod(pod_id)
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+@app.post("/api/runpod/pods/{pod_id}/stop")
+async def stop_runpod_pod(pod_id: str) -> dict[str, object]:
+    try:
+        return runpod_manager().stop_pod(pod_id)
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+@app.delete("/api/runpod/pods/{pod_id}")
+async def terminate_runpod_pod(pod_id: str) -> dict[str, object]:
+    try:
+        return runpod_manager().terminate_pod(pod_id)
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+@app.get("/api/runpod/pods/{pod_id}/comfyui/health")
+async def runpod_comfyui_health(pod_id: str) -> dict[str, object]:
+    try:
+        return runpod_manager().comfyui_health(pod_id)
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+@app.post("/api/runpod/pods/{pod_id}/comfyui/prompt")
+async def queue_runpod_comfyui_prompt(pod_id: str, request: RunPodWorkflowRequest) -> dict[str, object]:
+    try:
+        workflow, injected_nodes = runpod_manager().inject_comfyui_media(
+            request.workflow,
+            request.media_name,
+            request.media_kind,
+            request.media_loader_id,
+        )
+        result = runpod_manager().queue_comfyui_prompt(pod_id, workflow)
+        result["media_name"] = request.media_name
+        result["media_kind"] = request.media_kind
+        result["media_loader_id"] = request.media_loader_id
+        result["media_injected_nodes"] = injected_nodes
+        return result
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+@app.post("/api/runpod/pods/{pod_id}/comfyui/upload-image")
+async def upload_runpod_comfyui_image(pod_id: str, request: RunPodComfyUiUploadRequest) -> dict[str, object]:
+    try:
+        encoded = request.data_base64.split(",", 1)[-1]
+        content = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=422, detail="Image data must be valid base64.") from error
+    try:
+        return runpod_manager().upload_comfyui_image(pod_id, request.filename, content, request.overwrite)
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+@app.post("/api/runpod/pods/{pod_id}/comfyui/upload-media")
+async def upload_runpod_comfyui_media(pod_id: str, request: RunPodComfyUiUploadRequest) -> dict[str, object]:
+    try:
+        encoded = request.data_base64.split(",", 1)[-1]
+        content = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=422, detail="Media data must be valid base64.") from error
+    try:
+        return runpod_manager().upload_comfyui_media(pod_id, request.filename, content, request.overwrite)
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+@app.get("/api/runpod/pods/{pod_id}/comfyui/history/{prompt_id}")
+async def runpod_comfyui_history(pod_id: str, prompt_id: str) -> dict[str, object]:
+    try:
+        return runpod_manager().comfyui_history(pod_id, prompt_id)
+    except RunPodManagerError as error:
+        raise runpod_http_error(error) from error
+
+
+def runpod_batches() -> RunPodBatchService:
+    return app.state.runpod_batches
+
+
+def runpod_batch_http_error(error: RunPodBatchError | RunPodManagerError) -> HTTPException:
+    return HTTPException(status_code=422, detail=str(error))
+
+
+@app.get("/api/runpod/batches")
+async def list_runpod_batches() -> dict[str, object]:
+    try:
+        return {"batches": runpod_batches().list_batches()}
+    except RunPodBatchError as error:
+        raise runpod_batch_http_error(error) from error
+
+
+@app.post("/api/runpod/batches")
+async def create_runpod_batch(request: RunPodBatchCreateRequest) -> dict[str, object]:
+    try:
+        return runpod_batches().create_batch(
+            request.workflow,
+            media_loader_id=request.media_loader_id,
+            auto_deploy=request.auto_deploy,
+            auto_shutdown=request.auto_shutdown,
+            min_vram_gb=request.min_vram_gb,
+            workflow_id=request.workflow_id,
+            creative_prompt=request.creative_prompt,
+        )
+    except RunPodBatchError as error:
+        raise runpod_batch_http_error(error) from error
+
+
+@app.get("/api/runpod/batches/{batch_id}")
+async def get_runpod_batch(batch_id: str) -> dict[str, object]:
+    try:
+        return runpod_batches().get_batch(batch_id)
+    except RunPodBatchError as error:
+        raise runpod_batch_http_error(error) from error
+
+
+@app.get("/api/runpod/batches/{batch_id}/items/{item_id}/outputs/{output_index}", response_class=FileResponse)
+async def get_runpod_batch_output(batch_id: str, item_id: str, output_index: int) -> FileResponse:
+    try:
+        output = runpod_batches().output_file(batch_id, item_id, output_index)
+        return FileResponse(output, filename=output.name)
+    except RunPodBatchError as error:
+        raise runpod_batch_http_error(error) from error
+
+
+@app.post("/api/runpod/batches/{batch_id}/items")
+async def add_runpod_batch_item(batch_id: str, request: RunPodBatchMediaRequest) -> dict[str, object]:
+    try:
+        content = base64.b64decode(request.data_base64.split(",", 1)[-1], validate=True)
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=422, detail="Batch media data must be valid base64.") from error
+    try:
+        return runpod_batches().add_item(batch_id, request.filename, content)
+    except RunPodBatchError as error:
+        raise runpod_batch_http_error(error) from error
+
+
+@app.post("/api/runpod/batches/{batch_id}/start")
+async def start_runpod_batch(batch_id: str) -> dict[str, object]:
+    try:
+        # A creative queue must not rely on a separately configured watcher:
+        # enable it with its persisted tracked-GPU list before queueing work.
+        watch = app.state.runpod_gpu_watch.status()
+        if not bool(watch.get("enabled")):
+            app.state.runpod_gpu_watch.configure(True, list(watch.get("gpu_ids") or []), int(watch.get("interval_seconds") or 60))
+        return runpod_batches().start_batch(batch_id)
+    except RunPodBatchError as error:
+        raise runpod_batch_http_error(error) from error
+
+
+@app.post("/api/runpod/batches/{batch_id}/cancel")
+async def cancel_runpod_batch(batch_id: str) -> dict[str, object]:
+    try:
+        return runpod_batches().cancel_batch(batch_id)
+    except RunPodBatchError as error:
+        raise runpod_batch_http_error(error) from error
 
 
 @app.post("/api/vinted-ai/generate", response_model=VintedAIGenerationResponse)
@@ -647,6 +1215,149 @@ async def vinted_reports(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
+@app.get("/api/linkedin/posts")
+async def linkedin_posts(limit: int = Query(default=500, ge=1, le=2000),
+                         search: str = Query(default="", max_length=100)) -> dict:
+    return await asyncio.to_thread(list_linkedin_posts, PROJECT_ROOT, limit=limit, search=search)
+
+
+@app.get("/api/linkedin/posts/{post_id}")
+async def linkedin_post_detail(post_id: str) -> dict:
+    try:
+        return await asyncio.to_thread(get_linkedin_post, PROJECT_ROOT, post_id)
+    except LinkedInReportError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/linkedin/posts/{post_id}/media/{media_index}/archive")
+async def archive_linkedin_post_media(post_id: str, media_index: int,
+                                      poster: bool = Query(default=False)) -> dict:
+    try:
+        return await asyncio.to_thread(archive_linkedin_media, PROJECT_ROOT, post_id, media_index, poster=poster)
+    except LinkedInReportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/linkedin/posts/{post_id}/media/{media_index}/file")
+async def download_linkedin_post_media(post_id: str, media_index: int,
+                                       variant: str = Query(default="original")) -> FileResponse:
+    try:
+        path = await asyncio.to_thread(archived_media_path, PROJECT_ROOT, post_id, media_index, variant)
+    except LinkedInReportError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, filename=path.name)
+
+
+@app.post("/api/linkedin/posts/{post_id}/rewrite")
+async def rewrite_linkedin_post(post_id: str, request: LinkedInRewriteRequest) -> dict:
+    try:
+        post = await asyncio.to_thread(get_linkedin_post, PROJECT_ROOT, post_id)
+    except LinkedInReportError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not str(post.get("text") or "").strip():
+        raise HTTPException(status_code=422, detail="This post has no text to rewrite")
+    key = secrets().get_project()
+    if not key:
+        raise HTTPException(status_code=422, detail="Set the project OpenAI API key in Settings first")
+    from .vinted_ai import _build_openai_client
+    model_settings = runtime().get_system_settings().model
+    # Keep LinkedIn rewriting independent from a stale global model override.
+    # GPT-5.4 Mini is a current text-capable API model suited to short rewrites.
+    model_name = "gpt-5.4-mini"
+    instruction = request.instruction.strip()
+    prompt = request.prompt
+    if prompt is None:
+        prompt = (f"Post di partenza:\n{str(post['text'])[:10000]}\n\n"
+                  f"Indicazioni aggiuntive: {instruction or 'tono tranquillo, come se spiegassi a un amico'}")
+    if not prompt.strip():
+        raise HTTPException(status_code=422, detail="The prompt cannot be empty")
+
+    def generate() -> str:
+        client = _build_openai_client(api_key=key, base_url=str(model_settings.base_url or "").strip() or None)
+        response = client.responses.create(
+            model=model_name,
+            input=prompt,
+            store=False,
+        )
+        return str(response.output_text or "").strip()
+
+    try:
+        draft = await asyncio.to_thread(generate)
+        return await asyncio.to_thread(save_linkedin_rewrite, PROJECT_ROOT, post_id, draft, instruction, model_name)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Rewrite failed: {type(exc).__name__}: {exc}") from exc
+
+
+@app.get("/api/linkedin/publisher/status")
+async def linkedin_publisher_status() -> dict:
+    return await asyncio.to_thread(publisher_status, PROJECT_ROOT)
+
+
+@app.get("/api/linkedin/publisher/drafts")
+async def linkedin_publisher_drafts() -> dict:
+    return {"drafts": await asyncio.to_thread(list_drafts, PROJECT_ROOT)}
+
+
+@app.post("/api/linkedin/publisher/drafts/{draft_id}/source-image")
+async def linkedin_publisher_attach_source_image(draft_id: int) -> dict:
+    try:
+        return await asyncio.to_thread(attach_source_image_to_draft, PROJECT_ROOT, draft_id)
+    except LinkedInPublishError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LinkedInReportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/linkedin/publisher/drafts/{draft_id}/attachment")
+async def linkedin_publisher_draft_attachment(draft_id: int) -> FileResponse:
+    try:
+        path = await asyncio.to_thread(draft_attachment_path, PROJECT_ROOT, draft_id)
+    except LinkedInPublishError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, filename=path.name)
+
+
+@app.post("/api/linkedin/publisher/drafts")
+async def linkedin_publisher_create_draft(request: LinkedInDraftRequest) -> dict:
+    try:
+        attachment_path = ""
+        if request.source_post_id:
+            post = await asyncio.to_thread(get_linkedin_post, PROJECT_ROOT, request.source_post_id)
+            media = next((item for item in post.get("media", []) if item.get("kind") == "image"), None)
+            if media is not None:
+                try:
+                    attachment_path = str(await asyncio.to_thread(
+                        archived_media_path, PROJECT_ROOT, request.source_post_id, media["index"], "original"))
+                except LinkedInReportError:
+                    await asyncio.to_thread(archive_linkedin_media, PROJECT_ROOT, request.source_post_id, media["index"])
+                    attachment_path = str(await asyncio.to_thread(
+                        archived_media_path, PROJECT_ROOT, request.source_post_id, media["index"], "original"))
+        return await asyncio.to_thread(create_draft, PROJECT_ROOT, request.body, request.source_post_id, attachment_path)
+    except LinkedInPublishError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LinkedInReportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.put("/api/linkedin/publisher/drafts/{draft_id}")
+async def linkedin_publisher_update_draft(draft_id: int, request: LinkedInDraftRequest) -> dict:
+    try:
+        return await asyncio.to_thread(update_draft, PROJECT_ROOT, draft_id, request.body)
+    except LinkedInPublishError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/linkedin/publisher/drafts/{draft_id}/publish")
+async def linkedin_publisher_publish(draft_id: int, request: LinkedInPublishRequest,
+                                     http_request: Request) -> dict:
+    if http_request.headers.get("x-agent-lab-confirm") != "publish":
+        raise HTTPException(status_code=403, detail="Explicit publish confirmation is required")
+    try:
+        return await asyncio.to_thread(publish_draft, PROJECT_ROOT, draft_id, request.expected_body)
+    except LinkedInPublishError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.get("/api/vinted/reports/competitors/{member_id}")
 async def vinted_competitor_report(member_id: str, limit: int = Query(default=5000, ge=1, le=5000)) -> dict[str, object]:
     report = build_vinted_competitor_report(PROJECT_ROOT, member_id, limit=limit)
@@ -745,6 +1456,14 @@ async def remove_vinted_owned_profile(member_id: str) -> dict[str, object]:
     try:
         return deactivate_owned_profile(PROJECT_ROOT, member_id)
     except (OSError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.delete("/api/vinted/owned-profiles/{member_id}/items/{item_id}")
+async def ignore_vinted_owned_profile_item(member_id: str, item_id: str) -> dict[str, object]:
+    try:
+        return ignore_owned_profile_item(PROJECT_ROOT, member_id, item_id)
+    except (OSError, ValueError, sqlite3.Error) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 

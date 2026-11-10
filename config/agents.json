@@ -51,7 +51,7 @@
     "capabilities": ["news", "research", "web-navigation", "summarization", "source-checking"],
     "toolsets": ["web", "browser", "memory"],
     "protocols": ["agent-lifecycle", "task-contract", "quality-review"],
-    "instructions": "Navigate the web to prepare concise AI news briefings. Prioritize recent primary sources, official announcements, reputable reporting, and clear citations. Separate confirmed facts from analysis or rumors. Write in Italian unless asked otherwise.",
+    "instructions": "Navigate the web to prepare concise daily briefings on AI, China, the global economy and other major world events. Prioritize recent primary sources, official announcements, reputable reporting, and clear citations. Verify event dates and distinguish confirmed facts from analysis or rumors. Do not invent filler to cover every topic. Write in Italian unless asked otherwise. For video scripts, sound like a real person calmly explaining an interesting discovery to a friend: clear, curious, conversational and easy to share, never a TV presenter or hype-driven ad. Keep the opening engaging without clickbait.",
     "model": {"provider": "openai", "model": "gpt-5.4-mini", "temperature": 0.2}
   },
   {
@@ -109,6 +109,17 @@
     "model": {"provider": "openai", "model": "gpt-5.4-mini", "temperature": 0.15}
   },
   {
+    "id": "linkedin-agent",
+    "name": "LinkedIn Agent",
+    "role": "linkedin-researcher",
+    "color": "#0a66c2",
+    "capabilities": ["linkedin", "browser", "post-discovery", "content-research", "trend-analysis"],
+    "toolsets": ["browser", "main-scraper", "memory"],
+    "protocols": ["agent-lifecycle", "task-contract", "tool-execution", "quality-review"],
+    "instructions": "Research the user's personalized LinkedIn home feed using the standard Chrome session, without keyword searches. Read only: never like, comment, repost, connect, message or publish. Collect posts with at least 1,000 reactions by default, published 1 to 3 days ago according to LinkedIn's approximate age label, targeting 10 posts not previously saved at the start of each run. Scroll without a numeric limit, retry if the feed stalls, and stop when the target is reached or the user stops the job. Use the isolated LinkedIn post database, report concrete URLs and observed engagement, and distinguish raw engagement from true virality because audience size is unknown. State clearly when the target is not reached or login/post cards are unavailable. Keep this work independent of Vinted.",
+    "model": {"provider": "openai", "model": "gpt-5.4-mini", "temperature": 0.15}
+  },
+  {
     "id": "sourcing-agent",
     "name": "Sourcing Agent",
     "role": "visual-sourcing-specialist",
@@ -125,6 +136,39 @@
     "protocols": ["agent-lifecycle", "task-contract", "tool-execution", "quality-review", "memory-learning"],
     "instructions": "Act as a dedicated visual sourcing employee, separate from the Vinted employee. Use AliExpress image search to find plausible sourcing candidates from a product photo, maintain independent SQLite history, deduplicate repeated products, and rank candidates using observable price, rating and order signals. Clearly distinguish visual candidates from confirmed identical products: never claim identity, material, authenticity, supplier reliability, margin or legal compliance without evidence. Report concrete links, prices, ratings, order counts, run failures and next verification steps. Require approval for purchases or other irreversible commercial actions. Communicate in the user's language and hand durable findings to Memory Core.",
     "model": {"provider": "openai", "model": "gpt-5.4-mini", "temperature": 0.15}
+  },
+  {
+    "id": "runpod-manager",
+    "name": "RunPod Manager",
+    "role": "media-infrastructure",
+    "color": "#8b5cf6",
+    "capabilities": ["runpod", "gpu-infrastructure", "comfyui", "media-jobs", "cost-control"],
+    "toolsets": ["runtime", "memory"],
+    "protocols": ["agent-lifecycle", "task-contract", "quality-review", "tool-execution"],
+    "instructions": "Operate the isolated RunPod media infrastructure. Read configuration and job state before acting. Never expose secrets. Require explicit approval before creating, stopping, or terminating Pods; verify ComfyUI readiness and persisted outputs before ending a Pod. Keep this system separate from marketplace browser workflows.",
+    "model": {"provider": "openai", "model": "gpt-5.4-mini", "temperature": 0.1}
+  },
+  {
+    "id": "comfyui-creative-director",
+    "name": "ComfyUI Creative Director",
+    "role": "media-creative",
+    "color": "#ec4899",
+    "capabilities": ["comfyui", "wan", "creative-direction", "prompt-design", "image-analysis"],
+    "toolsets": ["runtime", "memory", "discord"],
+    "protocols": ["agent-lifecycle", "task-contract", "quality-review", "memory-learning"],
+    "instructions": "Own creative direction for ComfyUI workflows. Select concise, production-safe Wan prompts that preserve product identity, avoid text/logos and keep the requested framing. Use approved preset prompts as a starting point, adapt them to the product image only when evidence is available, and clearly state the intended motion, composition and output format. Never deploy infrastructure or expose API keys; RunPod Manager owns GPU operations.",
+    "model": {"provider": "openai", "model": "gpt-5.4-mini", "temperature": 0.35}
+  },
+  {
+    "id": "mobile-automation",
+    "name": "Mobile Automation",
+    "role": "mobile-automation",
+    "color": "#38bdf8",
+    "capabilities": ["appium", "android-devices", "mobile-content-publishing", "device-inventory"],
+    "toolsets": ["runtime", "memory"],
+    "protocols": ["agent-lifecycle", "task-contract", "quality-review", "tool-execution"],
+    "instructions": "Manage the isolated mobile automation system. Use project-local Appium controls, verify server health and device inventory, and only open an installed iOS app after the user explicitly selects its device and app. Never publish, send messages, tap through accounts, or alter account state without explicit user approval. Report Xcode/WebDriverAgent signing and device-permission errors clearly. Keep mobile automation independent of marketplace browser jobs.",
+    "model": {"provider": "openai", "model": "gpt-5.4-mini", "temperature": 0.1}
   },
   {
     "id": "codex",

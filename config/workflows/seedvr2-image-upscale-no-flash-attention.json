@@ -1,0 +1,20 @@
+{
+  "1": {"inputs": {"value": 0}, "class_type": "Float", "_meta": {"title": "latent_noise_scale (0.01-0.15)"}},
+  "2": {"inputs": {"noise_seed": 0, "noise_strength": ["1", 0], "normalize": "true", "latent": ["4", 0]}, "class_type": "InjectLatentNoise+", "_meta": {"title": "Inject Latent Noise"}},
+  "3": {"inputs": {"resized_images": ["8", 0]}, "class_type": "SeedVR2Preprocess", "_meta": {"title": "SeedVR2 Preprocess"}},
+  "4": {"inputs": {"tile_size": 1024, "overlap": 128, "temporal_size": 64, "temporal_overlap": 8, "pixels": ["3", 0], "vae": ["18", 0]}, "class_type": "VAEEncodeTiled", "_meta": {"title": "VAE Encode Tiled"}},
+  "5": {"inputs": {"tile_size": 1024, "overlap": 128, "temporal_size": 64, "temporal_overlap": 8, "samples": ["16", 0], "vae": ["18", 0]}, "class_type": "VAEDecodeTiled", "_meta": {"title": "VAE Decode Tiled"}},
+  "6": {"inputs": {"filename_prefix": "SeedVR2-img/SeedVR2-img", "images": ["23", 0]}, "class_type": "SaveImage", "_meta": {"title": "Save Image"}},
+  "8": {"inputs": {"seed": 0, "strength": ["9", 0], "image": ["14", 0]}, "class_type": "ImageAddNoise", "_meta": {"title": "Image Add Noise"}},
+  "9": {"inputs": {"expression": "a * 0.0125", "values.a": ["15", 0]}, "class_type": "ComfyMathExpression", "_meta": {"title": "Noise expression"}},
+  "13": {"inputs": {"image": "input.jpg"}, "class_type": "LoadImage", "_meta": {"title": "Input image"}},
+  "14": {"inputs": {"resize_type": "scale shorter dimension", "resize_type.shorter_size": 4000, "scale_method": "lanczos", "input": ["17", 0]}, "class_type": "ResizeImageMaskNode", "_meta": {"title": "Resize image"}},
+  "15": {"inputs": {"value": 0}, "class_type": "Float", "_meta": {"title": "input_noise_scale (0.10-1.00)"}},
+  "16": {"inputs": {"seed": 0, "steps": 1, "cfg": 1, "sampler_name": "euler", "scheduler": "simple", "denoise": 1, "model": ["22", 0], "positive": ["20", 0], "negative": ["20", 1], "latent_image": ["2", 0]}, "class_type": "KSampler", "_meta": {"title": "KSampler"}},
+  "17": {"inputs": {"switch": false, "on_false": ["13", 0], "on_true": ["19", 0]}, "class_type": "ComfySwitchNode", "_meta": {"title": "Enable batch upscale"}},
+  "18": {"inputs": {"vae_name": "ema_vae_fp16.safetensors"}, "class_type": "VAELoader", "_meta": {"title": "VAE Loader"}},
+  "19": {"inputs": {"directory": "C:\\Your\\Path\\Here", "image_load_cap": 0, "start_index": 0, "load_always": false, "sort_method": "None"}, "class_type": "LoadImageListFromDir //Inspire", "_meta": {"title": "Load image list"}},
+  "20": {"inputs": {"model": ["22", 0], "vae_conditioning": ["2", 0]}, "class_type": "SeedVR2Conditioning", "_meta": {"title": "SeedVR2 Conditioning"}},
+  "22": {"inputs": {"unet_name": "seedvr2_7b_int8_convrot.safetensors", "weight_dtype": "default"}, "class_type": "UNETLoader", "_meta": {"title": "Diffusion model loader"}},
+  "23": {"inputs": {"color_correction_method": "lab", "images": ["5", 0], "original_resized_images": ["14", 0]}, "class_type": "SeedVR2PostProcessing", "_meta": {"title": "SeedVR2 post-processing"}}
+}

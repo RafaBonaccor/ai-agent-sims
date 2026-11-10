@@ -26,7 +26,7 @@ class MorningBriefingTests(unittest.IsolatedAsyncioTestCase):
         self.config = MorningBriefingConfig(
             enabled=True,
             agent_id="ai-news-navigator",
-            local_time=time(8, 0),
+            local_time=time(9, 0),
             timezone="Europe/Rome",
             run_missed=False,
         )
@@ -44,11 +44,15 @@ class MorningBriefingTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(*tuple(self.runtime.running_jobs))
 
         self.assertEqual("ai-news-navigator", task.requested_agent_id)
-        self.assertEqual("chat", task.channel)
+        self.assertEqual("task", task.channel)
         self.assertEqual("news", task.capability)
         self.assertIn("AI morning briefing — 2026-07-12", task.title)
-        self.assertIn("ultime notizie", task.description)
+        self.assertIn("Cina", task.description)
+        self.assertIn("economia globale", task.description)
+        self.assertIn("Mondo", task.description)
         self.assertIn("fonti", task.description.lower())
+        self.assertIn("120-145 parole", task.description)
+        self.assertIn("nuovi modelli", task.description)
 
     async def test_briefing_deduplicates_same_day(self):
         now = datetime(2026, 7, 12, 9, 30, tzinfo=ZoneInfo("Europe/Rome"))
@@ -58,11 +62,20 @@ class MorningBriefingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(first.id, second.id)
 
+    async def test_briefing_registers_discord_delivery_for_created_task(self):
+        from unittest.mock import AsyncMock
+
+        callback = AsyncMock()
+        scheduler = MorningBriefingScheduler(self.runtime, self.config, on_task_created=callback)
+        task = await scheduler.create_briefing(now=datetime(2026, 7, 12, 9, 30, tzinfo=ZoneInfo("Europe/Rome")), force=True)
+
+        callback.assert_awaited_once_with(task)
+
     def test_next_run_uses_tomorrow_when_missed_runs_are_disabled(self):
         now = datetime(2026, 7, 12, 9, 30, tzinfo=ZoneInfo("Europe/Rome"))
         next_run = self.scheduler.next_run_at(now)
 
-        self.assertEqual(datetime(2026, 7, 13, 8, 0, tzinfo=ZoneInfo("Europe/Rome")), next_run)
+        self.assertEqual(datetime(2026, 7, 13, 9, 0, tzinfo=ZoneInfo("Europe/Rome")), next_run)
 
 
 if __name__ == "__main__":

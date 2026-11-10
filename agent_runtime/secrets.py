@@ -33,6 +33,7 @@ class SecretStore:
             "agent_configured": bool(agent_id and agents.get(agent_id)),
             "discord_bot_configured": bool(self.data.get("discord_bot")),
             "accordi_admin_configured": bool(self.data.get("accordi_admin")),
+            "runpod_configured": bool(self.data.get("runpod")),
             "backend": self.backend,
         }
 
@@ -48,6 +49,10 @@ class SecretStore:
     def get_accordi_admin_token(self) -> Optional[str]:
         return self._decrypt_optional(self.data.get("accordi_admin"))
 
+    def get_runpod_api_key(self) -> Optional[str]:
+        return self._decrypt_optional(self.data.get("runpod"))
+
+
     def set_project(self, value: str) -> None:
         self._set("project", None, value)
 
@@ -59,6 +64,10 @@ class SecretStore:
 
     def set_accordi_admin_token(self, value: str) -> None:
         self._set_named("accordi_admin", value, label="Accordi admin token", minimum_length=8, maximum_length=4096)
+
+    def set_runpod_api_key(self, value: str) -> None:
+        self._set_named("runpod", value, label="RunPod API key", minimum_length=16, maximum_length=4096)
+
 
     def delete_project(self) -> None:
         with self.lock:
@@ -84,6 +93,12 @@ class SecretStore:
             self.data["accordi_admin"] = ""
             self._save()
 
+    def delete_runpod_api_key(self) -> None:
+        with self.lock:
+            self._delete_stored(self.data.get("runpod"))
+            self.data["runpod"] = ""
+            self._save()
+
     def _set(self, section: str, agent_id: Optional[str], value: str) -> None:
         value = value.strip()
         if len(value) < 8 or len(value) > 4096:
@@ -107,7 +122,7 @@ class SecretStore:
 
     def _load(self) -> dict:
         if not self.path.exists():
-            return {"version": 3, "project": "", "agents": {}, "discord_bot": "", "accordi_admin": ""}
+            return {"version": 4, "project": "", "agents": {}, "discord_bot": "", "accordi_admin": "", "runpod": ""}
         payload = json.loads(self.path.read_text(encoding="utf-8"))
         return {
             "version": int(payload.get("version", 3) or 3),
@@ -115,6 +130,7 @@ class SecretStore:
             "agents": payload.get("agents", {}),
             "discord_bot": payload.get("discord_bot", ""),
             "accordi_admin": payload.get("accordi_admin", ""),
+            "runpod": payload.get("runpod", ""),
         }
 
     def _save(self) -> None:

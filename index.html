@@ -30,6 +30,7 @@
         <button id="add-agent" class="button" type="button">+ Agent</button>
         <button id="layout-toggle" class="button" type="button">Editor</button>
         <button id="reports-dashboard" class="button" type="button">Reports</button>
+        <button id="monitoring-dashboard" class="button" type="button">Monitoraggi</button>
         <button id="system-settings" class="button button--icon" type="button" aria-label="System settings">⚙</button>
         <button id="theme-toggle" class="button" type="button">White</button>
         <time class="world-clock" id="world-clock" aria-label="Ora locale del computer">
@@ -67,6 +68,7 @@
         <button id="undo-layout" class="button" type="button" disabled>Undo</button>
         <button id="redo-layout" class="button" type="button" disabled>Redo</button>
         <button id="add-room" class="button" type="button">+ Room</button>
+        <button id="rotate-station" class="button" type="button" disabled>↻ Rotate selected</button>
         <button id="room-draw-toggle" class="button" type="button">Shape room</button>
         <button id="door-toggle" class="button" type="button">Doors & paths</button>
         <button id="delete-room" class="button button--danger" type="button">Remove room</button>
@@ -515,6 +517,27 @@
 
         <section class="settings-section">
           <div class="settings-section__heading">
+            <strong>RunPod credentials</strong>
+            <small>Global enablement and the backend-only API key. Configure the deployment from the RunPod Manager agent.</small>
+          </div>
+          <div class="form-grid">
+            <label><span>Enable RunPod Manager</span><select name="runpod_enabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></label>
+            <label><span>RunPod API key</span><input name="runpod_api_key" type="password" autocomplete="new-password" placeholder="Leave empty to keep current key" /></label>
+            <div class="secret-status form-grid__wide"><span id="system-runpod-status">RunPod API key: not configured</span><small>Used only by the backend for infrastructure operations; it is never sent to agents or the browser.</small></div>
+            <input name="runpod_network_volume_id" type="hidden" />
+            <input name="runpod_data_center_id" type="hidden" />
+            <input name="runpod_template_id" type="hidden" />
+            <input name="runpod_container_image" type="hidden" />
+            <select name="runpod_preferred_gpu" hidden><option value=""></option></select>
+            <input name="runpod_max_hourly_cost" type="hidden" />
+            <input name="runpod_volume_mount_path" type="hidden" />
+            <input name="runpod_comfyui_port" type="hidden" />
+            <select name="runpod_idle_action" hidden><option value="stop">Stop Pod</option><option value="terminate">Terminate Pod</option></select>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="settings-section__heading">
             <strong>Error reporting</strong>
             <small>Global diagnostics for browser, runtime, and project job failures.</small>
           </div>
@@ -568,6 +591,134 @@
             <button class="button button--primary" id="work-projects" type="button">Progetti</button>
             <button class="button" id="work-internal-task" type="button">Task interno</button>
           </div>
+        </section>
+        <section class="settings-section" id="runpod-options" hidden>
+          <div class="settings-section__heading">
+            <strong id="runpod-options-heading">RunPod Manager</strong>
+            <small>Media infrastructure operated by this agent. The API key remains in System Settings.</small>
+          </div>
+          <div class="runpod-dashboard" id="runpod-dashboard">
+            <article class="runpod-card"><small>Manager</small><strong id="runpod-card-manager">Checking…</strong><span id="runpod-card-manager-detail">Loading configuration</span></article>
+            <article class="runpod-card"><small>Network Volume</small><strong id="runpod-card-volume">—</strong><span id="runpod-card-volume-detail">Loading region</span></article>
+            <article class="runpod-card"><small>Available GPUs</small><strong id="runpod-card-gpus">—</strong><span id="runpod-card-gpus-detail">Loading availability</span></article>
+            <article class="runpod-card"><small>Pod state</small><strong id="runpod-card-pods">—</strong><span id="runpod-card-pods-detail">Loading Pods</span></article>
+          </div>
+          <div class="form-grid">
+            <label><span>Network Volume</span><select id="runpod-network-volume-id"><option value="">Refresh volumes to choose one</option></select></label>
+            <label><span>Data center</span><select id="runpod-data-center-id"><option value="">Refresh regions to choose one</option></select></label>
+            <label><span>ComfyUI template ID</span><input id="runpod-template-id" placeholder="Leave empty when using an image" /></label>
+            <label><span>Container image</span><input id="runpod-container-image" placeholder="runpod/comfyui:..." /></label>
+            <label><span>Preferred GPU</span><select id="runpod-preferred-gpu"><option value="">List GPUs to choose one</option></select></label>
+            <label><span>Max hourly cost ($)</span><input id="runpod-max-hourly-cost" type="number" min="0" step="0.01" /></label>
+            <label><span>Volume mount path</span><input id="runpod-volume-mount-path" placeholder="/workspace" /></label>
+            <label><span>ComfyUI port</span><input id="runpod-comfyui-port" type="number" min="1" max="65535" /></label>
+            <label><span>When idle</span><select id="runpod-idle-action"><option value="stop">Stop Pod</option><option value="terminate">Terminate Pod</option></select></label>
+            <div class="form-grid__wide"><button class="button" id="runpod-save-deployment" type="button">Save deployment configuration</button></div>
+            <label><span>Pod name</span><input id="runpod-pod-name" value="Agent Lab ComfyUI" maxlength="120" /></label>
+            <label><span>Target Pod ID</span><input id="runpod-pod-id" placeholder="Created Pod ID appears here" maxlength="120" /></label>
+            <label class="form-grid__wide"><span>Existing Pods</span><select id="runpod-pod-picker"><option value="">Refresh Pods to select one</option></select></label>
+            <label class="form-grid__wide"><span>ComfyUI workflow JSON</span><textarea id="runpod-workflow-json" rows="4" placeholder='{"3":{"class_type":"KSampler", "inputs":{...}}}'></textarea></label>
+            <div class="runpod-batch-panel form-grid__wide" id="creative-prompt-panel">
+              <strong>Creative Director · Wan prompt</strong>
+              <label><span>Prompt preset</span><select id="creative-prompt-preset"><option value="">Loading presets…</option></select></label>
+              <label><span>Reference image for AI prompt</span><input id="creative-prompt-image" type="file" accept="image/png,image/jpeg,image/webp" /></label>
+              <div class="dialog-actions" style="justify-content:flex-start"><button class="button" id="creative-generate-prompt" type="button">Generate prompt from image</button></div>
+              <label class="form-grid__wide"><span>Prompt</span><textarea id="creative-prompt-text" rows="5" placeholder="Choose a preset or generate from an image."></textarea></label>
+              <small id="creative-prompt-status">Creative prompts are separate from GPU deployment.</small>
+            </div>
+            <label><span>Saved API workflow</span><input id="runpod-workflow-file" type="file" accept="application/json,.json" /></label>
+            <div><button class="button" id="runpod-load-workflow" type="button">Load selected workflow</button><small id="runpod-workflow-status">Choose an API JSON exported from ComfyUI. It is loaded locally and not sent until Queue Workflow.</small></div>
+            <label><span>Built-in workflow</span><select id="runpod-workflow-preset"><option value="">Loading saved workflows…</option></select></label>
+            <div><button class="button" id="runpod-load-workflow-preset" type="button">Load saved workflow</button><small>Saved presets are read from this project; use the file option above for a new workflow.</small></div>
+            <label class="form-grid__wide"><span>Target media loader</span><select id="runpod-media-loader"><option value="">Load a workflow to choose a LoadImage or LoadVideo node</option></select></label>
+            <label><span>Media for ComfyUI</span><input id="runpod-media-file" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime" /></label>
+            <div class="form-grid__wide"><button class="button" id="runpod-upload-media" type="button">Upload media to ComfyUI</button><small id="runpod-upload-status">Upload an image or video, then queue the workflow: compatible LoadImage or LoadVideo nodes are filled automatically.</small></div>
+            <div class="runpod-batch-panel form-grid__wide">
+              <strong>Automatic batch</strong>
+              <small>Runs the current workflow one file at a time. If there is no active Pod, it deploys one automatically. It only closes a Pod created by this batch.</small>
+              <label><span>Batch media</span><input id="runpod-batch-files" type="file" multiple accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime" /></label>
+              <div class="dialog-actions" style="justify-content:flex-start; margin-top:8px"><button class="button button--primary" id="runpod-start-batch" type="button">Start automatic batch</button><button class="button" id="runpod-refresh-batches" type="button">Refresh batches</button></div>
+              <div id="runpod-batch-results" class="runpod-batch-results"><small>No batch created in this session.</small></div>
+            </div>
+            <div class="runpod-batch-panel form-grid__wide">
+              <strong>GPU availability watcher</strong>
+              <small>Checks only the configured Network Volume region and alerts only when a tracked GPU becomes available.</small>
+              <label><span>Check interval (seconds)</span><input id="runpod-gpu-watch-interval" type="number" min="30" max="3600" value="60" /></label>
+              <label class="form-grid__wide"><span>Tracked GPUs</span><select id="runpod-gpu-watch-gpus" multiple size="4"><option value="NVIDIA RTX 4000 Ada Generation" selected>RTX 4000 Ada</option><option value="NVIDIA RTX A4000" selected>RTX A4000</option><option value="NVIDIA RTX 2000 Ada Generation" selected>RTX 2000 Ada</option><option value="NVIDIA GeForce RTX 4090" selected>RTX 4090</option></select></label>
+              <div class="dialog-actions" style="justify-content:flex-start"><button class="button button--primary" id="runpod-gpu-watch-enable" type="button">Enable watcher</button><button class="button" id="runpod-gpu-watch-check" type="button">Check now</button></div>
+              <small id="runpod-gpu-watch-status">Watcher inactive.</small>
+              <small id="runpod-gpu-history-summary">Availability history will appear after the first regional check.</small>
+            </div>
+            <div class="form-grid__wide">
+              <small>Use the gear for API key, Network Volume, template/image, region and GPU. This card controls the Pod and ComfyUI.</small>
+              <div class="dialog-actions" style="justify-content:flex-start; margin-top: 8px; flex-wrap: wrap">
+                <button class="button" id="runpod-refresh-pods" type="button">Refresh Pods</button>
+                <button class="button" id="runpod-list-volumes" type="button">Refresh Volumes</button>
+                <button class="button" id="runpod-list-datacenters" type="button">Refresh Regions</button>
+                <button class="button" id="runpod-list-gpus" type="button">List GPUs</button>
+                <button class="button button--primary" id="runpod-create-pod" type="button">Create Pod</button>
+                <button class="button" id="runpod-start-pod" type="button">Start</button>
+                <button class="button" id="runpod-stop-pod" type="button">Stop</button>
+                <button class="button" id="runpod-terminate-pod" type="button">Terminate</button>
+                <button class="button" id="runpod-comfyui-health" type="button">Test ComfyUI</button>
+                <button class="button" id="runpod-queue-workflow" type="button">Queue Workflow</button>
+              </div>
+              <pre class="secret-status" id="runpod-action-status">Save the RunPod configuration in System Settings, then refresh Pods or list GPUs.</pre>
+              <section class="runpod-jobs" aria-live="polite">
+                <div class="settings-section__heading"><strong>ComfyUI jobs and output</strong><small>Queued workflows are checked automatically. Completed files can be previewed or downloaded here.</small></div>
+                <div id="runpod-job-results" class="runpod-job-results"><small>No workflow has been queued from this session.</small></div>
+              </section>
+            </div>
+          </div>
+        </section>
+        <section class="settings-section" id="appium-options" hidden>
+          <div class="settings-section__heading">
+            <strong>Mobile Automation · Appium Control Room</strong>
+            <small>Stato del server, iPhone collegati e avvio esplicito di un’app installata. Nessuna pubblicazione o interazione automatica con account.</small>
+          </div>
+          <div class="runpod-dashboard mobile-studio__status">
+            <article class="runpod-card" id="appium-server-card"><small>Appium server</small><strong id="appium-server-state">Checking…</strong><span id="appium-server-detail">Status not loaded</span></article>
+            <article class="runpod-card" id="appium-adb-card"><small>Connected devices</small><strong id="appium-device-count">—</strong><span id="appium-adb-detail">Android / iOS discovery not loaded</span></article>
+          </div>
+          <div class="mobile-studio__actions">
+            <button class="button button--primary" id="appium-start-server" type="button">Start Appium</button>
+            <button class="button button--danger" id="appium-stop-server" type="button">Stop Appium</button>
+            <button class="button" id="appium-refresh-status" type="button">Refresh status</button>
+          </div>
+          <div class="mobile-studio__workspace">
+            <section class="mobile-studio__panel">
+              <div class="settings-section__heading"><strong>Dispositivi</strong><small>Seleziona il telefono collegato via USB e sbloccato.</small></div>
+              <div id="appium-device-list" class="mobile-device-list"><small>No device inventory loaded.</small></div>
+            </section>
+            <section class="mobile-studio__panel">
+              <div class="settings-section__heading"><strong>App installate · iOS</strong><small>La prima scansione avvia WebDriverAgent e può richiedere la firma Xcode.</small></div>
+              <label><span>Dispositivo target</span><select id="appium-target-device"><option value="">Collega/seleziona un iPhone</option></select></label>
+              <div class="mobile-studio__actions">
+                <button class="button" id="appium-list-apps" type="button">Cerca app installate</button>
+              </div>
+              <label><span>App da aprire</span><select id="appium-installed-app"><option value="">Prima cerca le app installate</option></select></label>
+              <div class="mobile-studio__actions">
+                <button class="button button--primary" id="appium-launch-app" type="button">Apri app selezionata</button>
+                <button class="button" id="appium-end-session" type="button">Termina sessione</button>
+              </div>
+              <small id="appium-session-state">Nessuna sessione di automazione aperta.</small>
+            </section>
+          </div>
+          <section class="mobile-studio__screen-panel">
+            <div class="settings-section__heading"><strong>Schermo iPhone</strong><small id="appium-screen-state">L’anteprima parte quando apri un’app e mantiene attiva la sessione Appium.</small></div>
+            <div class="mobile-studio__screen-frame"><img id="appium-screen-preview" alt="Anteprima dello schermo del dispositivo iOS" hidden /><span id="appium-screen-placeholder">Apri un’app per vedere qui lo schermo del telefono.</span></div>
+          </section>
+          <details class="mobile-studio__settings">
+            <summary>Configurazione tecnica</summary>
+            <div class="form-grid">
+              <label><span>Enable Appium</span><select id="appium-enabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></label>
+              <label><span>Appium server URL</span><input id="appium-server-url" type="url" value="http://127.0.0.1:4723" placeholder="http://127.0.0.1:4723" /></label>
+              <label><span>ADB executable (Android)</span><input id="appium-adb-path" value="adb" placeholder="adb or full executable path" /></label>
+              <label><span>iOS device tool</span><input id="appium-ios-tool" value="idevice_id" placeholder="idevice_id (or leave default)" /></label>
+              <div class="form-grid__wide mobile-studio__actions"><button class="button button--primary" id="appium-save-settings" type="button">Save configuration</button></div>
+            </div>
+          </details>
+          <small id="appium-action-status" role="status">Pronto a verificare server e dispositivi.</small>
         </section>
         <section class="settings-section" id="browser-options" hidden>
           <div class="settings-section__heading">
@@ -804,8 +955,24 @@
           <button class="report-tab report-tab--active" type="button" data-report-tab="overview">Overview</button>
           <button class="report-tab" type="button" data-report-tab="owned">My Profiles <span id="report-owned-count">0</span></button>
           <button class="report-tab" type="button" data-report-tab="competitors">Competitors <span id="report-competitor-count">0</span></button>
+          <button class="report-tab" type="button" data-report-tab="procacciatore">Procacciatore <span id="report-procacciatore-count">0</span></button>
           <button class="report-tab" type="button" data-report-tab="keywords">Keywords <span id="report-keyword-count">0</span></button>
+          <button class="report-tab" type="button" data-report-tab="ai-news">News <span id="report-ai-news-count">0</span></button>
+          <button class="report-tab" type="button" data-report-tab="linkedin">LinkedIn <span id="report-linkedin-count">0</span></button>
+          <button class="report-tab" type="button" data-report-tab="linkedin-publisher">Publisher</button>
+          <button class="report-tab" type="button" data-report-tab="monitoring">Monitoraggi <span id="report-monitoring-count">0/2</span></button>
         </nav>
+
+        <div class="report-panel" data-report-panel="monitoring" hidden>
+          <section class="monitoring-dashboard" aria-label="Monitoraggi automatici">
+            <div class="report-card__heading">
+              <div><span class="section-label">Avvio automatico</span><h3>Monitoraggi sempre attivi</h3><small>All’apertura dell’app vengono avviati i monitoraggi mancanti. Se un job è già attivo non ne viene creato un duplicato.</small></div>
+              <button class="button" id="monitoring-refresh" type="button">Aggiorna stato</button>
+            </div>
+            <p id="monitoring-status" class="monitoring-status" role="status">In attesa del runtime…</p>
+            <div id="monitoring-jobs" class="monitoring-jobs"></div>
+          </section>
+        </div>
 
         <div class="report-panel" data-report-panel="overview">
           <section class="report-metrics" id="report-metrics" aria-label="Report metrics"></section>
@@ -926,6 +1093,94 @@
             </div>
           </section>
         </div>
+
+        <div class="report-panel" data-report-panel="ai-news" hidden>
+          <section class="ai-news-dashboard">
+            <div class="report-card__heading"><div><span class="section-label">AI News Navigator</span><h3>Notizie e script video</h3><small>IA, Cina, economia globale e fatti del giorno: briefing salvati, fonti e testo pronto da registrare.</small></div><button class="button" id="report-ai-news-refresh" type="button">Aggiorna</button></div>
+            <div class="ai-news-metrics" id="report-ai-news-metrics"></div>
+            <div class="ai-news-layout"><div class="ai-news-archive" id="report-ai-news-archive"></div><article class="ai-news-detail" id="report-ai-news-detail"><p class="report-status">Seleziona un briefing.</p></article></div>
+          </section>
+        </div>
+
+        <div class="report-panel" data-report-panel="linkedin" hidden>
+          <section class="linkedin-dashboard">
+            <div class="report-card__heading">
+              <div><span class="section-label">LinkedIn Agent</span><h3>Post e media</h3><small>Analizza i post raccolti, salva immagini e video accessibili, crea bozze originali con OpenAI.</small></div>
+              <button class="button" id="report-linkedin-refresh" type="button">Aggiorna</button>
+            </div>
+            <div class="linkedin-toolbar">
+              <input id="report-linkedin-search" type="search" placeholder="Cerca autore o testo…" aria-label="Cerca post LinkedIn" />
+              <select id="report-linkedin-filter" aria-label="Filtra post LinkedIn">
+                <option value="interesting">Interessanti: 1.000+ · 1–3 giorni</option>
+                <option value="all">Tutti i post</option>
+                <option value="images">Con immagine</option>
+                <option value="videos">Con video rilevato</option>
+              </select>
+              <span id="report-linkedin-status" role="status">Caricamento…</span>
+            </div>
+            <div class="linkedin-layout">
+              <div class="linkedin-post-list" id="report-linkedin-list" aria-label="Post LinkedIn raccolti"></div>
+              <article class="linkedin-post-detail" id="report-linkedin-detail"><p>Seleziona un post per analizzarlo.</p></article>
+            </div>
+          </section>
+        </div>
+
+        <div class="report-panel" data-report-panel="linkedin-publisher" hidden>
+          <section class="linkedin-publisher" aria-label="Pubblicazione LinkedIn">
+            <div class="report-card__heading"><div><span class="section-label">LinkedIn</span><h3>Le tue bozze</h3><small>Prepara e rivedi il testo qui. Pubblicazione solo dopo una conferma esplicita.</small></div><button class="button" id="linkedin-publisher-refresh" type="button">Aggiorna</button></div>
+            <p id="linkedin-publisher-status" role="status"></p>
+            <div class="linkedin-publisher-grid">
+              <div class="linkedin-publisher-setup">
+                <h4>Chrome già autenticato</h4>
+                <p>Il Publisher usa una copia separata del profilo Chrome standard, senza API key. Verifica il login solo quando premi «Rivedi e pubblica». Una scansione del feed può continuare in parallelo.</p>
+                <p>Per sicurezza, la conferma finale richiede di scrivere <code>PUBBLICA</code>. Se l’esito non è verificabile, la bozza resta bloccata come «unknown»: controlla LinkedIn prima di riprovare.</p>
+                <p id="linkedin-publisher-account"></p>
+              </div>
+              <div class="linkedin-publisher-compose">
+                <h4>Nuova bozza</h4>
+                <textarea id="linkedin-publisher-new-body" maxlength="3000" placeholder="Scrivi un post originale…"></textarea>
+                <small>Se avvii la bozza da un post selezionato, la sua prima immagine viene inclusa automaticamente quando disponibile.</small>
+                <button class="button button--primary" id="linkedin-publisher-create-draft" type="button">Salva bozza</button>
+              </div>
+            </div>
+            <div id="linkedin-publisher-drafts" class="linkedin-publisher-drafts"></div>
+          </section>
+        </div>
+
+        <div class="report-panel" data-report-panel="procacciatore" hidden>
+          <section class="report-procacciatore-section">
+            <div class="report-card__heading">
+              <div><span class="section-label">Independent deal tracking</span><h3>Procacciatore</h3></div>
+              <small id="report-procacciatore-checked">No checks recorded yet</small>
+            </div>
+            <p class="report-competitor-rule">Dati isolati da charm/Pandora e dal monitoraggio profili. Gli articoli qualificati vengono ricontrollati nel tempo; la durata di vendita è mostrata solo dopo conferma.</p>
+            <div class="report-procacciatore-summary" id="report-procacciatore-summary"></div>
+            <div class="report-card__heading report-procacciatore-heading">
+              <div><span class="section-label">Popularity</span><h3>Articoli con più like</h3></div>
+            </div>
+            <div class="report-procacciatore-top" id="report-procacciatore-top"></div>
+            <div class="report-card__heading report-procacciatore-heading">
+              <div><span class="section-label">Etichette più frequenti</span><h3>Marchi e nomi presenti negli annunci</h3><small id="report-procacciatore-brand-note">Conteggio di annunci distinti nel periodo selezionato; le etichette marketplace non sono sempre marchi verificati.</small></div>
+            </div>
+            <div class="report-procacciatore-table-wrap">
+              <table class="report-procacciatore-table report-procacciatore-brands"><thead><tr><th>Marchio / etichetta</th><th>Classificazione</th><th>Annunci osservati</th><th>Venduti confermati</th><th>Prezzo medio</th><th>Like medi</th><th>Tempo medio di vendita</th></tr></thead><tbody id="report-procacciatore-brands"></tbody></table>
+            </div>
+            <div class="report-card__heading report-procacciatore-heading">
+              <div><span class="section-label">Comparabili</span><h3>Velocità di vendita per keyword e fascia prezzo</h3></div>
+              <small>Il tasso usa solo annunci qualificati e verificati; non disponibili esclusi dagli invenduti.</small>
+            </div>
+            <div class="report-procacciatore-table-wrap">
+              <table class="report-procacciatore-table report-procacciatore-cohorts"><thead><tr><th>Keyword / categoria</th><th>Prezzo</th><th>Osservati</th><th>Tracciati</th><th>Attivi</th><th>Venduti</th><th>Non disponibili</th><th>Sell-through</th><th>≤24h</th><th>≤72h</th><th>Mediana vendita</th><th>Campione</th></tr></thead><tbody id="report-procacciatore-cohorts"></tbody></table>
+            </div>
+            <div class="report-card__heading report-procacciatore-heading">
+              <div><span class="section-label">Domanda / offerta</span><h3>Articoli osservati e tracciati</h3><small id="report-procacciatore-supply-note">L’offerta osservata non equivale a disponibilità verificata.</small></div>
+              <label class="report-sale-time-filter"><span>Stato</span><select id="report-procacciatore-status"><option value="all">Tutti</option><option value="active">Attivi</option><option value="sold">Venduti</option><option value="unavailable">Non disponibili</option></select></label>
+            </div>
+            <div class="report-procacciatore-table-wrap">
+              <table class="report-procacciatore-table"><thead><tr><th>Articolo</th><th>Like / velocità</th><th>Prezzo / variazione</th><th>Keyword</th><th>Stato</th><th>Rilevato</th><th>Ultima osservazione</th><th>Venduto dopo</th></tr></thead><tbody id="report-procacciatore-articles"></tbody></table>
+            </div>
+          </section>
+        </div>
       </div>
     </dialog>
 
@@ -942,6 +1197,6 @@
         }
       }, 3000);
     </script>
-    <script type="module" src="./app.mjs"></script>
+    <script type="module" src="./app.mjs?v=appium-control-room-2"></script>
   </body>
 </html>

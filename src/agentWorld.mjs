@@ -11,10 +11,10 @@ const defaultRoomLayout = [
   {
     id: "main",
     label: "Main Room",
-    col: 3,
-    row: 2,
-    columns: 18,
-    rows: 14,
+    col: 1,
+    row: 1,
+    columns: 22,
+    rows: 16,
     color: "#1f8d6a",
   },
 ];
@@ -85,6 +85,20 @@ export const workstationPresets = [
     role: "visual-sourcing-specialist",
     color: "#f59e0b",
     jobs: ["image search", "supplier research", "cost ranking", "batch watch"],
+  },
+  {
+    id: "linkedin",
+    label: "LinkedIn Research Desk",
+    role: "linkedin-researcher",
+    color: "#0a66c2",
+    jobs: ["post discovery", "trend analysis", "content research"],
+  },
+  {
+    id: "infrastructure",
+    label: "GPU Control Station",
+    role: "media-infrastructure",
+    color: "#8b5cf6",
+    jobs: ["Pod inventory", "ComfyUI readiness", "media job control", "cost review"],
   },
 ];
 
@@ -172,6 +186,36 @@ const defaultWorkstations = [
     jobs: ["image search", "supplier research", "cost ranking", "batch watch"],
     agentId: "sourcing-agent",
     presetId: "sourcing",
+  },
+  {
+    id: "linkedin",
+    label: "LinkedIn Research",
+    role: "linkedin-researcher",
+    color: "#0a66c2",
+    position: { x: -4.5, z: 0.5 },
+    jobs: ["post discovery", "trend analysis", "content research"],
+    agentId: "linkedin-agent",
+    presetId: "linkedin",
+  },
+  {
+    id: "runpod-infrastructure",
+    label: "GPU Control Station",
+    role: "media-infrastructure",
+    color: "#8b5cf6",
+    position: { x: 0.5, z: 0.5 },
+    jobs: ["Pod inventory", "ComfyUI readiness", "media job control", "cost review"],
+    agentId: "runpod-manager",
+    presetId: "infrastructure",
+  },
+  {
+    id: "mobile-studio",
+    label: "Mobile Studio",
+    role: "mobile-automation",
+    color: "#38bdf8",
+    position: { x: -2.5, z: -3.5 },
+    jobs: ["device inventory", "Appium health", "account-device mapping", "mobile publishing"],
+    agentId: "mobile-automation",
+    presetId: "mobile",
   },
 ];
 
@@ -348,6 +392,9 @@ function normalizeWorkstation(station, fallbackIndex = 0) {
     role: String(station?.role || preset.role || "specialist").slice(0, 48),
     color: String(station?.color || preset.color || "#5ee7f2"),
     position,
+    rotation: Number.isFinite(Number(station?.rotation))
+      ? ((Number(station.rotation) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
+      : 0,
     jobs: Array.isArray(station?.jobs) && station.jobs.length ? station.jobs.map((job) => String(job).slice(0, 80)) : [...preset.jobs],
     agentId,
     presetId: String(station?.presetId || preset.id),
@@ -639,6 +686,9 @@ function roleStationId(agent) {
   if (agent.role === "visual-sourcing-specialist" || agent.capabilities.includes("visual-search")) {
     return "sourcing";
   }
+  if (agent.role === "media-infrastructure" || agent.capabilities.includes("gpu-infrastructure")) {
+    return "runpod-infrastructure";
+  }
   return "meeting";
 }
 
@@ -791,8 +841,9 @@ export class AgentWorld {
       bubble: "manual move",
     });
     if (ok) {
-      agentState.manualUntil = this.clock + 14;
-      agentState.nextDecisionAt = this.clock + 14;
+      // This is local to one agent; the rest of the office remains autonomous.
+      agentState.manualUntil = this.clock + 10;
+      agentState.nextDecisionAt = this.clock + 10;
     }
     return ok;
   }
@@ -816,9 +867,25 @@ export class AgentWorld {
     agentState.stationId = "manual";
     agentState.jobLabel = jobLabel;
     agentState.bubble = jobLabel;
-    agentState.manualUntil = this.clock + 30;
-    agentState.nextDecisionAt = this.clock + 30;
+    agentState.manualUntil = this.clock + 10;
+    agentState.nextDecisionAt = this.clock + 10;
     return true;
+  }
+
+  resumeAutoAgent(agent) {
+    const state = this.getAgentState(agent?.id);
+    if (!state) return false;
+    state.manualUntil = 0;
+    state.nextDecisionAt = this.clock;
+    if (state.activeWorkIds.size === 0) {
+      this.assignStation(agent, stationForStatus(agent), agent.runtime.status || "auto", true);
+    }
+    return true;
+  }
+
+  isAgentManual(agentId) {
+    const state = this.getAgentState(agentId);
+    return Boolean(state && state.manualUntil > this.clock);
   }
 
   commandMoveStation(stationId, tile) {

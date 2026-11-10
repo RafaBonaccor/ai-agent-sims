@@ -1,4 +1,5 @@
 node_modules/
+tools/appium/.appium/
 .venv/
 __pycache__/
 *.py[cod]

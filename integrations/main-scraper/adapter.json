@@ -33,6 +33,25 @@
       "risk": "read",
       "arguments": ["status", "--stdout-json"]
     },
+    "linkedin.posts": {
+      "label": "LinkedIn · post virali",
+      "description": "Scorre il feed LinkedIn personalizzato finché trova 10 nuovi post con almeno 1.000 reazioni pubblicati da 1 a 3 giorni fa. Nessun limite agli scorrimenti; salva i candidati in un database separato e non interagisce con i post.",
+      "risk": "browser-read",
+      "arguments": ["run", "linkedin_posts", "--stdout-json", "--quiet", "--format", "none"],
+      "parameters": [
+        { "id": "target-new-posts", "label": "Nuovi post da trovare", "type": "number", "default": 10, "min": 1, "max": 100, "step": 1, "help": "Conta solo post idonei non già presenti nel database all'avvio di questo giro." },
+        { "id": "min-reactions", "label": "Reazioni minime per post", "type": "number", "default": 1000, "min": 1, "max": 10000000, "step": 1, "help": "Solo i post con almeno questo numero di reazioni compaiono nei risultati; i candidati osservati restano nel DB LinkedIn." },
+        { "id": "min-post-age-days", "label": "Pubblicato da almeno (giorni)", "type": "number", "default": 1, "min": 1, "max": 30, "step": 1, "help": "Valore predefinito: 1 giorno. I post di poche ore non sono considerati interessanti." },
+        { "id": "max-post-age-days", "label": "Pubblicato da massimo (giorni)", "type": "number", "default": 3, "min": 1, "max": 30, "step": 1, "help": "Valore predefinito: 3 giorni inclusi. LinkedIn mostra l'età arrotondata, non l'ora esatta di pubblicazione." },
+        { "id": "scroll-rounds", "label": "Scorrimenti massimi", "type": "number", "default": 0, "min": 0, "max": 200, "step": 1, "help": "0 = illimitati. Il job si ferma quando trova i nuovi post richiesti o quando lo interrompi; se il feed si blocca, aspetta e riprova." },
+        { "id": "db-path", "label": "Database LinkedIn", "type": "text", "default": "data/linkedin_posts.db", "help": "Separato dai dati Vinted e del procacciatore." },
+        { "id": "browser-mode", "label": "Profilo Chrome", "type": "select", "default": "chrome_normale", "options": [
+          { "value": "chrome_normale", "label": "Chrome standard (copia della sessione)" },
+          { "value": "sessione_persistente", "label": "Sessione persistente" }
+        ] },
+        { "id": "browser-profile-directory", "label": "Profilo Chrome", "type": "text", "default": "Default", "placeholder": "Default" }
+      ]
+    },
     "google_maps.search": {
       "label": "Cerca lead Google Maps",
       "risk": "browser-read",
@@ -83,7 +102,7 @@
       "description": "Avvia il loop Vinted deal-hunter usando i valori salvati dalla GUI come default modificabili.",
       "risk": "browser-read-write",
       "timeoutSeconds": 0,
-      "arguments": ["run", "vinted", "--stdout-json", "--quiet", "--format", "none"],
+      "arguments": ["run", "vinted", "--stdout-json", "--quiet", "--format", "none", "--db-path", "data/procacciatore.db"],
       "parameters": [
         { "id": "deal-hunter-terms", "label": "Rotation terms", "type": "text", "default": "charm, bracciali, pandora, collane, gioielli, ciondoli, orecchini, anelli", "defaultFromUiSetting": "vinted_deal_hunter_terms", "placeholder": "charm, pandora, collane" },
         { "id": "deal-hunter-category", "label": "Category", "type": "select", "default": "Gioielli donna", "defaultFromUiSetting": "vinted_deal_hunter_category", "options": [
@@ -96,13 +115,14 @@
           { "value": "Scarpe donna", "label": "Women shoes" },
           { "value": "Scarpe uomo", "label": "Men shoes" }
         ] },
-        { "id": "max-results", "label": "Max items / search", "type": "number", "default": 250, "defaultFromUiSetting": "vinted_deal_hunter_max_results", "min": 0, "step": 1 },
-        { "id": "deal-hunter-min-price", "label": "Min item price for Discord", "type": "text", "default": "", "defaultFromUiSetting": "vinted_deal_hunter_min_price", "placeholder": "5.00" },
+        { "id": "max-results", "label": "Max items / search", "type": "number", "default": 500, "defaultFromUiSetting": "vinted_deal_hunter_max_results", "min": 0, "step": 1 },
+        { "id": "deal-hunter-min-price", "label": "Min item price (€)", "type": "text", "default": "15", "defaultFromUiSetting": "vinted_deal_hunter_min_price", "placeholder": "15" },
         { "id": "max-price", "label": "Max item price", "type": "text", "default": "", "defaultFromUiSetting": "vinted_deal_hunter_max_price", "placeholder": "19.90" },
         { "id": "deal-hunter-min-favorites", "label": "Min likes", "type": "number", "default": 70, "defaultFromUiSetting": "vinted_deal_hunter_min_favorites", "min": 1, "step": 1 },
         { "id": "deal-hunter-max-age-hours", "label": "Max age hours", "type": "number", "default": 24, "defaultFromUiSetting": "vinted_deal_hunter_max_age_hours", "min": 1, "step": 1 },
         { "id": "deal-hunter-loop-seconds", "label": "Loop pause seconds", "type": "number", "default": 5, "defaultFromUiSetting": "vinted_deal_hunter_loop_seconds", "min": 0, "step": 1 },
         { "id": "deal-hunter-url-only-discord", "label": "Discord URL-only, no Vinted login", "type": "checkbox", "default": false, "defaultFromUiSetting": "vinted_deal_hunter_url_only_discord", "emitFalseFlag": true },
+        { "id": "skip-login-required", "label": "Never sign in to Vinted", "type": "checkbox", "default": true, "help": "If Vinted requires an account, skip the login flow and continue/stop without opening Google or entering credentials." },
         { "id": "auto-submit-offers", "label": "Auto-submit offers", "type": "checkbox", "default": true, "emitFalseFlag": true },
         { "id": "browser-mode", "label": "Browser mode", "type": "select", "default": "chrome_normale", "defaultFromUiSetting": "browser_mode", "options": [
           { "value": "chrome_normale", "label": "Chrome normale" },
@@ -209,9 +229,10 @@
       "timeoutSeconds": 0,
       "arguments": ["run", "vinted_continuous", "--stdout-json", "--quiet", "--format", "none"],
       "parameters": [
-        { "id": "profile-urls", "label": "Profiles to monitor", "type": "list", "default": "", "namePlaceholder": "Profile name", "placeholder": "Marketplace profile URL or numeric ID", "addLabel": "+ Add profile", "help": "Each profile is checked on the slower profile interval. The database records active, new and disappeared listings." },
+        { "id": "profile-urls", "label": "Other profiles / competitors", "type": "list", "default": "", "namePlaceholder": "Profile name", "placeholder": "Marketplace profile URL or numeric ID", "addLabel": "+ Add profile", "help": "Optional competitor profiles. These use the Profile categories filter below." },
+        { "id": "owned-profile-urls", "label": "My profiles (full inventory)", "type": "list", "default": "https://www.vinted.it/member/225753959\nhttps://www.vinted.it/member/3178210259\nhttps://www.vinted.it/member/3206490867", "namePlaceholder": "Profile name", "placeholder": "Your seller profile URL or numeric ID", "addLabel": "+ Add profile", "help": "These profiles are checked every hour by default, across all categories. The monitor reads the full inventory, compares snapshots, and opens previously missing listings to verify sold/unavailable status. Set Max items per profile to 0 to read everything." },
         { "id": "saved-competitors", "label": "Saved competitors", "type": "competitor-list", "help": "Select saved competitor profiles to add them to this monitoring job. They are merged with any URLs entered above." },
-        { "id": "profile-categories", "label": "Profile categories", "type": "text", "default": "", "placeholder": "e.g. Charms e ciondoli, Braccialetti", "help": "Optional. Use the exact category labels found in the profile detail. Leave empty to keep every category." },
+        { "id": "profile-categories", "label": "Other profile categories", "type": "text", "default": "", "placeholder": "e.g. Charms e ciondoli, Braccialetti", "help": "Optional filter for Other profiles / competitors. Your profiles above are always checked across every category." },
         { "id": "competitor-keywords", "label": "Competitor keywords", "type": "text", "default": "charm, pandora", "placeholder": "charm, pandora, bracciale charm", "help": "Search terms scanned repeatedly to find interesting listings and discover their sellers." },
         { "id": "competitor-category", "label": "Competitor category", "type": "select", "default": "Gioielli donna", "options": [
           { "value": "Nessuna categoria rapida", "label": "No quick category" },
@@ -224,7 +245,7 @@
           { "value": "Scarpe uomo", "label": "Men shoes" }
         ] },
         { "id": "article-interval-seconds", "label": "Article and competitor scan every", "type": "duration", "default": 5, "min": 0, "step": 1, "help": "Continuous procacciatore-style discovery. Use 0 to scan articles once." },
-        { "id": "profile-interval-seconds", "label": "Profile check every", "type": "duration", "default": 3600, "min": 0, "step": 1, "help": "Checks selected seller profiles at this slower interval. Use 0 to check profiles once." },
+        { "id": "profile-interval-seconds", "label": "Profile check every", "type": "duration", "default": 3600, "min": 0, "step": 1, "help": "Checks all selected seller profiles, including verifying missing listings individually, every hour by default. Use 0 only for a single profile check." },
         { "id": "max-items", "label": "Max items per profile", "type": "number", "default": 0, "min": 0, "step": 1, "help": "Maximum listings read from each profile in one check. Use 0 to scroll and read all available listings." },
         { "id": "max-results", "label": "Max items per competitor search", "type": "number", "default": 100, "min": 0, "step": 1, "help": "Caps the catalog listings considered for each keyword before opening qualified candidates." },
         { "id": "competitor-min-likes", "label": "Min likes before opening competitor listing", "type": "number", "default": 15, "min": 0, "step": 1, "help": "Listings below this number are not opened, making continuous scanning faster." },
@@ -254,7 +275,7 @@
       "timeoutSeconds": 0,
       "arguments": ["run", "vinted_profile", "--stdout-json", "--quiet", "--format", "none"],
       "parameters": [
-        { "id": "profile-urls", "label": "Profile URLs", "type": "list", "default": "https://www.vinted.it/member/262102939", "namePlaceholder": "Profile name", "placeholder": "Vinted profile URL or numeric ID", "addLabel": "+ Add profile" },
+        { "id": "profile-urls", "label": "Profile URLs", "type": "list", "default": "https://www.vinted.it/member/225753959\nhttps://www.vinted.it/member/3178210259\nhttps://www.vinted.it/member/3206490867", "namePlaceholder": "Profile name", "placeholder": "Vinted profile URL or numeric ID", "addLabel": "+ Add profile" },
         { "id": "profile-categories", "label": "Profile categories", "type": "text", "default": "", "placeholder": "e.g. Charms e ciondoli, Braccialetti", "help": "Optional. Exact category labels shown in the seller detail; blank monitors all categories." },
         { "id": "interval-seconds", "label": "After the first check, repeat every", "type": "duration", "default": 3600, "min": 0, "step": 1, "help": "Start always runs one check immediately. Use 0 to run once and stop." },
         { "id": "daily-report-hour", "label": "Daily Discord digest hour", "type": "number", "default": 10, "min": 0, "max": 23, "step": 1, "help": "Local hour. After each cycle, if this hour has passed, one daily summary is sent." },
@@ -279,7 +300,7 @@
       "risk": "browser-read",
       "arguments": ["run", "vinted_profile", "--stdout-json", "--quiet", "--format", "none", "--interval-seconds", "0", "--discord-profile-report"],
       "parameters": [
-        { "id": "profile-urls", "label": "Profile URLs", "type": "list", "default": "https://www.vinted.it/member/262102939", "namePlaceholder": "Profile name", "placeholder": "Vinted profile URL or numeric ID", "addLabel": "+ Add profile" },
+        { "id": "profile-urls", "label": "Profile URLs", "type": "list", "default": "https://www.vinted.it/member/225753959\nhttps://www.vinted.it/member/3178210259\nhttps://www.vinted.it/member/3206490867", "namePlaceholder": "Profile name", "placeholder": "Vinted profile URL or numeric ID", "addLabel": "+ Add profile" },
         { "id": "profile-categories", "label": "Profile categories", "type": "text", "default": "", "placeholder": "e.g. Charms e ciondoli, Braccialetti", "help": "Optional. Exact category labels shown in the seller detail; blank monitors all categories." },
         { "id": "max-items", "label": "Max profile items", "type": "number", "default": 0, "min": 0, "step": 1 },
         { "id": "db-path", "label": "SQLite DB path", "type": "text", "default": "data/scraper.db", "defaultFromUiSetting": "vinted_db_path", "placeholder": "data/scraper.db" },

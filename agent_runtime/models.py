@@ -79,12 +79,34 @@ class DiscordBotSettings(BaseModel):
     sync_commands: bool = True
 
 
+class RunPodSettings(BaseModel):
+    enabled: bool = False
+    network_volume_id: str = Field(default="", max_length=160)
+    data_center_id: str = Field(default="", max_length=80)
+    template_id: str = Field(default="", max_length=160)
+    container_image: str = Field(default="", max_length=300)
+    preferred_gpu: str = Field(default="", max_length=120)
+    max_hourly_cost: float = Field(default=0, ge=0, le=1000)
+    volume_mount_path: str = Field(default="/workspace", max_length=200)
+    comfyui_port: int = Field(default=8188, ge=1, le=65535)
+    idle_action: str = Field(default="stop", pattern="^(stop|terminate)$")
+
+
+class AppiumSettings(BaseModel):
+    enabled: bool = False
+    server_url: str = Field(default="http://127.0.0.1:4723", max_length=500)
+    adb_path: str = Field(default="adb", max_length=500)
+    ios_device_tool: str = Field(default="idevice_id", max_length=500)
+
+
 class SystemSettings(BaseModel):
     configured: bool = False
     model: ModelSettings = Field(default_factory=ModelSettings)
     ui: SystemUiSettings = Field(default_factory=SystemUiSettings)
     diagnostics: DiagnosticsSettings = Field(default_factory=DiagnosticsSettings)
     discord: DiscordBotSettings = Field(default_factory=DiscordBotSettings)
+    runpod: RunPodSettings = Field(default_factory=RunPodSettings)
+    appium: AppiumSettings = Field(default_factory=AppiumSettings)
 
 
 class AgentDefinition(BaseModel):

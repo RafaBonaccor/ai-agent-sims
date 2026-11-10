@@ -10,12 +10,206 @@ from agent_runtime.vinted_reports import (
     build_vinted_competitor_report,
     build_vinted_report,
     deactivate_owned_profile,
+    ignore_owned_profile_item,
     save_owned_profile,
     write_vinted_report_html,
 )
 
 
 class VintedReportsTests(unittest.TestCase):
+    def test_owned_report_hides_unverified_legacy_profile_items(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            db_path = root / "scraper.db"
+            with sqlite3.connect(db_path) as connection:
+                connection.executescript("""
+                    CREATE TABLE vinted_profile_snapshots (
+                        id INTEGER PRIMARY KEY, member_id TEXT, profile_url TEXT,
+                        checked_at TEXT, item_count INTEGER, new_count INTEGER,
+                        gone_count INTEGER, still_count INTEGER
+                    );
+                    CREATE TABLE vinted_profile_snapshot_items (
+                        id INTEGER PRIMARY KEY, snapshot_id INTEGER, member_id TEXT,
+                        profile_url TEXT, item_link TEXT, item_id TEXT, item_name TEXT,
+                        price_text TEXT, image_url TEXT, status TEXT, present INTEGER,
+                        snapshot_json TEXT
+                    );
+                    CREATE TABLE vinted_items (
+                        link TEXT PRIMARY KEY, item_id TEXT, name TEXT, price_text TEXT,
+                        seller_name TEXT, seller_profile_url TEXT, seller_member_id TEXT,
+                        first_seen_at TEXT, last_seen_at TEXT
+                    );
+                """)
+                url = "https://www.vinted.it/member/225753959"
+                connection.execute("INSERT INTO vinted_profile_snapshots VALUES (1,?,?,?,2,2,0,0)", ("225753959", url, "2026-11-01T10:00:00"))
+                connection.execute("INSERT INTO vinted_profile_snapshots VALUES (2,?,?,?,1,0,0,1)", ("225753959", url, "2026-11-07T10:00:00"))
+                connection.execute(
+                    "INSERT INTO vinted_items VALUES (?,?,?,?,?,?,?,?,?)",
+                    ("https://www.vinted.it/items/3", "3", "Sold owned", "15 €", "bonaccarla", url, "225753959", "2026-11-01T10:00:00", "2026-11-01T11:00:00"),
+                )
+                connection.executemany(
+                    "INSERT INTO vinted_profile_snapshot_items VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    [
+                        (1, 1, "225753959", url, "https://www.vinted.it/items/1", "1", "Owned", "10 €", "", "unknown", 1, "{}"),
+                        (2, 1, "225753959", url, "https://www.vinted.it/items/2", "2", "Recommendation", "20 €", "", "new", 1, "{}"),
+                        (3, 2, "225753959", url, "https://www.vinted.it/items/1", "1", "Owned", "10 €", "", "still_active", 1, json.dumps({"profile_inventory_source": "wardrobe_api"})),
+                        (4, 1, "225753959", url, "https://www.vinted.it/items/3", "3", "Sold owned", "15 €", "", "sold", 0, json.dumps({"profile_item_status": "sold", "profile_sold_at": "2026-11-01T11:00:00", "profile_sold_after_seconds": 3600})),
+                    ],
+                )
+            save_owned_profile(root, profile_url=url, db_path=db_path)
+            profile = next(item for item in build_vinted_report(root, db_path=db_path)["owned_profiles"] if item["member_id"] == "225753959")
+            ignored = ignore_owned_profile_item(root, "225753959", "3", db_path=db_path)
+            after_ignore = next(item for item in build_vinted_report(root, db_path=db_path)["owned_profiles"] if item["member_id"] == "225753959")
+            with sqlite3.connect(db_path) as connection:
+                historical_rows = connection.execute("SELECT COUNT(*) FROM vinted_profile_snapshot_items WHERE member_id = '225753959' AND item_id = '3'").fetchone()[0]
+
+        self.assertEqual({"1", "3"}, {item["item_id"] for item in profile["items"]})
+        self.assertEqual(2, profile["known_items_count"])
+        self.assertEqual(1, profile["active_items_count"])
+        self.assertEqual(1, profile["sold_items_count"])
+        self.assertEqual(3600, profile["average_sale_seconds"])
+        self.assertEqual("active", next(item for item in profile["items"] if item["item_id"] == "1")["status"])
+        self.assertTrue(ignored["history_preserved"])
+        self.assertEqual(1, historical_rows)
+        self.assertEqual(["1"], [item["item_id"] for item in after_ignore["items"]])
+        self.assertEqual(0, after_ignore["sold_items_count"])
+
+    def test_procacciatore_report_adds_velocity_cohorts_and_demand_supply(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            shared_db, proc_db = root / "scraper.db", root / "procacciatore.db"
+            now = datetime.now().replace(microsecond=0)
+            first, prior = (now - timedelta(hours=2)).isoformat(), (now - timedelta(hours=1)).isoformat()
+            with sqlite3.connect(shared_db):
+                pass
+            with sqlite3.connect(proc_db) as connection:
+                connection.executescript("""
+                    CREATE TABLE vinted_deal_sale_tracking (
+                        item_link TEXT PRIMARY KEY,item_id TEXT,item_name TEXT,first_seen_at TEXT,last_checked_at TEXT,
+                        sold_at TEXT,status TEXT,availability_status TEXT,unavailable_at TEXT,unavailable_reason TEXT,payload_json TEXT
+                    );
+                    CREATE TABLE vinted_procacciatore_listings (
+                        item_link TEXT,search_term TEXT,item_id TEXT,item_name TEXT,category TEXT,image_url TEXT,
+                        first_seen_at TEXT,last_seen_at TEXT,first_price_value REAL,price_value REAL,price_text TEXT,
+                        favorite_count INTEGER,times_seen INTEGER
+                    );
+                    CREATE TABLE vinted_procacciatore_snapshots (
+                        item_link TEXT,search_term TEXT,observed_at TEXT,price_value REAL,favorite_count INTEGER
+                    );
+                """)
+                links = ["https://vinted.test/items/sold", "https://vinted.test/items/active", "https://vinted.test/items/gone"]
+                tracking = [
+                    (links[0], "1", "Anello venduto", first, now.isoformat(), now.isoformat(), "sold", "available", "", "", json.dumps({"favorite_count": 20, "deal_sale_duration_seconds": 7200, "price": "15 €", "search_term": "anelli"})),
+                    (links[1], "2", "Anello attivo", first, now.isoformat(), "", "active", "available", "", "", json.dumps({"favorite_count": 12, "price": "13 €", "search_term": "anelli"})),
+                    (links[2], "3", "Anello non disponibile", first, now.isoformat(), "", "unavailable", "unavailable", now.isoformat(), "not_found", json.dumps({"favorite_count": 9, "price": "15 €", "search_term": "anelli"})),
+                ]
+                connection.executemany("INSERT INTO vinted_deal_sale_tracking VALUES (?,?,?,?,?,?,?,?,?,?,?)", tracking)
+                connection.executemany(
+                    "INSERT INTO vinted_procacciatore_listings VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    [(link, "anelli", str(index + 1), name, "Gioielli", "", first, now.isoformat(), 15.0, price, f"{price} €", likes, 2)
+                     for index, (link, name, price, likes) in enumerate(zip(links, ["Pandora", "Pandora", "Silver"], [15, 13, 15], [20, 12, 9]))],
+                )
+                connection.executemany(
+                    "INSERT INTO vinted_procacciatore_snapshots VALUES (?,?,?,?,?)",
+                    [(links[1], "anelli", prior, 15, 8), (links[1], "anelli", now.isoformat(), 13, 12)],
+                )
+            report = build_vinted_report(root, db_path=shared_db, procacciatore_db_path=proc_db)
+            procacciatore = report["procacciatore"]
+            self.assertEqual(3, procacciatore["summary"]["observed_count"])
+            self.assertEqual(3, procacciatore["summary"]["observed_supply_24h"])
+            self.assertEqual(1, procacciatore["summary"]["tracked_unavailable_count"])
+            self.assertEqual(2, procacciatore["summary"]["tracked_active_count"] + procacciatore["summary"]["tracked_sold_count"])
+            self.assertEqual(50.0, procacciatore["summary"]["tracked_sell_through_rate"])
+            self.assertAlmostEqual(1 / 3, procacciatore["summary"]["demand_supply_ratio"], places=3)
+            cohort = procacciatore["cohorts"][0]
+            self.assertEqual("anelli", cohort["search_term"])
+            self.assertEqual(50.0, cohort["sell_through_rate"])
+            self.assertEqual(1, cohort["sold_within_24h"])
+            active = next(article for article in procacciatore["articles"] if article["item_id"] == "2")
+            self.assertEqual(4.0, active["likes_per_hour"])
+            self.assertEqual(-2.0, active["price_change_value"])
+            pandora = next(brand for brand in procacciatore["brands"] if brand["name"] == "Pandora")
+            self.assertEqual(2, pandora["observed_count"])
+            self.assertEqual(1, pandora["sold_count"])
+            self.assertEqual(14.0, pandora["average_price"])
+            self.assertEqual(7200, pandora["average_sale_seconds"])
+            silver = next(brand for brand in procacciatore["brands"] if brand["name"] == "Silver")
+            self.assertEqual("Etichetta generica / da verificare", silver["label_type"])
+
+    def test_procacciatore_report_reads_independent_tracking_database(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            shared_db = root / "scraper.db"
+            proc_db = root / "procacciatore.db"
+            now = datetime.now().replace(microsecond=0)
+            first_seen = now - timedelta(hours=4)
+            with sqlite3.connect(shared_db):
+                pass
+            with sqlite3.connect(proc_db) as connection:
+                connection.execute(
+                    """CREATE TABLE vinted_deal_sale_tracking (
+                        item_link TEXT PRIMARY KEY, item_id TEXT, item_name TEXT,
+                        first_seen_at TEXT, last_checked_at TEXT, sold_at TEXT,
+                        status TEXT, availability_status TEXT, unavailable_at TEXT,
+                        unavailable_reason TEXT, payload_json TEXT
+                    )"""
+                )
+                connection.executemany(
+                    "INSERT INTO vinted_deal_sale_tracking VALUES (?, ?, ?, ?, ?, ?, ?, 'available', '', '', ?)",
+                    [
+                        ("https://vinted.test/items/sold", "1", "Anello venduto", first_seen.isoformat(), now.isoformat(), now.isoformat(), "sold", json.dumps({"favorite_count": 42, "deal_sale_duration_seconds": 14400, "price": "15 €", "search_term": "anelli"})),
+                        ("https://vinted.test/items/active", "2", "Collana attiva", now.isoformat(), now.isoformat(), "", "active", json.dumps({"favorite_count": 90, "price": "20 €", "search_term": "collane"})),
+                    ],
+                )
+
+            report = build_vinted_report(root, db_path=shared_db, procacciatore_db_path=proc_db)
+
+        procacciatore = report["procacciatore"]
+        self.assertEqual(2, procacciatore["summary"]["tracked_count"])
+        self.assertEqual(1, procacciatore["summary"]["sold_count"])
+        self.assertEqual(14400, procacciatore["summary"]["average_sale_seconds"])
+        self.assertEqual("2", procacciatore["top_liked"][0]["item_id"])
+        self.assertEqual("anelli", next(item for item in procacciatore["articles"] if item["status"] == "sold")["search_term"])
+
+    def test_owned_profile_ignores_legacy_empty_snapshot_marked_gone(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            db_path = root / "scraper.db"
+            profile_url = "https://www.vinted.it/member/123"
+            with sqlite3.connect(db_path) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE vinted_profile_snapshots(
+                        id INTEGER PRIMARY KEY, member_id TEXT, profile_url TEXT,
+                        checked_at TEXT, item_count INTEGER, new_count INTEGER,
+                        gone_count INTEGER, still_count INTEGER
+                    );
+                    CREATE TABLE vinted_profile_snapshot_items(
+                        id INTEGER PRIMARY KEY, snapshot_id INTEGER, member_id TEXT,
+                        profile_url TEXT, item_link TEXT, item_id TEXT, item_name TEXT,
+                        price_text TEXT, image_url TEXT, status TEXT, present INTEGER,
+                        snapshot_json TEXT
+                    );
+                    """
+                )
+                connection.execute("INSERT INTO vinted_profile_snapshots VALUES (1,'123',?,'2026-10-25T10:00:00',1,1,0,0)", (profile_url,))
+                connection.execute("INSERT INTO vinted_profile_snapshots VALUES (2,'123',?,'2026-10-26T10:00:00',0,0,1,0)", (profile_url,))
+                connection.execute(
+                    "INSERT INTO vinted_profile_snapshot_items VALUES (1,1,'123',?, 'https://www.vinted.it/items/55-charm','55','Charm','10,00 €','','new',1,'{}')",
+                    (profile_url,),
+                )
+                connection.execute(
+                    "INSERT INTO vinted_profile_snapshot_items VALUES (2,2,'123',?, 'https://www.vinted.it/items/55-charm','55','Charm','10,00 €','','gone',0,'{}')",
+                    (profile_url,),
+                )
+            save_owned_profile(root, profile_url=profile_url, db_path=db_path)
+
+            profile = next(item for item in build_vinted_report(root, db_path=db_path)["owned_profiles"] if item["member_id"] == "123")
+
+        self.assertEqual(1, profile["active_items_count"])
+        self.assertEqual("2026-10-25T10:00:00", profile["latest_snapshot_at"])
+        self.assertEqual("active", profile["items"][0]["status"])
+
     def test_competitor_profile_includes_listing_history_and_sale_timing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -167,11 +361,19 @@ class VintedReportsTests(unittest.TestCase):
             profile = report["owned_profiles"][0]
             html_path = write_vinted_report_html(root, db_path=db_path)
             html = html_path.read_text(encoding="utf-8")
+            (root / "config").mkdir()
+            (root / "config" / "owned_profile_exclusions.json").write_text(
+                json.dumps({"123": ["2"]}), encoding="utf-8"
+            )
+            filtered_profile = build_vinted_report(root, db_path=db_path)["owned_profiles"][0]
 
         self.assertEqual(1, profile["active_items_count"])
         self.assertEqual(1, profile["sold_items_count"])
         self.assertNotIn("Unknown listing", [item["name"] for item in profile["items"]])
         self.assertIn("images.example/bracelet.webp", html)
+        self.assertEqual(0, filtered_profile["active_items_count"])
+        self.assertEqual(1, filtered_profile["known_items_count"])
+        self.assertEqual(["1"], [item["item_id"] for item in filtered_profile["items"]])
         self.assertIn("owned-thumbnails", html)
 
     def test_report_aggregates_metrics_series_and_article_cards(self) -> None:

@@ -4,7 +4,7 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .engine import AgentRuntime
@@ -20,10 +20,10 @@ DEFAULT_AI_NEWS_AGENT_ID = "ai-news-navigator"
 class MorningBriefingConfig:
     enabled: bool = True
     agent_id: str = DEFAULT_AI_NEWS_AGENT_ID
-    local_time: time = time(hour=8, minute=0)
+    local_time: time = time(hour=9, minute=0)
     timezone: str = "Europe/Rome"
     run_missed: bool = False
-    topic: str = "ultime notizie sull'intelligenza artificiale"
+    topic: str = "notizie su intelligenza artificiale, Cina, economia globale e fatti importanti della giornata"
 
     @classmethod
     def from_env(cls) -> "MorningBriefingConfig":
@@ -31,11 +31,11 @@ class MorningBriefingConfig:
             enabled=parse_bool(os.environ.get("AGENT_LAB_AI_NEWS_BRIEFING", "1"), default=True),
             agent_id=os.environ.get("AGENT_LAB_AI_NEWS_AGENT", DEFAULT_AI_NEWS_AGENT_ID).strip()
             or DEFAULT_AI_NEWS_AGENT_ID,
-            local_time=parse_local_time(os.environ.get("AGENT_LAB_AI_NEWS_TIME", "08:00")),
+            local_time=parse_local_time(os.environ.get("AGENT_LAB_AI_NEWS_TIME", "09:00")),
             timezone=os.environ.get("AGENT_LAB_AI_NEWS_TIMEZONE", "Europe/Rome").strip() or "Europe/Rome",
             run_missed=parse_bool(os.environ.get("AGENT_LAB_AI_NEWS_RUN_MISSED", "0"), default=False),
-            topic=os.environ.get("AGENT_LAB_AI_NEWS_TOPIC", "ultime notizie sull'intelligenza artificiale").strip()
-            or "ultime notizie sull'intelligenza artificiale",
+            topic=os.environ.get("AGENT_LAB_AI_NEWS_TOPIC", "notizie su intelligenza artificiale, Cina, economia globale e fatti importanti della giornata").strip()
+            or "notizie su intelligenza artificiale, Cina, economia globale e fatti importanti della giornata",
         )
 
 
@@ -47,10 +47,12 @@ class MorningBriefingScheduler:
         runtime: AgentRuntime,
         config: Optional[MorningBriefingConfig] = None,
         logger: Optional[logging.Logger] = None,
+        on_task_created: Optional[Callable[[TaskRecord], Awaitable[None]]] = None,
     ):
         self.runtime = runtime
         self.config = config or MorningBriefingConfig.from_env()
         self.logger = logger or LOGGER
+        self.on_task_created = on_task_created
         self.runner = ScheduledTaskRunner(self.logger)
         self.scheduled_for: Optional[datetime] = None
 
@@ -118,7 +120,10 @@ class MorningBriefingScheduler:
                 capability="news",
                 priority=4,
                 requested_agent_id=self.config.agent_id,
-                channel="chat",
+                # Scheduled briefings belong to the selected operator directly.
+                # The chat router otherwise delegates research to a specialist, whose
+                # separate model/tool configuration can prevent the briefing from running.
+                channel="task",
             )
         )
         await self.runtime.publish(
@@ -131,6 +136,11 @@ class MorningBriefingScheduler:
                 data={"date": date_key, "agent_id": self.config.agent_id},
             )
         )
+        if self.on_task_created is not None:
+            try:
+                await self.on_task_created(task)
+            except Exception:
+                self.logger.exception("ai_news_briefing_discord_registration_failed task=%s", task.id)
         return task
 
     def _schedule_next(self) -> None:
@@ -161,26 +171,34 @@ class MorningBriefingScheduler:
         date_label = reference.date().isoformat()
         return (
             f"Prepara il riepilogo mattutino del {date_label} sulle {self.config.topic}.\n\n"
-            "Obiettivo: trovare notizie recenti e rilevanti pubblicate nelle ultime 24-36 ore. "
-            "Usa ricerca web o navigazione browser se disponibili.\n\n"
+            "Obiettivo: selezionare le notizie più importanti delle ultime 24 ore (fino a 36 solo se ancora rilevanti). "
+            "Copri IA e tecnologia (nuovi modelli, prodotti, ricerca e strumenti), Cina (economia, tecnologia, politica e relazioni internazionali), "
+            "economia globale (mercati, banche centrali, commercio e grandi aziende) e gli altri fatti mondiali davvero importanti. "
+            "Non forzare una notizia per ogni categoria se non c'è una novità concreta. Cerca sul web, verifica la data dell'evento "
+            "e quella della pubblicazione, privilegia fonti primarie e autorevoli, e non riciclare notizie vecchie.\n\n"
             "Formato richiesto in italiano:\n"
             "1. TL;DR in 3 righe.\n"
-            "2. 5-8 notizie ordinate per impatto, ognuna con: titolo, cosa è successo, perché conta, fonte/link.\n"
-            "3. Separa chiaramente fatti confermati, rumor e analisi.\n"
-            "4. Chiudi con 3 trend da monitorare oggi.\n\n"
+            "2. 5-8 notizie ordinate per impatto, marcate IA/Tecnologia, Cina, Economia o Mondo; per ognuna indica data, titolo, cosa è successo, perché conta e link diretto.\n"
+            "3. Distingui fatti confermati da indiscrezioni; ometti rumor non verificati.\n"
+            "4. Chiudi con 3 temi da monitorare, senza previsioni spacciate per fatti.\n"
+            "5. Scrivi uno script parlato per un video social di circa 1 minuto (120-145 parole), in italiano naturale: "
+            "apri con una curiosità concreta, poi spiega 2-3 notizie principali come se ne parlassi tranquillamente a un amico. "
+            "Ritmo coinvolgente e condivisibile, ma niente clickbait, slogan, tono da telegiornale, superlativi gratuiti o inviti forzati a seguire. "
+            "Chiudi con una domanda semplice o un pensiero personale. Deve essere pronto da registrare, "
+            "senza citazioni inline: aggiungi le fonti sotto lo script.\n\n"
             "Non inventare fonti. Se non riesci a verificare una notizia, dichiaralo esplicitamente."
         )
 
     def _existing_task_for_date(self, date_key: str) -> Optional[TaskRecord]:
         title = self._title(date_key)
         for task in self.runtime.tasks.values():
-            if task.title == title and task.requested_agent_id == self.config.agent_id and task.channel == "chat":
+            if task.title == title and task.requested_agent_id == self.config.agent_id:
                 return task
         return None
 
 
 def parse_local_time(value: str) -> time:
-    raw = str(value or "08:00").strip()
+    raw = str(value or "09:00").strip()
     try:
         hour_text, minute_text = raw.split(":", maxsplit=1)
         hour = int(hour_text)
@@ -189,8 +207,8 @@ def parse_local_time(value: str) -> time:
             return time(hour=hour, minute=minute)
     except (ValueError, TypeError):
         pass
-    LOGGER.warning("ai_news_invalid_time value=%s fallback=08:00", value)
-    return time(hour=8, minute=0)
+    LOGGER.warning("ai_news_invalid_time value=%s fallback=09:00", value)
+    return time(hour=9, minute=0)
 
 
 def parse_bool(value: str, default: bool = False) -> bool:

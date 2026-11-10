@@ -108,8 +108,9 @@
 
     .map {
       position: relative;
-      height: min(78vh, 920px);
-      min-height: 680px;
+      height: calc(100vh - 142px);
+      min-height: 720px;
+      max-height: 980px;
       border: 1px solid rgba(148, 163, 184, .7);
       border-radius: 30px;
       overflow: auto;
@@ -119,7 +120,7 @@
 
     .board {
       position: relative;
-      width: 2400px;
+      width: 2200px;
       height: 1900px;
       background:
         linear-gradient(var(--line) 1px, transparent 1px),
@@ -133,6 +134,8 @@
       border: 2px solid var(--line);
       border-radius: 28px;
       padding: 54px 18px 18px;
+      overflow: auto;
+      overscroll-behavior: contain;
       background: rgba(255, 255, 255, .78);
       box-shadow: 0 12px 30px rgba(16, 24, 40, .075);
     }
@@ -191,6 +194,7 @@
     .zone.data { border-color: rgba(124,58,237,.55); background: rgba(242,237,255,.86); color: var(--purple); }
     .zone.scheduler { border-color: rgba(8,145,178,.55); background: rgba(230,250,255,.88); color: var(--cyan); }
     .zone.visibility { border-color: rgba(16,24,40,.45); background: rgba(255,255,255,.88); color: var(--ink); }
+    .zone.media { border-color: rgba(124,58,237,.55); background: rgba(242,237,255,.88); color: var(--purple); }
     .zone.future {
       border-color: rgba(102,112,133,.55);
       background:
@@ -218,6 +222,8 @@
       color: var(--ink);
       box-shadow: 0 6px 16px rgba(16, 24, 40, .055);
       margin-bottom: 10px;
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
 
     .card b {
@@ -235,7 +241,7 @@
 
     .mini-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
       gap: 10px;
     }
 
@@ -244,7 +250,7 @@
     svg.links {
       position: absolute;
       inset: 0;
-      width: 2400px;
+      width: 2200px;
       height: 1900px;
       pointer-events: none;
       z-index: 0;
@@ -402,7 +408,7 @@
   <main>
     <section class="map">
       <div class="board">
-        <svg class="links" viewBox="0 0 2400 1900" aria-hidden="true">
+        <svg class="links" viewBox="0 0 2200 1900" aria-hidden="true">
           <defs>
             <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
               <path d="M2,2 L10,6 L2,10 Z" fill="currentColor"></path>
@@ -430,6 +436,13 @@
           <path class="link amber" data-from="sourcing" data-to="hub" />
           <path class="link purple dashed" data-from="sourcing" data-to="data" />
           <path class="link gray dashed" data-from="sourcing" data-to="vision" />
+          <path class="link purple dashed" data-from="vision" data-to="data" />
+          <path class="link amber dashed" data-from="vision" data-to="deals" />
+          <path class="link purple" data-from="media" data-to="hub" />
+          <path class="link purple dashed" data-from="media" data-to="data" />
+          <path class="link gray dashed" data-from="media" data-to="social" />
+          <path class="link gray dashed" data-from="media-presets" data-to="media" />
+          <path class="link gray dashed" data-from="media-presets" data-to="social" />
         </svg>
 
         <div class="legend" data-node="legend">
@@ -443,7 +456,7 @@
 
         <div class="hub" data-node="hub">
           <h2>Core automazione</h2>
-          <p>Gli agenti operativi coordinano browser, dati, regole, scheduler, notifiche e azioni mantenendo confini separati tra marketplace, sourcing e ricerca lavoro.</p>
+          <p>Gli agenti operativi coordinano browser, dati, regole, scheduler, notifiche, azioni e media AI mantenendo confini separati tra marketplace, sourcing, ricerca lavoro e GPU cloud.</p>
         </div>
 
         <section class="zone platform" data-node="platform" style="left:64px; top:110px; width:360px; height:270px">
@@ -506,6 +519,29 @@
           </div>
         </section>
 
+        <section class="zone media" data-node="media" style="left:1750px; top:1125px; width:430px; height:340px">
+          <h2><span></span>Media infrastructure · RunPod</h2>
+          <div class="mini-grid">
+            <div class="card"><b>RunPod Manager</b><p>Agente dedicato nel gioco: Pod, GPU, Network Volume, stato e cost control.</p></div>
+            <div class="card"><b>ComfyUI</b><p>Health check, prompt API, queue e history del Pod attivo.</p></div>
+            <div class="card"><b>Workflow library</b><p>Preset salvati: Wan 2.2 14B Image-to-Video e SeedVR2 Video Enhance.</p></div>
+            <div class="card"><b>Input controllato</b><p>Carica media, scegli il nodo LoadImage / LoadVideo e sostituisci solo quel loader.</p></div>
+            <div class="card"><b>Output visibile</b><p>Prompt ID, polling history, preview e download di immagini/video nel gioco.</p></div>
+            <div class="card"><b>Confine</b><p>Il media upload non avvia nulla: il job parte soltanto con Queue Workflow.</p></div>
+          </div>
+        </section>
+
+        <section class="zone future" data-node="media-presets" style="left:1130px; top:1490px; width:560px; height:340px">
+          <h2><span></span>Video preset layer<em>prossimo sviluppo</em></h2>
+          <div class="mini-grid">
+            <div class="card"><b>Foto → video prodotto</b><p>Movimento leggero, focus sul gioiello, output verticale e senza testo.</p></div>
+            <div class="card"><b>Foto → storia</b><p>Sequenza 9:16 con struttura narrativa, durata e mood selezionabili.</p></div>
+            <div class="card"><b>Foto → Reel/social</b><p>Preset dinamico per hook visuale, mano/modella opzionale e CTA separata.</p></div>
+            <div class="card"><b>Parametri semplici</b><p>Carica foto → scegli obiettivo → durata/formato/stile → Run. Nessun JSON o nodo manuale.</p></div>
+            <div class="card wide"><b>Regola di prodotto</b><p>Ogni preset deve dichiarare workflow, tipo input, prompt controllabili, formato output, costo stimato e stato del job.</p></div>
+          </div>
+        </section>
+
         <section class="zone scheduler" data-node="job-search" style="left:1750px; top:360px; width:430px; height:340px">
           <h2><span></span>Zona ricerca lavoro</h2>
           <div class="mini-grid">
@@ -533,9 +569,17 @@
           </div>
         </section>
 
-        <section class="zone future" data-node="vision" style="left:1040px; top:645px; width:390px; height:120px">
-          <h2><span></span>Computer vision domanda<em>da sviluppare</em></h2>
-          <div class="card"><b>Conteggio ricorrenze visive</b><p>Se un charm o stile appare spesso nei risultati, aumenta il trend score e lo propone come prodotto da acquistare.</p></div>
+        <section class="zone future" data-node="vision" style="left:1750px; top:1500px; width:430px; height:370px">
+          <h2><span></span>Visual Intelligence<em>prossimo sviluppo</em></h2>
+          <div class="mini-grid">
+            <div class="card"><b>Archivio verificato</b><p>Foto, hash, prezzo, categoria, scoperta, vendita e ore per vendere. La fonte resta il database operativo.</p></div>
+            <div class="card"><b>Embedding worker</b><p>CLIP/OpenCLIP trasforma immagini in vettori in coda, senza rallentare monitoraggio o procacciatore.</p></div>
+            <div class="card"><b>Confrontabili reali</b><p>Recupera i prodotti visivamente vicini filtrando categoria, fascia prezzo e periodo storico.</p></div>
+            <div class="card"><b>Visual demand score</b><p>Unisce velocità di vendita dei simili, prezzo relativo, like, età e affidabilità del campione.</p></div>
+            <div class="card"><b>Validazione prima</b><p>Confronta score e vendite storiche: 6h, 24h, 72h. Non influenza alert finché non migliora la logica attuale.</p></div>
+            <div class="card"><b>Scala dopo</b><p>CPU locale per MVP; GPU RunPod per backlog; vector DB solo con volume elevato.</p></div>
+            <div class="card wide"><b>Confine importante</b><p>Il modello vision riconosce somiglianza, non convenienza: il dato commerciale arriva esclusivamente dagli esiti di vendita raccolti dal progetto.</p></div>
+          </div>
         </section>
 
         <section class="zone data" data-node="data" style="left:548px; top:790px; width:405px; height:300px">
@@ -555,6 +599,8 @@
               <tr><td>Backup SQLite giornaliero</td><td>Ripristino verificato senza sovrascritture</td></tr>
               <tr><td>Preset profili/job</td><td>Non riscrivere configurazioni</td></tr>
               <tr><td>Hash foto + candidati sourcing</td><td>Deduplica e confronto fornitori</td></tr>
+              <tr><td>Embedding + modello</td><td>Ricerca di prodotti visivamente comparabili</td></tr>
+              <tr><td>Score visuale + spiegazione</td><td>Analisi verificabile, non decisione opaca</td></tr>
             </tbody>
           </table>
         </section>
@@ -594,6 +640,8 @@
         <div class="relation-note" style="left:1095px; top:610px">visione → scoring</div>
         <div class="relation-note" style="left:1000px; top:1110px">contenuti</div>
         <div class="relation-note" style="left:800px; top:1132px">feedback</div>
+        <div class="relation-note" style="left:1695px; top:1320px">media output</div>
+        <div class="relation-note" style="left:1415px; top:1455px">preset video</div>
 
         <section class="zone visibility" data-node="states" style="left:520px; top:105px; width:450px; height:240px">
           <h2><span></span>Stati articolo</h2>
@@ -621,8 +669,10 @@
       const zoomIn = document.querySelector('#zoom-in');
       const zoomOut = document.querySelector('#zoom-out');
       const zoomLevel = document.querySelector('#zoom-level');
-      const storageKey = 'platform-logic-map-layout-v1';
-      const zoomStorageKey = 'platform-logic-map-zoom-v1';
+      // Versioned keys intentionally discard old manually moved layouts: they
+      // used the earlier oversized board and can place zones out of bounds.
+      const storageKey = 'platform-logic-map-layout-v2';
+      const zoomStorageKey = 'platform-logic-map-zoom-v2';
       const movables = [
         ...board.querySelectorAll('.zone, .hub, .legend, .relation-note'),
       ];
@@ -631,7 +681,7 @@
       // The button remains available when a locked/read-only view is useful.
       let editing = true;
       let active = null;
-      let zoom = Math.min(1.6, Math.max(.45, Number.parseFloat(localStorage.getItem(zoomStorageKey) || '1') || 1));
+      let zoom = Math.min(1.35, Math.max(.6, Number.parseFloat(localStorage.getItem(zoomStorageKey) || '1') || 1));
 
       function applyZoom(nextZoom, focusX, focusY) {
         const oldZoom = zoom;

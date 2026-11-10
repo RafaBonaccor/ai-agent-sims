@@ -1,0 +1,28 @@
+{
+  "presets": [
+    {
+      "id": "wan-14b-image-to-video",
+      "name": "Wan 2.2 14B · Image to Video",
+      "description": "Generates a video from one input image using the Wan 14B Image-to-Video workflow.",
+      "path": "/Users/rafael/Downloads/14B_Image2Video-4.json",
+      "input_kind": "image", "output_kind": "video", "min_vram_gb": 24,
+      "creative_presets": ["product-orbit", "hand-detail", "worn-detail", "editorial-home"]
+    },
+    {
+      "id": "seedvr2-native-video",
+      "name": "SeedVR2 Native · Video Enhance",
+      "description": "Enhances/upscales an input video with the SeedVR2 native workflow.",
+      "path": "/Users/rafael/Downloads/seedvr2Workflows_seedvr2Native-3.json",
+      "input_kind": "video", "output_kind": "video", "min_vram_gb": 24,
+      "creative_presets": []
+    },
+    {
+      "id": "seedvr2-image-upscale",
+      "name": "SeedVR2 · Image Upscale",
+      "description": "Enhances and upscales one static product image using the SeedVR2 image workflow.",
+      "path": "config/workflows/seedvr2-image-upscale-no-flash-attention.json",
+      "input_kind": "image", "output_kind": "image", "min_vram_gb": 16,
+      "creative_presets": []
+    }
+  ]
+}

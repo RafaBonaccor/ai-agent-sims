@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { LayoutHistory } from "../src/layoutHistory.mjs";
 import { JobNotificationState } from "../src/jobNotifications.mjs";
-import { AgentWorld, doorLayout, pruneDisconnectedDoorPaths, roomLayout, setDoorAt, setDoorLayout, setRoomCell, setRoomLayout } from "../src/agentWorld.mjs";
+import { AgentWorld, doorLayout, pruneDisconnectedDoorPaths, roomLayout, setDoorAt, setDoorLayout, setRoomCell, setRoomLayout, setWorkstationLayout, workstations } from "../src/agentWorld.mjs";
 import { AgentNetwork } from "../src/agentProtocol.mjs";
 import { defaultScenario } from "../src/scenarios.mjs";
 
@@ -92,6 +92,24 @@ test("door and path tiles must connect to a room and remain connected when erase
   } finally {
     setRoomLayout(priorRooms);
     setDoorLayout(priorDoors);
+  }
+});
+
+test("custom workstation rotation survives layout normalization", () => {
+  const priorCustom = structuredClone(workstations.filter((station) => station.custom));
+  try {
+    setWorkstationLayout([{
+      id: "rotation-test-station",
+      presetId: "desk",
+      label: "Rotation test",
+      position: { x: 2, z: 2 },
+      rotation: Math.PI / 2,
+      custom: true,
+    }]);
+    const station = workstations.find((item) => item.id === "rotation-test-station");
+    assert.equal(station.rotation, Math.PI / 2);
+  } finally {
+    setWorkstationLayout(priorCustom);
   }
 });
 

@@ -14,7 +14,26 @@ DEFAULT_REPORT_DB = Path("projects") / "main-scraper" / "data" / "scraper.db"
 INITIAL_OWNED_PROFILES = (
     ("225753959", "https://www.vinted.it/member/225753959", "bonaccarla"),
     ("3178210259", "https://www.vinted.it/member/3178210259", "accordij"),
+    ("3206490867", "https://www.vinted.it/member/3206490867", ""),
 )
+
+
+def _owned_profile_exclusions(root: Path) -> dict[str, set[str]]:
+    """User-reviewed false associations; preserve raw snapshots for audit."""
+    path = root / "config" / "owned_profile_exclusions.json"
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(member_id): {str(item_id) for item_id in item_ids if str(item_id).isdigit()}
+        for member_id, item_ids in payload.items()
+        if str(member_id).isdigit() and isinstance(item_ids, list)
+    }
 
 
 def _normalize_member_id(value: object) -> str:
@@ -37,6 +56,14 @@ def _ensure_owned_profiles_schema(connection: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL
         )
         """
+    )
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS vinted_owned_profile_ignored_items (
+            member_id TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            ignored_at TEXT NOT NULL,
+            PRIMARY KEY (member_id, item_id)
+        )"""
     )
     now = datetime.now().isoformat(timespec="seconds")
     connection.executemany(
@@ -114,6 +141,40 @@ def deactivate_owned_profile(
         if cursor.rowcount <= 0:
             raise ValueError("Owned profile not found.")
     return {"member_id": normalized_id, "active": False, "history_preserved": True}
+
+
+def ignore_owned_profile_item(
+    project_root: str | Path,
+    member_id: str,
+    item_id: str,
+    *,
+    db_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Stop profile tracking for one listing without deleting historical rows."""
+    root = Path(project_root).expanduser().resolve()
+    database = Path(db_path).expanduser().resolve() if db_path else (root / DEFAULT_REPORT_DB).resolve()
+    normalized_member_id = _normalize_member_id(member_id)
+    normalized_item_id = str(item_id or "").strip()
+    if not normalized_member_id or not normalized_item_id.isdigit() or not database.is_file():
+        raise ValueError("Owned profile item not found.")
+    with closing(sqlite3.connect(database)) as connection:
+        _ensure_owned_profiles_schema(connection)
+        owned = connection.execute(
+            "SELECT 1 FROM vinted_owned_profiles WHERE member_id = ? AND active = 1",
+            (normalized_member_id,),
+        ).fetchone()
+        known = connection.execute(
+            "SELECT 1 FROM vinted_profile_snapshot_items WHERE member_id = ? AND item_id = ? LIMIT 1",
+            (normalized_member_id, normalized_item_id),
+        ).fetchone()
+        if not owned or not known:
+            raise ValueError("Owned profile item not found.")
+        connection.execute(
+            "INSERT OR IGNORE INTO vinted_owned_profile_ignored_items (member_id, item_id, ignored_at) VALUES (?, ?, ?)",
+            (normalized_member_id, normalized_item_id, datetime.now().isoformat(timespec="seconds")),
+        )
+        connection.commit()
+    return {"member_id": normalized_member_id, "item_id": normalized_item_id, "ignored": True, "history_preserved": True}
 
 
 def _table_exists(connection: sqlite3.Connection, table: str) -> bool:
@@ -448,17 +509,328 @@ def _build_keyword_metrics(connection: sqlite3.Connection, since: datetime) -> l
     return sorted(results, key=lambda item: (item["sold_items"], item["search_runs"], item["items_seen"], item["times_seen"]), reverse=True)
 
 
+def _build_procacciatore_report(database: Path, *, limit: int, days: int = 30) -> dict[str, Any]:
+    """Read the dedicated Procacciatore lifecycle DB without touching the shared archive."""
+    empty: dict[str, Any] = {
+        "available": False,
+        "db_path": str(database),
+        "summary": {},
+        "top_liked": [],
+        "articles": [],
+        "cohorts": [],
+        "brands": [],
+        "brand_summary": {"observed_listings": 0, "labels": 0, "generic_labels": 0},
+    }
+    if not database.is_file():
+        return empty
+    try:
+        with closing(sqlite3.connect(database)) as connection:
+            connection.row_factory = sqlite3.Row
+            if not _table_exists(connection, "vinted_deal_sale_tracking"):
+                return empty
+            rows = connection.execute(
+                """SELECT item_link, item_id, item_name, first_seen_at, last_checked_at,
+                          sold_at, status, availability_status, unavailable_at,
+                          unavailable_reason, payload_json
+                   FROM vinted_deal_sale_tracking"""
+            ).fetchall()
+            has_observations = _table_exists(connection, "vinted_procacciatore_listings")
+            observed_rows = connection.execute(
+                """SELECT item_link,search_term,item_id,item_name,category,image_url,first_seen_at,last_seen_at,
+                          first_price_value,price_value,price_text,favorite_count,times_seen
+                   FROM vinted_procacciatore_listings"""
+            ).fetchall() if has_observations else []
+            snapshot_rows = connection.execute(
+                "SELECT item_link,search_term,observed_at,price_value,favorite_count FROM vinted_procacciatore_snapshots ORDER BY observed_at"
+            ).fetchall() if _table_exists(connection, "vinted_procacciatore_snapshots") else []
+    except sqlite3.Error:
+        return empty
+
+    articles: list[dict[str, Any]] = []
+    durations: list[int] = []
+    sold_likes: list[int] = []
+    for row in rows:
+        payload = _safe_payload(row["payload_json"])
+        status = str(row["status"] or "active")
+        first_seen = str(row["first_seen_at"] or "")
+        sold_at = str(row["sold_at"] or "")
+        elapsed, duration_source = _sale_duration(first_seen, sold_at, payload) if status == "sold" and sold_at else (None, "")
+        favorite_count = payload.get("favorite_count")
+        try:
+            favorite_count = max(0, int(favorite_count)) if favorite_count is not None else None
+        except (TypeError, ValueError):
+            favorite_count = None
+        if elapsed is not None:
+            durations.append(elapsed)
+            if favorite_count is not None:
+                sold_likes.append(favorite_count)
+        articles.append({
+            "item_id": str(row["item_id"] or payload.get("item_id", "")),
+            "name": str(row["item_name"] or payload.get("name", "") or "Marketplace item"),
+            "link": str(row["item_link"] or payload.get("link", "")),
+            "image_url": str(payload.get("image_url", "") or ""),
+            "price": str(payload.get("price", "") or payload.get("price_text", "") or ""),
+            "favorite_count": favorite_count,
+            "search_term": str(payload.get("search_term", "") or ""),
+            "status": status,
+            "availability_status": str(row["availability_status"] or "available"),
+            "unavailable_at": str(row["unavailable_at"] or ""),
+            "unavailable_reason": str(row["unavailable_reason"] or ""),
+            "first_seen_at": first_seen,
+            "last_checked_at": str(row["last_checked_at"] or ""),
+            "sold_at": sold_at,
+            "sold_after_seconds": elapsed,
+            "sold_after_text": _format_duration(elapsed),
+            "sale_duration_source": duration_source,
+        })
+    tracking_by_link = {item["link"]: item for item in articles}
+    snapshots_by_key: dict[tuple[str, str], list[sqlite3.Row]] = {}
+    for snapshot in snapshot_rows:
+        snapshots_by_key.setdefault((str(snapshot["item_link"]), str(snapshot["search_term"])), []).append(snapshot)
+    observations: list[dict[str, Any]] = []
+    for row in observed_rows:
+        key = (str(row["item_link"]), str(row["search_term"] or ""))
+        samples = snapshots_by_key.get(key, [])
+        likes_samples = [sample for sample in samples if sample["favorite_count"] is not None]
+        likes_per_hour = None
+        likes_acceleration = None
+        if len(likes_samples) >= 2:
+            try:
+                elapsed = (datetime.fromisoformat(str(likes_samples[-1]["observed_at"])) - datetime.fromisoformat(str(likes_samples[0]["observed_at"]))).total_seconds() / 3600
+                if elapsed > 0:
+                    likes_per_hour = round((int(likes_samples[-1]["favorite_count"]) - int(likes_samples[0]["favorite_count"])) / elapsed, 2)
+            except (TypeError, ValueError):
+                pass
+        if len(likes_samples) >= 3:
+            try:
+                t0 = datetime.fromisoformat(str(likes_samples[-3]["observed_at"]))
+                t1 = datetime.fromisoformat(str(likes_samples[-2]["observed_at"]))
+                t2 = datetime.fromisoformat(str(likes_samples[-1]["observed_at"]))
+                h1, h2 = (t1 - t0).total_seconds() / 3600, (t2 - t1).total_seconds() / 3600
+                if h1 > 0 and h2 > 0:
+                    rate1 = (int(likes_samples[-2]["favorite_count"]) - int(likes_samples[-3]["favorite_count"])) / h1
+                    rate2 = (int(likes_samples[-1]["favorite_count"]) - int(likes_samples[-2]["favorite_count"])) / h2
+                    likes_acceleration = round(rate2 - rate1, 2)
+            except (TypeError, ValueError):
+                pass
+        listing = tracking_by_link.get(str(row["item_link"]))
+        current_price = row["price_value"]
+        first_price = row["first_price_value"]
+        price_delta = round(float(current_price) - float(first_price), 2) if current_price is not None and first_price is not None else None
+        observed = {
+            "item_id": str(row["item_id"] or (listing or {}).get("item_id", "")),
+            "name": str(row["item_name"] or (listing or {}).get("name", "Marketplace item")),
+            "link": str(row["item_link"]), "image_url": str(row["image_url"] or (listing or {}).get("image_url", "")),
+            "price": str(row["price_text"] or (listing or {}).get("price", "") or ""),
+            "price_value": current_price, "first_price_value": first_price, "price_change_value": price_delta,
+            "price_dropped": bool(price_delta is not None and price_delta < 0),
+            "favorite_count": row["favorite_count"], "likes_per_hour": likes_per_hour,
+            "likes_acceleration": likes_acceleration,
+            "likes_change": (int(likes_samples[-1]["favorite_count"]) - int(likes_samples[0]["favorite_count"])) if len(likes_samples) >= 2 else None,
+            "search_term": str(row["search_term"] or ""), "category": str(row["category"] or ""),
+            "first_seen_at": str(row["first_seen_at"] or ""), "last_seen_at": str(row["last_seen_at"] or ""),
+            "times_seen": int(row["times_seen"] or 0), "snapshot_count": len(samples),
+            "status": (listing or {}).get("status", "observed"),
+            "sold_after_seconds": (listing or {}).get("sold_after_seconds"),
+            "sold_after_text": (listing or {}).get("sold_after_text", ""),
+            "availability_status": (listing or {}).get("availability_status", "observed"),
+        }
+        observations.append(observed)
+    top_liked = sorted(
+        (item for item in (observations or articles) if item.get("favorite_count") is not None),
+        key=lambda item: (int(item["favorite_count"]), item.get("first_seen_at", "")),
+        reverse=True,
+    )[:limit]
+    sold_count = sum(item["status"] == "sold" for item in articles)
+    active_count = sum(item["status"] == "active" for item in articles)
+    unavailable_count = sum(item["status"] in {"unavailable", "gone"} for item in articles)
+    period_start = datetime.now() - timedelta(days=max(1, int(days or 30)))
+    recent_observations = []
+    for item in observations:
+        try:
+            if datetime.fromisoformat(item["first_seen_at"]) >= period_start:
+                recent_observations.append(item)
+        except (TypeError, ValueError):
+            pass
+    def price_band(value: Any) -> str:
+        try:
+            amount = float(value)
+        except (TypeError, ValueError):
+            return "Prezzo n/d"
+        return "€0–10" if amount < 10 else "€10–20" if amount < 20 else "€20–35" if amount < 35 else "€35+"
+    cohorts_map: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in recent_observations:
+        cohorts_map.setdefault((item["search_term"] or item["category"] or "Senza keyword", price_band(item["first_price_value"])), []).append(item)
+    cohorts = []
+    for (term, band), members in sorted(cohorts_map.items()):
+        tracked_count = sum(member["link"] in tracking_by_link for member in members)
+        sold_members = [tracking_by_link[member["link"]] for member in members if member["link"] in tracking_by_link and tracking_by_link[member["link"]]["status"] == "sold"]
+        unavailable_members = [tracking_by_link[member["link"]] for member in members if member["link"] in tracking_by_link and tracking_by_link[member["link"]]["status"] in {"unavailable", "gone"}]
+        active_members = [tracking_by_link[member["link"]] for member in members if member["link"] in tracking_by_link and tracking_by_link[member["link"]]["status"] == "active"]
+        tracked_available = len(sold_members) + len(active_members)
+        sale_times = [int(item["sold_after_seconds"]) for item in sold_members if item.get("sold_after_seconds") is not None]
+        cohorts.append({
+            "search_term": term, "price_band": band, "observed_count": len(members),
+            "new_count": len(members), "tracked_count": tracked_count, "sold_count": len(sold_members),
+            "active_count": len(active_members), "unavailable_count": len(unavailable_members),
+            "sell_through_rate": round(len(sold_members) / tracked_available * 100, 1) if tracked_available else None,
+            "sold_within_24h": sum(value <= 86400 for value in sale_times),
+            "sold_within_72h": sum(value <= 259200 for value in sale_times),
+            "sold_within_24h_rate": round(sum(value <= 86400 for value in sale_times) / len(sale_times) * 100, 1) if sale_times else None,
+            "sold_within_72h_rate": round(sum(value <= 259200 for value in sale_times) / len(sale_times) * 100, 1) if sale_times else None,
+            "median_sale_seconds": round(median(sale_times)) if sale_times else None,
+            "sale_sample_size": len(sale_times),
+        })
+    listed_active = sum(item.get("status") == "active" for item in articles)
+    listed_sold = sum(item.get("status") == "sold" for item in articles)
+    listed_unavailable = sum(item.get("status") in {"unavailable", "gone"} for item in articles)
+    period_sold = 0
+    for item in articles:
+        try:
+            if item.get("status") == "sold" and datetime.fromisoformat(item.get("sold_at", "")) >= period_start:
+                period_sold += 1
+        except (TypeError, ValueError):
+            pass
+    observed_recent = sum(1 for item in observations if _is_recent_iso(item.get("last_seen_at", ""), hours=24))
+
+    # Brand frequency is based on distinct observed listings (not repeated scans).
+    # The source field is a marketplace-provided item label, so material/category
+    # placeholders are marked generic rather than presented as verified brands.
+    generic_brand_labels = {
+        "accessories", "accessory", "argent", "argento", "bijoux", "charm",
+        "gold", "gioielli", "inconnu", "inconosciuto", "jewelry", "no brand",
+        "no label", "oro", "silver", "unknown", "vintage", "senza marchio",
+    }
+    def brand_label_type(label: str) -> str:
+        normalized = " ".join(label.casefold().replace("&", "and").split())
+        if normalized in generic_brand_labels or normalized.startswith("vintage "):
+            return "Etichetta generica / da verificare"
+        return "Marchio / etichetta"
+
+    brand_period_start = datetime.now() - timedelta(days=max(1, int(days or 30)))
+    latest_observation_by_link: dict[str, sqlite3.Row] = {}
+    for row in observed_rows:
+        link = str(row["item_link"] or "").strip()
+        if not link:
+            continue
+        seen_text = str(row["last_seen_at"] or row["first_seen_at"] or "")
+        try:
+            if datetime.fromisoformat(seen_text) < brand_period_start:
+                continue
+        except (TypeError, ValueError):
+            pass
+        previous = latest_observation_by_link.get(link)
+        if previous is None or str(row["last_seen_at"] or "") >= str(previous["last_seen_at"] or ""):
+            latest_observation_by_link[link] = row
+
+    brand_groups: dict[str, dict[str, Any]] = {}
+    for link, row in latest_observation_by_link.items():
+        label = str(row["item_name"] or "Senza etichetta").strip() or "Senza etichetta"
+        key = label.casefold()
+        group = brand_groups.setdefault(key, {
+            "name": label,
+            "label_type": brand_label_type(label),
+            "links": set(),
+            "sold_links": set(),
+            "prices": [],
+            "likes": [],
+            "sale_seconds": [],
+        })
+        group["links"].add(link)
+        price_value = row["price_value"]
+        if price_value is not None:
+            try:
+                group["prices"].append(float(price_value))
+            except (TypeError, ValueError):
+                pass
+        likes_value = row["favorite_count"]
+        if likes_value is not None:
+            try:
+                group["likes"].append(int(likes_value))
+            except (TypeError, ValueError):
+                pass
+        tracked = tracking_by_link.get(link)
+        if tracked and tracked.get("status") == "sold":
+            group["sold_links"].add(link)
+            if tracked.get("sold_after_seconds") is not None:
+                group["sale_seconds"].append(int(tracked["sold_after_seconds"]))
+
+    brands = []
+    for group in brand_groups.values():
+        prices = group["prices"]
+        likes = group["likes"]
+        sale_seconds = group["sale_seconds"]
+        brands.append({
+            "name": group["name"],
+            "label_type": group["label_type"],
+            "observed_count": len(group["links"]),
+            "sold_count": len(group["sold_links"]),
+            "average_price": round(sum(prices) / len(prices), 2) if prices else None,
+            "average_likes": round(sum(likes) / len(likes), 1) if likes else None,
+            "average_sale_seconds": round(sum(sale_seconds) / len(sale_seconds)) if sale_seconds else None,
+            "sale_sample_size": len(sale_seconds),
+        })
+    brands.sort(key=lambda item: (item["observed_count"], item["sold_count"], item["name"].casefold()), reverse=True)
+    brand_summary = {
+        "observed_listings": len(latest_observation_by_link),
+        "labels": len(brands),
+        "generic_labels": sum(item["label_type"] == "Etichetta generica / da verificare" for item in brands),
+    }
+    return {
+        "available": True,
+        "db_path": str(database),
+        "summary": {
+            "tracked_count": len(articles),
+            "active_count": active_count,
+            "sold_count": sold_count,
+            "unavailable_count": unavailable_count,
+            "average_sale_seconds": round(sum(durations) / len(durations)) if durations else None,
+            "median_sale_seconds": round(median(durations)) if durations else None,
+            "average_sold_likes": round(sum(sold_likes) / len(sold_likes), 1) if sold_likes else None,
+            "last_checked_at": max((item["last_checked_at"] for item in articles), default=""),
+            "observed_count": len(observations),
+            "newly_observed_count": len(recent_observations),
+            "observed_supply_24h": observed_recent,
+            "tracked_active_count": listed_active,
+            "tracked_sold_count": listed_sold,
+            "tracked_unavailable_count": listed_unavailable,
+            "period_sold_count": period_sold,
+            "tracked_sell_through_rate": round(listed_sold / (listed_active + listed_sold) * 100, 1) if listed_active + listed_sold else None,
+            "demand_supply_ratio": round(period_sold / len(recent_observations), 3) if recent_observations else None,
+        },
+        "top_liked": top_liked,
+        "articles": sorted(observations or articles, key=lambda item: (item.get("last_seen_at", item.get("last_checked_at", "")), item.get("first_seen_at", "")), reverse=True)[:limit],
+        "cohorts": sorted(cohorts, key=lambda item: (item["sale_sample_size"], item["sold_count"], item["observed_count"]), reverse=True),
+        "brands": brands[:25],
+        "brand_summary": brand_summary,
+    }
+
+
+def _is_recent_iso(value: str, *, hours: int) -> bool:
+    try:
+        return datetime.fromisoformat(str(value)) >= datetime.now() - timedelta(hours=hours)
+    except (TypeError, ValueError):
+        return False
+
+
 def build_vinted_report(
     project_root: str | Path,
     *,
     days: int = 30,
     limit: int = 200,
     db_path: str | Path | None = None,
+    procacciatore_db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     normalized_days = max(min(int(days or 30), 3650), 1)
     normalized_limit = max(min(int(limit or 200), 5000), 1)
     root = Path(project_root).expanduser().resolve()
+    owned_exclusions = _owned_profile_exclusions(root)
     database = Path(db_path).expanduser().resolve() if db_path else (root / DEFAULT_REPORT_DB).resolve()
+    procacciatore_database = (
+        Path(procacciatore_db_path).expanduser().resolve()
+        if procacciatore_db_path
+        else database.with_name("procacciatore.db")
+    )
     since = (datetime.now() - timedelta(days=normalized_days - 1)).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
@@ -476,6 +848,7 @@ def build_vinted_report(
         "competitor_profiles": [],
         "trend_queries": [],
         "owned_profiles": [],
+        "procacciatore": _build_procacciatore_report(procacciatore_database, limit=normalized_limit, days=normalized_days),
     }
     if not database.exists():
         return empty
@@ -810,7 +1183,15 @@ def build_vinted_report(
         for registry in owned_registry:
             member_id = str(registry["member_id"] or "")
             profile_url = str(registry["profile_url"] or "")
+            excluded_item_ids = set(owned_exclusions.get(member_id, set()))
+            excluded_item_ids.update(
+                str(row[0]) for row in connection.execute(
+                    "SELECT item_id FROM vinted_owned_profile_ignored_items WHERE member_id = ?",
+                    (member_id,),
+                ).fetchall()
+            )
             known_items: dict[str, dict[str, Any]] = {}
+            verified_owned_ids: set[str] = set()
 
             if item_columns and "seller_member_id" in item_columns:
                 for row in connection.execute(
@@ -823,6 +1204,8 @@ def build_vinted_report(
                     (member_id,),
                 ).fetchall():
                     key = str(row["item_id"] or row["link"] or "")
+                    if str(row["item_id"] or ""):
+                        verified_owned_ids.add(str(row["item_id"]))
                     known_items[key] = {
                         "item_id": str(row["item_id"] or ""), "link": str(row["link"] or ""),
                         "name": _best_item_name(row["name"]), "price": str(row["price_text"] or ""),
@@ -840,6 +1223,8 @@ def build_vinted_report(
                     if str(payload.get("seller_member_id", "") or "") != member_id:
                         continue
                     item_id = str(row["item_id"] or payload.get("item_id", "") or "")
+                    if item_id:
+                        verified_owned_ids.add(item_id)
                     link = str(row["item_link"] or payload.get("link", "") or "")
                     key = item_id or link
                     status = str(row["status"] or "active")
@@ -870,17 +1255,18 @@ def build_vinted_report(
                 snapshots_count = int(snapshot_summary["snapshots_count"] or 0)
                 latest_snapshot_at = str(snapshot_summary["latest_snapshot_at"] or "")
                 latest = connection.execute(
-                    "SELECT id, item_count FROM vinted_profile_snapshots WHERE member_id = ? ORDER BY checked_at DESC, id DESC LIMIT 1",
+                    "SELECT id, item_count, checked_at FROM vinted_profile_snapshots WHERE member_id = ? AND item_count > 0 ORDER BY checked_at DESC, id DESC LIMIT 1",
                     (member_id,),
                 ).fetchone()
                 if latest:
                     latest_snapshot_id = int(latest["id"])
                     latest_active_count = int(latest["item_count"] or 0)
+                    latest_snapshot_at = str(latest["checked_at"] or "")
 
             if snapshot_item_columns:
                 rows = connection.execute(
                     """
-                    SELECT psi.*, s.checked_at
+                    SELECT psi.*, s.checked_at, s.item_count AS snapshot_item_count
                     FROM vinted_profile_snapshot_items psi
                     JOIN vinted_profile_snapshots s ON s.id = psi.snapshot_id
                     WHERE psi.member_id = ? ORDER BY s.checked_at, psi.id
@@ -888,24 +1274,44 @@ def build_vinted_report(
                     (member_id,),
                 ).fetchall()
                 for row in rows:
+                    # Previous builds stored transient empty reads as fake
+                    # gone listings. They are not evidence of a real removal.
+                    if int(row["snapshot_item_count"] or 0) <= 0:
+                        continue
                     payload = _safe_payload(row["snapshot_json"])
                     item_id = str(row["item_id"] or payload.get("item_id", "") or "")
+                    if payload.get("profile_inventory_source") == "wardrobe_api" and bool(row["present"]) and item_id:
+                        verified_owned_ids.add(item_id)
                     link = str(row["item_link"] or payload.get("link", "") or "")
                     key = item_id or link
                     base = known_items.get(key, {})
                     snapshot_status = str(row["status"] or "")
                     is_sold = snapshot_status == "sold" or str(payload.get("profile_item_status", "") or "") == "sold"
                     is_gone = snapshot_status in {"gone", "unavailable"} or not bool(row["present"])
+                    if payload.get("profile_inventory_source") == "wardrobe_api" and bool(row["present"]):
+                        item_status = "active"
+                    elif is_sold:
+                        item_status = "sold"
+                    elif is_gone and base.get("status") != "sold":
+                        item_status = "gone"
+                    elif snapshot_status == "unknown":
+                        item_status = "unknown"
+                    else:
+                        item_status = base.get("status", "active")
                     known_items[key] = {
                         **base, "item_id": item_id, "link": link,
                         "name": _best_item_name(row["item_name"], payload.get("name") or base.get("name", "")),
                         "price": str(row["price_text"] or payload.get("price", "") or base.get("price", "")),
                         "image_url": str(row["image_url"] or payload.get("image_url", "") or base.get("image_url", "")),
-                        "status": "sold" if is_sold else "gone" if is_gone and base.get("status") != "sold" else "unknown" if snapshot_status == "unknown" else base.get("status", "active"),
+                        "status": item_status,
                         "first_seen_at": str(payload.get("profile_first_seen_at", "") or base.get("first_seen_at", row["checked_at"])),
                         "last_seen_at": str(payload.get("profile_last_seen_at", "") or row["checked_at"]),
                         "sold_at": str(base.get("sold_at", "") or payload.get("profile_sold_at", "")),
-                        "sold_after_seconds": base.get("sold_after_seconds", payload.get("profile_sold_after_seconds")),
+                        "sold_after_seconds": (
+                            base.get("sold_after_seconds")
+                            if isinstance(base.get("sold_after_seconds"), (int, float))
+                            else payload.get("profile_sold_after_seconds")
+                        ),
                         "sold_after_text": str(base.get("sold_after_text", "") or payload.get("profile_sold_after_text", "")),
                         "seller_name": str(base.get("seller_name", "")),
                     }
@@ -921,7 +1327,9 @@ def build_vinted_report(
                 latest_active_count = sum(
                     1
                     for row in latest_rows
-                    if bool(row["present"])
+                    if str(row["item_id"] or "") not in excluded_item_ids
+                    and (not verified_owned_ids or str(row["item_id"] or "") in verified_owned_ids)
+                    and bool(row["present"])
                     and str(row["status"] or "") not in {"sold", "gone", "unavailable", "unknown"}
                     and known_items.get(str(row["item_id"] or row["item_link"] or ""), {}).get("status") != "sold"
                 )
@@ -930,7 +1338,12 @@ def build_vinted_report(
             # data. Keep the raw snapshot for auditability, but do not surface
             # these transient rows in the owned-profile report.
             profile_items = sorted(
-                (item for item in known_items.values() if item.get("status") != "unknown"),
+                (
+                    item for item in known_items.values()
+                    if item.get("status") != "unknown"
+                    and str(item.get("item_id") or "") not in excluded_item_ids
+                    and (not verified_owned_ids or str(item.get("item_id") or "") in verified_owned_ids)
+                ),
                 key=lambda item: str(item.get("sold_at") or item.get("last_seen_at") or item.get("first_seen_at") or ""),
                 reverse=True,
             )
@@ -984,6 +1397,7 @@ def build_vinted_report(
         "competitor_profiles": competitor_profiles,
         "trend_queries": trend_queries,
         "owned_profiles": owned_profiles,
+        "procacciatore": _build_procacciatore_report(procacciatore_database, limit=normalized_limit, days=normalized_days),
     }
 
 

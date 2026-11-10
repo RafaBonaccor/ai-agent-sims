@@ -27,7 +27,7 @@ import {
   worldToTile,
 } from "./src/agentWorld.mjs";
 import { defaultScenario } from "./src/scenarios.mjs";
-import { RuntimeClient } from "./src/runtimeClient.mjs";
+import { RuntimeClient } from "./src/runtimeClient.mjs?v=owned-item-ignore-1";
 import { LayoutHistory } from "./src/layoutHistory.mjs";
 import { JobNotificationState } from "./src/jobNotifications.mjs";
 
@@ -66,6 +66,7 @@ const editorCloseButton = document.querySelector("#editor-close");
 const undoLayoutButton = document.querySelector("#undo-layout");
 const redoLayoutButton = document.querySelector("#redo-layout");
 const roomDrawToggle = document.querySelector("#room-draw-toggle");
+const rotateStationButton = document.querySelector("#rotate-station");
 const doorToggle = document.querySelector("#door-toggle");
 const addRoomButton = document.querySelector("#add-room");
 const deleteRoomButton = document.querySelector("#delete-room");
@@ -82,6 +83,7 @@ const worldClockTime = document.querySelector("#world-clock-time");
 const worldClockDate = document.querySelector("#world-clock-date");
 const systemSettingsButton = document.querySelector("#system-settings");
 const reportsDashboardButton = document.querySelector("#reports-dashboard");
+const monitoringDashboardButton = document.querySelector("#monitoring-dashboard");
 const reportDialog = document.querySelector("#report-dialog");
 const reportPeriod = document.querySelector("#report-period");
 const reportRefreshButton = document.querySelector("#report-refresh");
@@ -99,10 +101,42 @@ const reportSaleTime = document.querySelector("#report-sale-time");
 const reportFilterButtons = Array.from(document.querySelectorAll("[data-report-filter]"));
 const reportTabButtons = Array.from(document.querySelectorAll("[data-report-tab]"));
 const reportPanels = Array.from(document.querySelectorAll("[data-report-panel]"));
+const monitoringStatus = document.querySelector("#monitoring-status");
+const monitoringJobs = document.querySelector("#monitoring-jobs");
+const monitoringCount = document.querySelector("#report-monitoring-count");
+const monitoringRefreshButton = document.querySelector("#monitoring-refresh");
+const reportAiNewsCount = document.querySelector("#report-ai-news-count");
+const reportAiNewsMetrics = document.querySelector("#report-ai-news-metrics");
+const reportAiNewsArchive = document.querySelector("#report-ai-news-archive");
+const reportAiNewsDetail = document.querySelector("#report-ai-news-detail");
+const reportAiNewsRefresh = document.querySelector("#report-ai-news-refresh");
+const reportLinkedInCount = document.querySelector("#report-linkedin-count");
+const reportLinkedInRefresh = document.querySelector("#report-linkedin-refresh");
+const reportLinkedInSearch = document.querySelector("#report-linkedin-search");
+const reportLinkedInFilter = document.querySelector("#report-linkedin-filter");
+const reportLinkedInStatus = document.querySelector("#report-linkedin-status");
+const reportLinkedInList = document.querySelector("#report-linkedin-list");
+const reportLinkedInDetail = document.querySelector("#report-linkedin-detail");
+const linkedinPublisherRefresh = document.querySelector("#linkedin-publisher-refresh");
+const linkedinPublisherStatus = document.querySelector("#linkedin-publisher-status");
+const linkedinPublisherAccount = document.querySelector("#linkedin-publisher-account");
+const linkedinPublisherNewBody = document.querySelector("#linkedin-publisher-new-body");
+const linkedinPublisherCreateDraft = document.querySelector("#linkedin-publisher-create-draft");
+const linkedinPublisherDrafts = document.querySelector("#linkedin-publisher-drafts");
+let aiNewsBriefings = [];
+let selectedAiNewsId = "";
 const reportCompetitors = document.querySelector("#report-competitors");
 const reportCompetitorDetail = document.querySelector("#report-competitor-detail");
 const reportCompetitorCount = document.querySelector("#report-competitor-count");
 const reportCompetitorStatus = document.querySelector("#report-competitor-status");
+const reportProcacciatoreCount = document.querySelector("#report-procacciatore-count");
+const reportProcacciatoreSummary = document.querySelector("#report-procacciatore-summary");
+const reportProcacciatoreChecked = document.querySelector("#report-procacciatore-checked");
+const reportProcacciatoreTop = document.querySelector("#report-procacciatore-top");
+const reportProcacciatoreBrands = document.querySelector("#report-procacciatore-brands");
+const reportProcacciatoreBrandNote = document.querySelector("#report-procacciatore-brand-note");
+const reportProcacciatoreArticles = document.querySelector("#report-procacciatore-articles");
+const reportProcacciatoreStatus = document.querySelector("#report-procacciatore-status");
 const reportKeywords = document.querySelector("#report-keywords");
 const reportKeywordCount = document.querySelector("#report-keyword-count");
 const reportKeywordSearch = document.querySelector("#report-keyword-search");
@@ -129,6 +163,18 @@ const systemSettingsError = document.querySelector("#system-settings-error");
 const systemProjectKeyStatus = document.querySelector("#system-project-key-status");
 const systemDiscordBotStatus = document.querySelector("#system-discord-bot-status");
 const systemAccordiAdminStatus = document.querySelector("#system-accordi-admin-status");
+const systemRunPodStatus = document.querySelector("#system-runpod-status");
+const runPodActionStatus = document.querySelector("#runpod-action-status");
+const runPodRefreshPodsButton = document.querySelector("#runpod-refresh-pods");
+const runPodListVolumesButton = document.querySelector("#runpod-list-volumes");
+const runPodListDataCentersButton = document.querySelector("#runpod-list-datacenters");
+const runPodListGpusButton = document.querySelector("#runpod-list-gpus");
+const runPodCreatePodButton = document.querySelector("#runpod-create-pod");
+const runPodStartPodButton = document.querySelector("#runpod-start-pod");
+const runPodStopPodButton = document.querySelector("#runpod-stop-pod");
+const runPodTerminatePodButton = document.querySelector("#runpod-terminate-pod");
+const runPodComfyUiHealthButton = document.querySelector("#runpod-comfyui-health");
+const runPodQueueWorkflowButton = document.querySelector("#runpod-queue-workflow");
 const agentSettingsDialog = document.querySelector("#agent-settings-dialog");
 const agentSettingsForm = document.querySelector("#agent-settings-form");
 const agentSettingsError = document.querySelector("#agent-settings-error");
@@ -146,6 +192,92 @@ const agentActionTitle = document.querySelector("#agent-action-title");
 const agentActionRole = document.querySelector("#agent-action-role");
 const agentActionStatus = document.querySelector("#agent-action-status");
 const workOptions = document.querySelector("#work-options");
+const runPodOptions = document.querySelector("#runpod-options");
+const appiumOptions = document.querySelector("#appium-options");
+const appiumEnabledSelect = document.querySelector("#appium-enabled");
+const appiumServerUrlInput = document.querySelector("#appium-server-url");
+const appiumAdbPathInput = document.querySelector("#appium-adb-path");
+const appiumIosToolInput = document.querySelector("#appium-ios-tool");
+const appiumSaveButton = document.querySelector("#appium-save-settings");
+const appiumStartButton = document.querySelector("#appium-start-server");
+const appiumStopButton = document.querySelector("#appium-stop-server");
+const appiumRefreshButton = document.querySelector("#appium-refresh-status");
+const appiumServerCard = document.querySelector("#appium-server-card");
+const appiumServerState = document.querySelector("#appium-server-state");
+const appiumServerDetail = document.querySelector("#appium-server-detail");
+const appiumAdbCard = document.querySelector("#appium-adb-card");
+const appiumDeviceCount = document.querySelector("#appium-device-count");
+const appiumAdbDetail = document.querySelector("#appium-adb-detail");
+const appiumDeviceList = document.querySelector("#appium-device-list");
+const appiumActionStatus = document.querySelector("#appium-action-status");
+const appiumTargetDevice = document.querySelector("#appium-target-device");
+const appiumInstalledApps = document.querySelector("#appium-installed-app");
+const appiumListAppsButton = document.querySelector("#appium-list-apps");
+const appiumLaunchAppButton = document.querySelector("#appium-launch-app");
+const appiumEndSessionButton = document.querySelector("#appium-end-session");
+const appiumSessionState = document.querySelector("#appium-session-state");
+const appiumScreenPreview = document.querySelector("#appium-screen-preview");
+const appiumScreenPlaceholder = document.querySelector("#appium-screen-placeholder");
+const appiumScreenState = document.querySelector("#appium-screen-state");
+let appiumScreenTimer = null;
+let appiumScreenRequestPending = false;
+let appiumScreenObjectUrl = "";
+const runPodNetworkVolumeInput = document.querySelector("#runpod-network-volume-id");
+const runPodDataCenterInput = document.querySelector("#runpod-data-center-id");
+const runPodTemplateInput = document.querySelector("#runpod-template-id");
+const runPodContainerImageInput = document.querySelector("#runpod-container-image");
+const runPodGpuSelect = document.querySelector("#runpod-preferred-gpu");
+const runPodMaxHourlyCostInput = document.querySelector("#runpod-max-hourly-cost");
+const runPodVolumeMountInput = document.querySelector("#runpod-volume-mount-path");
+const runPodComfyUiPortInput = document.querySelector("#runpod-comfyui-port");
+const runPodIdleActionSelect = document.querySelector("#runpod-idle-action");
+const runPodSaveDeploymentButton = document.querySelector("#runpod-save-deployment");
+const runPodNameInput = document.querySelector("#runpod-pod-name");
+const runPodIdInput = document.querySelector("#runpod-pod-id");
+const runPodPicker = document.querySelector("#runpod-pod-picker");
+const runPodWorkflowInput = document.querySelector("#runpod-workflow-json");
+const runPodWorkflowFileInput = document.querySelector("#runpod-workflow-file");
+const runPodLoadWorkflowButton = document.querySelector("#runpod-load-workflow");
+const runPodWorkflowStatus = document.querySelector("#runpod-workflow-status");
+const runPodWorkflowPresetSelect = document.querySelector("#runpod-workflow-preset");
+const runPodLoadWorkflowPresetButton = document.querySelector("#runpod-load-workflow-preset");
+const runPodMediaLoaderSelect = document.querySelector("#runpod-media-loader");
+const runPodMediaFileInput = document.querySelector("#runpod-media-file");
+const runPodUploadMediaButton = document.querySelector("#runpod-upload-media");
+const runPodUploadStatus = document.querySelector("#runpod-upload-status");
+const runPodJobResults = document.querySelector("#runpod-job-results");
+const runPodBatchFilesInput = document.querySelector("#runpod-batch-files");
+const runPodStartBatchButton = document.querySelector("#runpod-start-batch");
+const runPodRefreshBatchesButton = document.querySelector("#runpod-refresh-batches");
+const runPodBatchResults = document.querySelector("#runpod-batch-results");
+const runPodGpuWatchInterval = document.querySelector("#runpod-gpu-watch-interval");
+const runPodGpuWatchGpus = document.querySelector("#runpod-gpu-watch-gpus");
+const runPodGpuWatchEnable = document.querySelector("#runpod-gpu-watch-enable");
+const runPodGpuWatchCheck = document.querySelector("#runpod-gpu-watch-check");
+const runPodGpuWatchStatus = document.querySelector("#runpod-gpu-watch-status");
+const creativePromptPreset = document.querySelector("#creative-prompt-preset");
+const creativePromptImage = document.querySelector("#creative-prompt-image");
+const creativeGeneratePrompt = document.querySelector("#creative-generate-prompt");
+const creativePromptText = document.querySelector("#creative-prompt-text");
+const creativePromptStatus = document.querySelector("#creative-prompt-status");
+const runPodCardManager = document.querySelector("#runpod-card-manager");
+const runPodCardManagerDetail = document.querySelector("#runpod-card-manager-detail");
+const runPodCardVolume = document.querySelector("#runpod-card-volume");
+const runPodCardVolumeDetail = document.querySelector("#runpod-card-volume-detail");
+const runPodCardGpus = document.querySelector("#runpod-card-gpus");
+const runPodCardGpusDetail = document.querySelector("#runpod-card-gpus-detail");
+const runPodCardPods = document.querySelector("#runpod-card-pods");
+const runPodCardPodsDetail = document.querySelector("#runpod-card-pods-detail");
+const runPodVolumeDataCenters = new Map();
+let runPodStatusRefreshTimer = null;
+let runPodBatchPollTimer = null;
+let creativePromptPresets = [];
+let runPodDashboardSnapshot = { settings: null, volume: null, gpus: [] };
+let runPodUploadedMedia = { name: "", kind: "" };
+let runPodWorkflowLoaders = [];
+const runPodJobsStorageKey = "agent-lab.runpod-jobs.v1";
+let runPodJobs = [];
+let runPodJobPollTimer = null;
 const browserOptions = document.querySelector("#browser-options");
 const browserSessionSelect = document.querySelector("#browser-session");
 const browserUrlInput = document.querySelector("#browser-url");
@@ -282,6 +414,81 @@ function migrateStoredDefaultMainRoom(layout) {
   };
 }
 
+function ensureInfrastructureRoom(layout) {
+  const sourceRooms = Array.isArray(layout?.rooms) && layout.rooms.length
+    ? layout.rooms.map((room) => ({ ...room, cells: Array.isArray(room.cells) ? room.cells.map((cell) => ({ ...cell })) : room.cells }))
+    : roomLayout.map((room) => ({ ...room, cells: roomCells(room).map((cell) => ({ ...cell })) }));
+  if (sourceRooms.some((room) => room.id === "media-infrastructure")) {
+    return layout;
+  }
+
+  const mainRoom = sourceRooms.find((room) => room.id === "main") ?? sourceRooms[0];
+  const mainCells = roomCells(mainRoom);
+  if (!mainRoom || mainCells.length < 32) {
+    return layout;
+  }
+  const maxCol = Math.max(...mainCells.map((cell) => cell.col));
+  const maxRow = Math.max(...mainCells.map((cell) => cell.row));
+  const doorTile = { col: maxCol - 3, row: maxRow - 2 };
+  const infrastructureCells = [];
+  for (let row = maxRow - 3; row <= maxRow; row += 1) {
+    for (let col = maxCol - 3; col <= maxCol; col += 1) {
+      if (tileEquals({ col, row }, doorTile)) continue;
+      infrastructureCells.push({ col, row });
+    }
+  }
+  const infrastructureKeys = new Set(infrastructureCells.map((cell) => tileKey(cell)));
+  if (!infrastructureCells.every((cell) => mainCells.some((candidate) => tileEquals(candidate, cell)))) {
+    return layout;
+  }
+
+  const remainingMainCells = mainCells.filter((cell) => !infrastructureKeys.has(tileKey(cell)));
+  const stationTile = { col: maxCol - 2, row: maxRow - 2 };
+  const nextLayout = {
+    ...(layout ?? {}),
+    rooms: sourceRooms.map((room) => room.id === mainRoom.id
+      ? { ...room, cells: remainingMainCells }
+      : room
+    ).concat({
+      id: "media-infrastructure",
+      label: "Media Infrastructure",
+      col: maxCol - 3,
+      row: maxRow - 3,
+      columns: 4,
+      rows: 4,
+      cells: infrastructureCells,
+      color: "#8b5cf6",
+    }),
+    doors: [...(layout?.doors ?? []), doorTile].filter((tile, index, doors) =>
+      doors.findIndex((candidate) => tileEquals(candidate, tile)) === index
+    ),
+    stations: {
+      ...(layout?.stations ?? {}),
+      "runpod-infrastructure": stationTile,
+    },
+    agents: {
+      ...(layout?.agents ?? {}),
+      "runpod-manager": stationTile,
+    },
+  };
+  return nextLayout;
+}
+
+function expandMainRoomForAgentCapacity(layout) {
+  const rooms = Array.isArray(layout?.rooms) ? layout.rooms : [];
+  const main = rooms.find((room) => room?.id === "main");
+  if (!main) return layout;
+  const current = roomCells(main);
+  if (current.length >= 300) return layout;
+  const occupied = new Set(rooms.filter((room) => room.id !== "main").flatMap((room) => roomCells(room)).map(tileKey));
+  const cells = [];
+  for (let row = 1; row <= 16; row += 1) for (let col = 1; col <= 22; col += 1) {
+    const tile = { col, row };
+    if (!occupied.has(tileKey(tile))) cells.push(tile);
+  }
+  return { ...layout, rooms: rooms.map((room) => room.id === "main" ? { ...room, col: 1, row: 1, columns: 22, rows: 16, cells } : room) };
+}
+
 function tileFromStored(value) {
   if (!value || !Number.isFinite(Number(value.col)) || !Number.isFinite(Number(value.row))) {
     return null;
@@ -302,6 +509,7 @@ function applyStoredLayoutBeforeWorld(layout) {
   for (const [stationId, storedTile] of Object.entries(layout.stations ?? {})) {
     const tile = tileFromStored(storedTile);
     const station = workstations.find((item) => item.id === stationId);
+    if (station) station.rotation = normalizeYaw(storedTile?.rotation);
     if (station && tile && isInsideTile(tile)) {
       station.position = tileToWorld(tile);
     }
@@ -309,7 +517,7 @@ function applyStoredLayoutBeforeWorld(layout) {
 }
 
 const rawStoredLayout = loadStoredLayout();
-const storedLayout = migrateStoredDefaultMainRoom(rawStoredLayout);
+const storedLayout = ensureInfrastructureRoom(expandMainRoomForAgentCapacity(migrateStoredDefaultMainRoom(rawStoredLayout)));
 if (storedLayout !== rawStoredLayout) {
   try {
     window.localStorage?.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(storedLayout));
@@ -330,6 +538,58 @@ const agentReplies = new Map();
 const chatMessageIds = new Set();
 const projectJobToasts = new Map();
 const projectJobsCache = new Map();
+const monitoringJobDefinitions = [
+  {
+    action: "vinted.continuous_monitoring",
+    agent_id: "vinted-analyst",
+    label: "Monitoraggio continuo · profili e competitor",
+    parameters: {
+      "profile-urls": "https://www.vinted.it/member/306388399\nhttps://www.vinted.it/member/167398536",
+      "owned-profile-urls": "https://www.vinted.it/member/225753959\nhttps://www.vinted.it/member/3178210259\nhttps://www.vinted.it/member/3206490867",
+      "profile-categories": "",
+      "competitor-keywords": "charm, pandora",
+      "competitor-category": "Gioielli donna",
+      "article-interval-seconds": 5,
+      "profile-interval-seconds": 3600,
+      "max-items": 0,
+      "max-results": 100,
+      "competitor-min-likes": 18,
+      "competitor-max-age-hours": 720,
+      "competitor-min-price": "10",
+      "discord-deal-notifications": true,
+      "discord-profile-report": true,
+      "daily-report-hour": 10,
+      "db-path": "data/scraper.db",
+      "browser-mode": "chrome_normale",
+      "browser-user-data-dir": "/Users/rafael/Library/Application Support/Google/Chrome",
+      "browser-profile-directory": "Default",
+      "refresh-browser-profile": false,
+      "max-price": "",
+    },
+  },
+  {
+    action: "vinted.deal_hunter",
+    agent_id: "vinted-procacciatore",
+    label: "Procacciatore · gioielli",
+    parameters: {
+      "deal-hunter-terms": "charm, bracciali, pandora, collane, gioielli, ciondoli, orecchini, anelli",
+      "deal-hunter-category": "Gioielli donna",
+      "max-results": 500,
+      "deal-hunter-min-price": "15",
+      "max-price": "",
+      "deal-hunter-min-favorites": 20,
+      "deal-hunter-max-age-hours": 24,
+      "deal-hunter-loop-seconds": 5,
+      "deal-hunter-url-only-discord": false,
+      "skip-login-required": true,
+      "auto-submit-offers": false,
+      "discord-deal-notifications": true,
+      "browser-mode": "chrome_normale",
+      "browser-user-data-dir": "/Users/rafael/Library/Application Support/Google/Chrome",
+      "browser-profile-directory": "Default",
+    },
+  },
+];
 const activeProjectJobs = new Map();
 const activityJobCache = new Map();
 const layoutHistory = new LayoutHistory(50);
@@ -343,6 +603,8 @@ const wikiProposalsCache = new Map();
 const wikiPagesCache = new Map();
 let availableProjects = [];
 let availableProjectPresets = [];
+let monitoringAutoStartTriggered = false;
+let monitoringDashboardRefreshTimer = 0;
 let projectPanel = "output";
 let projectDialogMode = "gateway";
 let projectJobFilter = "all";
@@ -360,6 +622,7 @@ const reportCompetitorSaleChecks = new Set();
 const reportCompetitorSaleCheckJobs = new Map();
 let reportOwnedStatusFilter = "all";
 let reportOwnedSearchFilter = "";
+let reportProcacciatoreStatusFilter = "all";
 let projectCompetitorProfiles = [];
 
 const providerDefaults = {
@@ -915,12 +1178,16 @@ function currentLayoutState() {
         role: station.role,
         color: station.color,
         position: { ...station.position },
+        rotation: Number(station.rotation) || 0,
         jobs: [...(station.jobs ?? [])],
         agentId: station.agentId ?? "",
         presetId: station.presetId ?? "desk",
         custom: true,
       })),
-    stations: Object.fromEntries(workstations.map((station) => [station.id, worldToTile(station.position)])),
+    stations: Object.fromEntries(workstations.map((station) => [station.id, {
+      ...worldToTile(station.position),
+      rotation: Number(station.rotation) || 0,
+    }])),
     agents,
   };
 }
@@ -968,6 +1235,7 @@ function applyLayoutHistorySnapshot(snapshot) {
   for (const [stationId, tileValue] of Object.entries(snapshot.stations ?? {})) {
     const station = agentWorld.getStation(stationId);
     const tile = tileFromStored(tileValue);
+    if (station) station.rotation = normalizeYaw(tileValue?.rotation);
     if (station && tile && isInsideTile(tile)) station.position = tileToWorld(tile);
   }
   agentWorld.refreshBlockedTiles();
@@ -1006,6 +1274,11 @@ function updateLayoutEditor() {
   }
   roomDrawToggle?.classList.toggle("button--primary", layoutMode && roomDrawMode);
   doorToggle?.classList.toggle("button--primary", layoutMode && doorMode);
+  if (rotateStationButton) {
+    const station = selectedStationId ? agentWorld.getStation(selectedStationId) : null;
+    rotateStationButton.disabled = !layoutMode || !station;
+    rotateStationButton.title = station ? `Rotate ${station.label} by 90°` : "Select a workstation to rotate it";
+  }
 
   const hasAgents = room ? agentsInRoom(room).length > 0 : false;
   const hasStations = room ? stationsInRoom(room).length > 0 : false;
@@ -1029,7 +1302,7 @@ function updateLayoutEditor() {
     } else if (doorMode) {
       layoutEditorHint.textContent = "Click or drag to draw a connected path from a room. Erasing cannot leave disconnected path tiles.";
     } else {
-      layoutEditorHint.textContent = "Select an agent or workstation, then click a tile to move it. Undo/Redo: Ctrl+Z / Ctrl+Y.";
+      layoutEditorHint.textContent = "Select a workstation and rotate it 90° with the button above. Select an agent or workstation, then click a tile to move it. Undo/Redo: Ctrl+Z / Ctrl+Y.";
     }
   }
   renderWorkstationControls();
@@ -1046,7 +1319,6 @@ function setLayoutMode(enabled) {
   );
   if (layoutMode) {
     closeQuickChat();
-    setAutoAgents(false);
   } else {
     roomDrawMode = false;
     doorMode = false;
@@ -1190,6 +1462,24 @@ function moveStationVisual(stationId) {
   }
 }
 
+function normalizeYaw(value) {
+  const yaw = Number(value);
+  if (!Number.isFinite(yaw)) return 0;
+  return ((yaw % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+}
+
+function rotateSelectedStation() {
+  const station = selectedStationId ? agentWorld.getStation(selectedStationId) : null;
+  const visual = selectedStationId ? stationVisuals.get(selectedStationId) : null;
+  if (!layoutMode || !station || !visual) return;
+  const beforeLayout = currentLayoutState();
+  station.rotation = normalizeYaw((Number(station.rotation) || 0) + Math.PI / 2);
+  visual.rotation.y = station.rotation;
+  saveLayoutState(beforeLayout);
+  setBootMessage(`${station.label} ruotata di 90°.`);
+  updateLayoutEditor();
+}
+
 function uniqueWorkstationId(agentId, presetId) {
   const base = `workstation-${agentId || presetId || "station"}`
     .toLowerCase()
@@ -1235,7 +1525,6 @@ function createLinkedWorkstation(agent, presetId, options = {}) {
     selectedRoomId = roomForTile(worldToTile(existing.position))?.id ?? selectedRoomId;
     pendingStationPlacementId = existing.id;
     setLayoutMode(true);
-    setAutoAgents(false);
     updateHud();
     setBootMessage(`${existing.label} esiste gia: clicca un tile per ripiazzarla.`);
     return existing;
@@ -1260,7 +1549,6 @@ function createLinkedWorkstation(agent, presetId, options = {}) {
   selectedRoomId = roomForTile(worldToTile(station.position))?.id ?? selectedRoomId;
   pendingStationPlacementId = station.id;
   setLayoutMode(true);
-  setAutoAgents(false);
   saveLayoutState(beforeLayout);
   updateHud();
   const reason = options.reason ?? "Workstation creata";
@@ -1453,10 +1741,12 @@ function createTextSprite(text, options = {}) {
 }
 
 function replaceSpriteText(sprite, text, options = {}) {
-  if (sprite.userData.text === text) {
+  const styleKey = JSON.stringify(options);
+  if (sprite.userData.text === text && sprite.userData.styleKey === styleKey) {
     return;
   }
   sprite.userData.text = text;
+  sprite.userData.styleKey = styleKey;
   const oldTexture = sprite.material.map;
   const texture = makeCanvasTexture((labelCtx, width, height) => {
     labelCtx.clearRect(0, 0, width, height);
@@ -1466,11 +1756,24 @@ function replaceSpriteText(sprite, text, options = {}) {
     labelCtx.strokeStyle = options.border ?? "rgba(167, 196, 226, 0.24)";
     labelCtx.lineWidth = 4;
     labelCtx.stroke();
-    labelCtx.font = `${options.weight ?? 800} ${options.size ?? 34}px Inter, Arial, sans-serif`;
+    const accent = options.accent ?? options.border ?? "#94a3b8";
+    labelCtx.save();
+    labelCtx.shadowColor = accent;
+    labelCtx.shadowBlur = 18;
+    labelCtx.fillStyle = accent;
+    labelCtx.beginPath();
+    labelCtx.arc(54, height / 2, 25, 0, Math.PI * 2);
+    labelCtx.fill();
+    labelCtx.restore();
+    labelCtx.fillStyle = options.iconColor ?? "#071521";
+    labelCtx.font = `900 ${options.iconSize ?? 34}px Inter, Arial, sans-serif`;
     labelCtx.textAlign = "center";
     labelCtx.textBaseline = "middle";
+    labelCtx.fillText(options.icon ?? "•", 54, height / 2 + 1);
+    labelCtx.font = `${options.weight ?? 900} ${options.size ?? 34}px Inter, Arial, sans-serif`;
+    labelCtx.textAlign = "left";
     labelCtx.fillStyle = options.color ?? "#eef6ff";
-    labelCtx.fillText(text.slice(0, 28), width / 2, height / 2 + 1);
+    labelCtx.fillText(text.slice(0, 24), 96, height / 2 + 1);
   }, options.width ?? 512, options.height ?? 128);
   sprite.material.map = texture;
   sprite.material.needsUpdate = true;
@@ -1567,7 +1870,6 @@ function placeSelectionInRoom(roomId) {
   } else if (selectedAgentId) {
     moved = agentWorld.commandPlaceAgent(selectedAgentId, target, `assigned to ${room.label}`);
     if (moved) {
-      setAutoAgents(false);
       setBootMessage(`${network.getAgent(selectedAgentId)?.label ?? "Agente"} spostato in ${room.label}.`);
     }
   }
@@ -2151,6 +2453,25 @@ function createStationProp(station) {
     addWorkstationKeyboard(group, 0.28, 0.535, 0.25, 0.58);
     addMesh(group, new THREE.BoxGeometry(0.42, 0.28, 0.42), stationMaterial, { x: -0.55, y: 0.24, z: 0.58 });
     addMesh(group, new THREE.BoxGeometry(0.34, 0.22, 0.34), stationMaterial, { x: -0.08, y: 0.2, z: 0.62 });
+  } else if (stationKind === "infrastructure") {
+    addMesh(group, new THREE.BoxGeometry(1.72, 0.18, 0.78), darkMaterial, { y: 0.43 });
+    for (let index = 0; index < 3; index += 1) {
+      const rack = addMesh(group, new THREE.BoxGeometry(0.36, 0.7, 0.3), darkMaterial, {
+        x: -0.52 + index * 0.52,
+        y: 0.82,
+        z: -0.08,
+      });
+      addWorkstationScreen(rack, 0.22, 0.12, { y: 0.12, z: 0.156 }, { phase: index * 0.28 + 0.15 });
+      for (let ledIndex = 0; ledIndex < 3; ledIndex += 1) {
+        addMesh(rack, new THREE.SphereGeometry(0.018, 8, 6), lightMaterial, {
+          x: -0.1 + ledIndex * 0.1,
+          y: -0.17,
+          z: 0.158,
+        });
+      }
+    }
+    addWorkstationKeyboard(group, 0.3, 0.535, 0.25, 0.56);
+    addMesh(group, new THREE.CylinderGeometry(0.13, 0.18, 0.42, 12), stationMaterial, { x: -0.65, y: 0.29, z: 0.45 });
   } else {
     addMesh(group, new THREE.CylinderGeometry(1.08, 1.08, 0.22, 20), darkMaterial, { y: 0.14 });
     for (let i = 0; i < 6; i += 1) {
@@ -2173,6 +2494,7 @@ function createStationProp(station) {
   group.add(label);
 
   group.position.set(station.position.x, 0, station.position.z);
+  group.rotation.y = normalizeYaw(station.rotation);
   group.userData.stationId = station.id;
   group.traverse((child) => {
     child.userData.stationId = station.id;
@@ -2287,8 +2609,8 @@ function createAgentVisual(agent) {
     background: "rgba(8, 14, 25, 0.92)",
     color: "#cbd5e1",
     size: 28,
-    scaleX: 1.18,
-    scaleY: 0.34,
+    scaleX: 1.52,
+    scaleY: 0.42,
   });
   statusBadge.position.set(0, 2.58, 0);
   group.add(statusBadge);
@@ -2529,24 +2851,26 @@ function updateAgents(elapsed) {
     const completedStatus = /completed|succeeded|success/.test(runtimeStatus);
     const workingStatus = state.activeWorkIds.size > 0 || /executing|working|running/.test(runtimeStatus);
     const badge = alertStatus
-      ? { label: "NEEDS HELP", color: "#fecdd3", border: "#fb7185" }
+      ? { label: "NEEDS HELP", color: "#fff1f2", background: "rgba(76, 20, 35, 0.96)", border: "#fb7185", accent: "#fb7185", icon: "!" }
       : waitingStatus
-        ? { label: "WAITING", color: "#fde68a", border: "#f59e0b" }
+        ? { label: "WAITING", color: "#fffbeb", background: "rgba(75, 48, 9, 0.96)", border: "#f59e0b", accent: "#fbbf24", icon: "…" }
         : completedStatus
-          ? { label: "DONE", color: "#bbf7d0", border: "#4ade80" }
+          ? { label: "DONE", color: "#ecfdf5", background: "rgba(13, 65, 47, 0.96)", border: "#4ade80", accent: "#4ade80", icon: "✓" }
           : walking
-            ? { label: "MOVING", color: "#bae6fd", border: "#38bdf8" }
+            ? { label: "MOVING", color: "#effaff", background: "rgba(10, 54, 81, 0.96)", border: "#38bdf8", accent: "#38bdf8", icon: "↗" }
             : workingStatus
-              ? { label: "WORKING", color: "#a5f3fc", border: "#22d3ee" }
-              : { label: "IDLE", color: "#cbd5e1", border: "#64748b" };
+              ? { label: "WORKING", color: "#ecfeff", background: "rgba(8, 64, 74, 0.96)", border: "#22d3ee", accent: "#67e8f9", icon: "⚙" }
+              : { label: "IDLE", color: "#e2e8f0", background: "rgba(25, 37, 54, 0.96)", border: "#64748b", accent: "#94a3b8", icon: "·" };
     replaceSpriteText(visual.statusBadge, badge.label, {
-      background: "rgba(8, 14, 25, 0.92)",
+      background: badge.background,
       color: badge.color,
       border: badge.border,
-      size: 27,
+      accent: badge.accent,
+      icon: badge.icon,
+      size: 29,
       width: 420,
       height: 128,
-      radius: 34,
+      radius: 54,
     });
     const phase = elapsed + state.seed;
     const breath = Math.sin(phase * 2.2) * 0.012;
@@ -2723,6 +3047,7 @@ function updateHud() {
     <span>${network.relations.length} canali</span>
     <span>${speed}x</span>
     <span>${layoutMode ? "layout" : autoAgents ? "auto" : "manuale"}</span>
+    <span>${agentWorld.isAgentManual(agent.id) ? "selezionato: manuale (10s)" : "selezionato: auto"}</span>
   `;
 
   eventLog.innerHTML = network.events
@@ -4521,6 +4846,8 @@ function handleRuntimeEvent(event) {
     queueMemoryCouncilSignal("memory", 2);
   } else if (event.type === "wiki.proposal.resolved" || event.type === "wiki.maintenance.completed") {
     queueMemoryCouncilSignal("memory", 1);
+  } else if (event.type === "runpod.gpu.available") {
+    showGameNotification({ title: "RunPod Manager", subtitle: "GPU available", summary: `${event.data?.name || event.entity_id} is now available in ${event.data?.region || "your configured region"}.`, tone: "success", key: `runpod-gpu-${event.entity_id}-${event.created_at}` });
   } else if (event.type?.startsWith("project.job.")) {
     const job = event.data?.job;
     if (job?.id) {
@@ -4584,6 +4911,9 @@ function handleRuntimeEvent(event) {
       if (projectPanel === "output") {
         renderProjectJobDetail(job);
       }
+    }
+    if (job && monitoringJobDefinitions.some((definition) => definition.action === job.action)) {
+      void refreshMonitoringDashboard();
     }
   } else if (event.type === "runtime.disconnected") {
     setRuntimeConnection(false);
@@ -5795,10 +6125,11 @@ function renderReportOwnedProfiles() {
       const timing = status === "sold"
         ? `Sold in ${escapeHtml(item.sold_after_text || "—")} · ${escapeHtml(formatReportDate(item.sold_at))}`
         : status === "gone" ? "Gone / sold / removed" : `Seen ${escapeHtml(formatReportDate(item.last_seen_at || item.first_seen_at))}`;
-      return `<a class="report-owned-item" href="${escapeHtml(item.link || profile.profile_url)}" target="_blank" rel="noopener noreferrer">
-        ${image}<span><strong>${escapeHtml(item.name || "Marketplace item")}</strong><small>${escapeHtml(item.price || "Price unavailable")} · ${timing}</small></span>
+      return `<div class="report-owned-item">
+        <a class="report-owned-item__link" href="${escapeHtml(item.link || profile.profile_url)}" target="_blank" rel="noopener noreferrer">${image}<span><strong>${escapeHtml(item.name || "Marketplace item")}</strong><small>${escapeHtml(item.price || "Price unavailable")} · ${timing}</small></span></a>
         <b class="report-pill ${status === "active" ? "report-pill--active" : ""}">${escapeHtml(status)}</b>
-      </a>`;
+        <button class="button button--danger button--compact report-owned-item__ignore" type="button" data-owned-item-ignore="${escapeHtml(item.item_id || "")}" data-owned-item-member="${escapeHtml(profile.member_id)}" ${item.item_id ? "" : "disabled"} title="Escludi dal profilo e interrompi il monitoraggio">Non tracciare</button>
+      </div>`;
     }).join("") : '<div class="report-status">No product history collected for this profile yet.</div>';
     return `<article class="report-owned-profile">
       <header>
@@ -5818,6 +6149,88 @@ function renderReportOwnedProfiles() {
   }).join("");
   reportOwnedProfiles.querySelectorAll("img").forEach((image) => {
     image.addEventListener("error", () => image.replaceWith(Object.assign(document.createElement("span"), { className: "report-owned-item__placeholder", textContent: "◇" })), { once: true });
+  });
+}
+
+function renderReportProcacciatore() {
+  if (!reportProcacciatoreArticles) return;
+  const report = reportSnapshot?.procacciatore ?? {};
+  const summary = report.summary ?? {};
+  const articles = Array.isArray(report.articles) ? report.articles : [];
+  const topLiked = Array.isArray(report.top_liked) ? report.top_liked : [];
+  const cohorts = Array.isArray(report.cohorts) ? report.cohorts : [];
+  const brands = Array.isArray(report.brands) ? report.brands : [];
+  const brandSummary = report.brand_summary ?? {};
+  if (reportProcacciatoreCount) reportProcacciatoreCount.textContent = formatReportNumber(summary.tracked_count);
+  if (reportProcacciatoreChecked) {
+    reportProcacciatoreChecked.textContent = summary.last_checked_at
+      ? `Ultimo controllo: ${formatReportDate(summary.last_checked_at)}`
+      : report.available ? "In attesa del primo controllo" : "Archivio non ancora creato";
+  }
+  if (reportProcacciatoreSummary) {
+    const metrics = [
+      [formatReportNumber(summary.tracked_count), "Articoli tracciati", "Archivio Procacciatore"],
+      [formatReportNumber(summary.active_count), "Ancora attivi", "Monitoraggio vendita"],
+      [formatReportNumber(summary.sold_count), "Venduti", `${formatReportNumber(summary.unavailable_count)} non disponibili`],
+      [formatReportDuration(summary.average_sale_seconds), "Tempo medio di vendita", `Mediana ${formatReportDuration(summary.median_sale_seconds)}`],
+      [summary.average_sold_likes == null ? "—" : formatReportNumber(summary.average_sold_likes), "Like medi sui venduti", "Articoli con like noti"],
+      [formatReportNumber(summary.observed_count), "Annunci osservati", `${formatReportNumber(summary.newly_observed_count)} nuovi nel periodo`],
+      [formatReportNumber(summary.observed_supply_24h), "Offerta vista nelle ultime 24h", "Annunci distinti riapparsi di recente"],
+      [summary.demand_supply_ratio == null ? "—" : `${(summary.demand_supply_ratio * 100).toFixed(1)}%`, "Vendite confermate / nuovi annunci", `${formatReportNumber(summary.period_sold_count)} venduti nel periodo · proxy sui soli tracciati`],
+    ];
+    reportProcacciatoreSummary.innerHTML = metrics.map(([value, label, note]) => `
+      <article><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span><small>${escapeHtml(note)}</small></article>
+    `).join("");
+  }
+  reportProcacciatoreTop.innerHTML = topLiked.length ? topLiked.slice(0, 12).map((article, index) => {
+    const image = article.image_url
+      ? `<img src="${escapeHtml(article.image_url)}" alt="" loading="lazy" />`
+      : '<span class="report-procacciatore-placeholder">◇</span>';
+    const soldTime = article.status === "sold" ? `Venduto in ${article.sold_after_text || "—"}` : article.status === "active" ? "Ancora monitorato" : "Non disponibile";
+    return `<a class="report-procacciatore-card" href="${escapeHtml(article.link || "#")}" target="_blank" rel="noopener noreferrer">
+      <span class="report-procacciatore-rank">#${index + 1}</span>${image}
+      <span class="report-procacciatore-card__body"><strong>${escapeHtml(article.name || "Articolo")}</strong><small>${formatReportNumber(article.favorite_count)} like · ${escapeHtml(article.price || "Prezzo n/d")}</small><small>${escapeHtml(article.search_term || article.category || "Ricerca")}</small><small>${article.likes_per_hour == null ? "Velocità like: servono altri campioni" : `${article.likes_per_hour > 0 ? "+" : ""}${article.likes_per_hour} like/ora`} · accel. ${article.likes_acceleration == null ? "n/d" : `${article.likes_acceleration > 0 ? "+" : ""}${article.likes_acceleration} like/ora²`}</small><small>Variazione prezzo ${article.price_change_value == null ? "non campionata" : `${article.price_change_value > 0 ? "+" : ""}€${Number(article.price_change_value).toFixed(2)}`}</small><b>${escapeHtml(soldTime)}</b></span>
+    </a>`;
+  }).join("") : '<div class="report-status">Il Procacciatore non ha ancora raccolto articoli con like. Avvia una ricerca per iniziare.</div>';
+  if (reportProcacciatoreBrandNote) {
+    reportProcacciatoreBrandNote.textContent = `${formatReportNumber(brandSummary.observed_listings)} annunci distinti · ${formatReportNumber(brandSummary.labels)} etichette · ${formatReportNumber(brandSummary.generic_labels)} generiche/da verificare. Un articolo ripetuto in più keyword conta una sola volta.`;
+  }
+  if (reportProcacciatoreBrands) {
+    const formatAveragePrice = (value) => value == null ? "—" : new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(Number(value));
+    reportProcacciatoreBrands.innerHTML = brands.length ? brands.map((brand) => {
+      const generic = brand.label_type === "Etichetta generica / da verificare";
+      return `<tr><td><strong>${escapeHtml(brand.name || "Senza etichetta")}</strong></td>
+        <td><span class="report-procacciatore-label ${generic ? "report-procacciatore-label--generic" : ""}">${generic ? "Da verificare" : "Marchio / etichetta"}</span></td>
+        <td>${formatReportNumber(brand.observed_count)}</td><td>${formatReportNumber(brand.sold_count)}</td>
+        <td>${formatAveragePrice(brand.average_price)}</td><td>${brand.average_likes == null ? "—" : formatReportNumber(brand.average_likes)}</td>
+        <td>${brand.sale_sample_size ? `${formatReportDuration(brand.average_sale_seconds)}<small class="report-procacciatore-cell-note">su ${formatReportNumber(brand.sale_sample_size)} vendite con durata nota</small>` : "—"}</td></tr>`;
+    }).join("") : '<tr><td colspan="7" class="report-status">Nessuna etichetta disponibile nel periodo. Avvia una ricerca del Procacciatore per raccogliere dati.</td></tr>';
+  }
+  const cohortBody = document.querySelector("#report-procacciatore-cohorts");
+  if (cohortBody) cohortBody.innerHTML = cohorts.length ? cohorts.map((cohort) => {
+    const rate = cohort.sell_through_rate == null ? "—" : `${cohort.sell_through_rate}%`;
+    const within24 = cohort.sale_sample_size ? `${cohort.sold_within_24h} (${Math.round(cohort.sold_within_24h / cohort.sale_sample_size * 100)}%)` : "—";
+    const within72 = cohort.sale_sample_size ? `${cohort.sold_within_72h} (${Math.round(cohort.sold_within_72h / cohort.sale_sample_size * 100)}%)` : "—";
+    return `<tr><td>${escapeHtml(cohort.search_term || "—")}</td><td>${escapeHtml(cohort.price_band || "—")}</td><td>${formatReportNumber(cohort.observed_count)}</td><td>${formatReportNumber(cohort.tracked_count)}</td><td>${formatReportNumber(cohort.active_count)}</td><td>${formatReportNumber(cohort.sold_count)}</td><td>${formatReportNumber(cohort.unavailable_count)}</td><td>${rate}</td><td>${within24}</td><td>${within72}</td><td>${formatReportDuration(cohort.median_sale_seconds)}</td><td>${formatReportNumber(cohort.sale_sample_size)}</td></tr>`;
+  }).join("") : '<tr><td colspan="12" class="report-status">Servono osservazioni del Procacciatore e vendite confermate per costruire le coorti.</td></tr>';
+  const filtered = reportProcacciatoreStatusFilter === "all"
+    ? articles
+    : articles.filter((article) => reportProcacciatoreStatusFilter === "unavailable"
+      ? ["unavailable", "gone"].includes(article.status)
+      : article.status === reportProcacciatoreStatusFilter);
+  reportProcacciatoreArticles.innerHTML = filtered.length ? filtered.map((article) => {
+    const status = article.status === "gone" ? "unavailable" : article.status || "active";
+    const image = article.image_url
+      ? `<img src="${escapeHtml(article.image_url)}" alt="" loading="lazy" />`
+      : '<span class="report-procacciatore-placeholder">◇</span>';
+    return `<tr><td><a class="report-procacciatore-item" href="${escapeHtml(article.link || "#")}" target="_blank" rel="noopener noreferrer">${image}<span><strong>${escapeHtml(article.name || "Articolo")}</strong><small>${escapeHtml(article.item_id || "")}</small></span></a></td>
+      <td>${article.favorite_count == null ? "—" : formatReportNumber(article.favorite_count)}${article.likes_per_hour == null ? "" : `<small class="report-procacciatore-cell-note">${article.likes_per_hour > 0 ? "+" : ""}${article.likes_per_hour}/h</small>`}</td><td>${escapeHtml(article.price || "—")}${article.price_change_value == null ? "" : `<small class="report-procacciatore-cell-note">${article.price_change_value > 0 ? "+" : ""}€${Number(article.price_change_value).toFixed(2)}</small>`}</td><td>${escapeHtml(article.search_term || article.category || "—")}</td>
+      <td><span class="report-pill ${status === "active" ? "report-pill--active" : status === "sold" ? "report-pill--sold" : ""}">${escapeHtml(status)}</span></td>
+      <td>${escapeHtml(formatReportDate(article.first_seen_at))}</td><td>${escapeHtml(formatReportDate(article.last_checked_at))}</td>
+      <td>${article.status === "sold" ? escapeHtml(article.sold_after_text || "—") : "—"}</td></tr>`;
+  }).join("") : '<tr><td colspan="8" class="report-status">Nessun articolo per questo stato.</td></tr>';
+  reportProcacciatoreArticles.querySelectorAll("img").forEach((image) => {
+    image.addEventListener("error", () => image.replaceWith(Object.assign(document.createElement("span"), { className: "report-procacciatore-placeholder", textContent: "◇" })), { once: true });
   });
 }
 
@@ -5903,6 +6316,7 @@ function renderVintedReport(snapshot) {
   renderReportArticles();
   renderReportCompetitors();
   renderReportOwnedProfiles();
+  renderReportProcacciatore();
 }
 
 async function loadVintedReport() {
@@ -5932,6 +6346,335 @@ async function loadVintedReport() {
 async function openVintedReports() {
   if (!reportDialog.open) reportDialog.showModal();
   await loadVintedReport();
+}
+
+function monitoringJobsForActions(jobs) {
+  const actionIds = new Set(monitoringJobDefinitions.map((definition) => definition.action));
+  return jobs.filter((job) => actionIds.has(job.action));
+}
+
+function monitoringStateLabel(job) {
+  const labels = { running: "In esecuzione", queued: "In coda", scheduled: "Programmato", completed: "Completato", failed: "Fallito", cancelled: "Fermato" };
+  return labels[job?.state] || "Non avviato";
+}
+
+function renderMonitoringDashboard(jobs = []) {
+  if (!monitoringJobs) return;
+  const relevantJobs = monitoringJobsForActions(jobs);
+  const activeCount = relevantJobs.filter((job) => ["running", "queued", "scheduled"].includes(job.state)).length;
+  if (monitoringCount) monitoringCount.textContent = `${activeCount}/2`;
+  monitoringJobs.innerHTML = monitoringJobDefinitions.map((definition) => {
+    const job = relevantJobs
+      .filter((candidate) => candidate.action === definition.action)
+      .sort((left, right) => String(right.updated_at || right.created_at).localeCompare(String(left.updated_at || left.created_at)))[0];
+    const active = Boolean(job && ["running", "queued", "scheduled"].includes(job.state));
+    const status = job ? monitoringStateLabel(job) : "Non avviato";
+    const timestamp = job?.updated_at || job?.created_at;
+    const time = timestamp ? new Date(timestamp).toLocaleString("it-IT") : "";
+    const detail = definition.action === "vinted.continuous_monitoring"
+      ? "Ricerca charm/Pandora continua · tre profili personali ogni ora · competitor prioritario 306388399 · DB scraper.db"
+      : "Procacciatore gioielli · 500 annunci per ricerca · prezzo minimo 15 € · almeno 20 like · senza login · DB procacciatore.db";
+    return `<article class="monitoring-job-card ${active ? "monitoring-job-card--active" : ""}">
+      <div class="monitoring-job-card__top"><span class="monitoring-job-card__indicator" aria-hidden="true"></span><div><span class="section-label">${active ? "Attivo" : "Stato"}</span><h4>${escapeHtml(definition.label)}</h4></div><span class="monitoring-job-card__state">${escapeHtml(status)}</span></div>
+      <p>${escapeHtml(detail)}</p>
+      <div class="monitoring-job-card__meta"><span>${job?.id ? `Job ${escapeHtml(job.id)}` : "Nessun job registrato"}</span>${time ? `<time>${escapeHtml(time)}</time>` : ""}</div>
+      <div class="monitoring-job-card__actions">${active
+        ? `<button class="button button--danger button--compact" type="button" data-monitoring-stop="${escapeHtml(job.id)}">Ferma</button>`
+        : `<button class="button button--primary button--compact" type="button" data-monitoring-start="${escapeHtml(definition.action)}">Avvia ora</button>`}</div>
+    </article>`;
+  }).join("");
+  if (monitoringStatus && !monitoringStatus.textContent.includes("Avvio automatico non riuscito")) {
+    monitoringStatus.textContent = activeCount === 2
+      ? "Entrambi i monitoraggi sono attivi. Lo stato si aggiorna automaticamente."
+      : `${activeCount} di 2 monitoraggi attivi. I monitoraggi mancanti partiranno automaticamente all’avvio dell’app.`;
+  }
+}
+
+async function refreshMonitoringDashboard() {
+  if (!runtimeClient.connected) {
+    if (monitoringStatus) monitoringStatus.textContent = "Runtime non connesso: avvia prima il runtime dell’app.";
+    return [];
+  }
+  try {
+    const jobs = await runtimeClient.listProjectJobs();
+    renderMonitoringDashboard(jobs);
+    return jobs;
+  } catch (error) {
+    if (monitoringStatus) monitoringStatus.textContent = `Impossibile aggiornare lo stato: ${error.message}`;
+    return [];
+  }
+}
+
+async function startMonitoringJob(definition, { automatic = false } = {}) {
+  if (!runtimeClient.connected) throw new Error("Avvia prima il runtime dell’app.");
+  const job = await runtimeClient.createProjectJob({
+    project_id: "main-scraper",
+    action: definition.action,
+    parameters: definition.parameters,
+    agent_id: definition.agent_id,
+    approved: true,
+  });
+  syncProjectJobToast(job, "project.job.queued");
+  if (monitoringStatus) monitoringStatus.textContent = automatic
+    ? `Avvio automatico: ${definition.label}…`
+    : `${definition.label} avviato.`;
+  return job;
+}
+
+async function ensureAutoMonitoringJobs() {
+  if (monitoringAutoStartTriggered || !runtimeClient.connected) return;
+  monitoringAutoStartTriggered = true;
+  if (monitoringStatus) monitoringStatus.textContent = "Controllo dei monitoraggi attivi…";
+  try {
+    const jobs = await runtimeClient.listProjectJobs();
+    const activeActions = new Set(monitoringJobsForActions(jobs)
+      .filter((job) => ["running", "queued", "scheduled"].includes(job.state))
+      .map((job) => job.action));
+    for (const definition of monitoringJobDefinitions) {
+      if (activeActions.has(definition.action)) continue;
+      try {
+        await startMonitoringJob(definition, { automatic: true });
+      } catch (error) {
+        runtimeClient.logClient("error", error.message, { operation: "autoStartVintedMonitoring", action: definition.action });
+        if (monitoringStatus) monitoringStatus.textContent = `Avvio automatico non riuscito per ${definition.label}: ${error.message}`;
+      }
+    }
+    await refreshMonitoringDashboard();
+  } catch (error) {
+    monitoringAutoStartTriggered = false;
+    if (monitoringStatus) monitoringStatus.textContent = `Avvio automatico non riuscito: ${error.message}`;
+    runtimeClient.logClient("error", error.message, { operation: "autoStartVintedMonitoring.listJobs" });
+  }
+}
+
+async function openMonitoringDashboard() {
+  if (!reportDialog.open) reportDialog.showModal();
+  reportTabButtons.find((button) => button.dataset.reportTab === "monitoring")?.click();
+  await refreshMonitoringDashboard();
+}
+
+let linkedinReportPosts = [];
+let selectedLinkedInPostId = "";
+const linkedinRewritePromptsByPost = new Map();
+let linkedinSearchTimer = 0;
+
+function safeLinkedInMediaUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" && (url.hostname === "licdn.com" || url.hostname.endsWith(".licdn.com")) ? url.href : "";
+  } catch (_error) { return ""; }
+}
+
+function linkedinRewriteUserPrompt(postText, instruction) {
+  return `Post di partenza:\n${String(postText || "").slice(0, 10000)}\n\nIndicazioni aggiuntive: ${String(instruction || "").trim() || "tono tranquillo, come se spiegassi a un amico"}`;
+}
+
+function linkedinPostIsInteresting(post) {
+  const match = String(post.published_text || "").match(/(?:^|\s)(\d+)\s*d\b/i);
+  const seen = Date.parse(post.last_seen_at || "");
+  if (!match || !Number.isFinite(seen)) return false;
+  const approximateDays = Number(match[1]) + Math.max(0, (Date.now() - seen) / 86_400_000);
+  return Number(post.reactions) >= 1000 && approximateDays >= 1 && approximateDays < 4;
+}
+
+function renderLinkedInPosts() {
+  const filter = reportLinkedInFilter?.value || "interesting";
+  const posts = linkedinReportPosts.filter((post) => {
+    if (filter === "interesting") return linkedinPostIsInteresting(post);
+    if (filter === "images") return Boolean(post.image_url) || Number(post.image_count) > 0;
+    if (filter === "videos") return Number(post.video_count) > 0;
+    return true;
+  });
+  reportLinkedInStatus.textContent = `${posts.length} visualizzati · ${linkedinReportPosts.length} caricati`;
+  reportLinkedInCount.textContent = String(linkedinReportPosts.filter(linkedinPostIsInteresting).length);
+  reportLinkedInList.innerHTML = posts.length ? posts.map((post) => {
+    const image = safeLinkedInMediaUrl(post.image_url);
+    const selected = selectedLinkedInPostId === post.post_id;
+    return `<button class="linkedin-post-row${selected ? " linkedin-post-row--selected" : ""}" type="button" data-linkedin-post-id="${escapeHtml(post.post_id)}">
+      ${image ? `<img src="${escapeHtml(image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="linkedin-post-row__placeholder">${Number(post.video_count) ? "▶" : "in"}</span>`}
+      <span class="linkedin-post-row__body"><strong>${escapeHtml(post.author || "Autore non disponibile")}</strong><small>${escapeHtml(String(post.text || "").slice(0, 170)) || "Testo non disponibile"}</small><em>${Number(post.reactions).toLocaleString("it-IT")} reazioni · ${escapeHtml(post.published_text || "età non nota")}${Number(post.video_count) ? " · video" : ""}</em></span>
+    </button>`;
+  }).join("") : '<p class="linkedin-empty">Nessun post con questo filtro. Prova “Tutti i post”.</p>';
+}
+
+async function loadLinkedInPosts() {
+  if (!runtimeClient.connected) {
+    reportLinkedInStatus.textContent = "Avvia il runtime per leggere i post.";
+    return;
+  }
+  reportLinkedInRefresh.disabled = true;
+  reportLinkedInStatus.textContent = "Caricamento post…";
+  try {
+    const result = await runtimeClient.getLinkedInPosts(reportLinkedInSearch.value.trim(), 2000);
+    linkedinReportPosts = Array.isArray(result.posts) ? result.posts : [];
+    renderLinkedInPosts();
+    if (selectedLinkedInPostId && linkedinReportPosts.some((post) => post.post_id === selectedLinkedInPostId)) {
+      await loadLinkedInDetail(selectedLinkedInPostId);
+    } else if (selectedLinkedInPostId) {
+      selectedLinkedInPostId = "";
+    }
+  } catch (error) {
+    reportLinkedInStatus.textContent = `Errore: ${error.message}`;
+    reportUiError("ui.linkedin-reports.load", error, { phase: "load-linkedin-posts" });
+  } finally { reportLinkedInRefresh.disabled = false; }
+}
+
+async function loadLinkedInDetail(postId) {
+  selectedLinkedInPostId = postId;
+  renderLinkedInPosts();
+  reportLinkedInDetail.innerHTML = '<p class="linkedin-empty">Caricamento dettaglio…</p>';
+  try {
+    const post = await runtimeClient.getLinkedInPost(postId);
+    if (selectedLinkedInPostId !== postId) return;
+    const latest = post.observations?.[0] || {};
+    const link = String(post.link || "").startsWith("https://www.linkedin.com/") && post.link !== "https://www.linkedin.com/feed/" ? post.link : "";
+    const media = Array.isArray(post.media) ? post.media : [];
+    const mediaHtml = media.length ? media.map((item) => {
+      const preview = safeLinkedInMediaUrl(item.kind === "image" ? item.urls?.[0] : item.poster_url);
+      const videoUrl = item.kind === "video" ? safeLinkedInMediaUrl(item.urls?.[0]) : "";
+      const original = item.archive?.find((archive) => archive.variant === "original");
+      const poster = item.archive?.find((archive) => archive.variant === "poster");
+      const fileHref = (variant) => `/api/linkedin/posts/${encodeURIComponent(postId)}/media/${item.index}/file?variant=${variant}`;
+      return `<div class="linkedin-media-card">
+        ${videoUrl ? `<video src="${escapeHtml(videoUrl)}" poster="${escapeHtml(preview)}" controls preload="none" referrerpolicy="no-referrer"></video>` : preview ? `<img src="${escapeHtml(preview)}" alt="${item.kind === "video" ? "Anteprima video" : "Immagine del post"}" loading="lazy" referrerpolicy="no-referrer">` : `<div class="linkedin-media-card__missing">${item.kind === "video" ? "Video rilevato · anteprima non disponibile" : "Immagine non disponibile"}</div>`}
+        <div class="linkedin-media-card__actions"><strong>${item.kind === "video" ? "Video" : "Immagine"} ${item.index + 1}</strong>
+          ${original ? `<a class="button" href="${fileHref("original")}" download>Scarica file</a>` : `<button class="button" type="button" data-linkedin-archive="${item.index}" ${item.urls?.length ? "" : "disabled"}>Salva nel PC</button>`}
+          ${item.kind === "video" && item.poster_url ? (poster ? `<a class="button" href="${fileHref("poster")}" download>Scarica anteprima</a>` : `<button class="button" type="button" data-linkedin-poster="${item.index}">Salva anteprima</button>`) : ""}
+        </div>
+        ${item.kind === "video" && !item.urls?.length ? '<small>Stream senza URL diretto: il video non è ancora scaricabile. L’anteprima, se presente, si può salvare separatamente.</small>' : ""}
+      </div>`;
+    }).join("") : '<p class="linkedin-empty">Nessun media rilevato per questo post. I video saranno identificati nei prossimi giri del LinkedIn Agent.</p>';
+    const drafts = (post.rewrites || []).map((draft) => `<div class="linkedin-draft"><small>${escapeHtml(formatReportDate(draft.created_at))} · ${escapeHtml(draft.model)}</small><textarea readonly>${escapeHtml(draft.draft)}</textarea><button class="button" type="button" data-linkedin-copy="${draft.rewrite_id}">Copia bozza</button> <button class="button" type="button" data-linkedin-send-to-publisher="${draft.rewrite_id}">Prepara pubblicazione</button></div>`).join("");
+    const promptValue = linkedinRewritePromptsByPost.get(postId) ?? linkedinRewriteUserPrompt(post.text, "");
+    reportLinkedInDetail.innerHTML = `<div class="linkedin-detail-heading"><div><span class="section-label">${escapeHtml(post.author || "Autore sconosciuto")}</span><h3>Analisi post</h3><small>${escapeHtml(post.published_text || "Età non nota")} · ${Number(latest.reactions || 0).toLocaleString("it-IT")} reazioni · ${Number(latest.comments || 0).toLocaleString("it-IT")} commenti · ${Number(latest.reposts || 0).toLocaleString("it-IT")} repost</small></div>${link ? `<a class="button" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">Apri post</a>` : '<span class="linkedin-no-link">Permalink non disponibile</span>'}</div>
+      <div class="linkedin-original-text">${escapeHtml(post.text || "Testo non disponibile")}</div>
+      <h4>Media</h4><div class="linkedin-media-grid">${mediaHtml}</div>
+      <div class="linkedin-rewrite"><h4>Riscrivi con OpenAI</h4><p>Questo è l’unico prompt inviato al modello: puoi modificarlo liberamente, inclusa la lingua. Nessuna istruzione di sistema aggiuntiva viene applicata.</p><details class="linkedin-prompt-inspection" open><summary>Prompt modificabile</summary><label for="linkedin-rewrite-prompt">Prompt completo</label><textarea id="linkedin-rewrite-prompt" maxlength="15000">${escapeHtml(promptValue)}</textarea></details><button class="button button--primary" type="button" data-linkedin-rewrite>Genera bozza</button><p id="linkedin-detail-status" role="status"></p>${drafts}</div>`;
+  } catch (error) {
+    reportLinkedInDetail.innerHTML = `<p class="linkedin-empty">Dettaglio non disponibile: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+let linkedinPublisherState = null;
+let linkedinPublicationDrafts = [];
+
+function renderLinkedInPublisher() {
+  const state = linkedinPublisherState || {};
+  linkedinPublisherAccount.textContent = state.ready
+    ? "Browser pronto. Il login LinkedIn verrà controllato all’avvio della pubblicazione."
+    : "Ambiente Chrome del Main Scraper non disponibile: impossibile pubblicare.";
+  linkedinPublisherDrafts.innerHTML = linkedinPublicationDrafts.length ? linkedinPublicationDrafts.map((draft) => {
+    const editable = draft.state === "draft";
+    return `<article class="linkedin-publication-draft" data-publication-draft-id="${draft.draft_id}">
+      <div class="linkedin-publication-draft__heading"><strong>Bozza #${draft.draft_id}</strong><span class="linkedin-publication-state linkedin-publication-state--${escapeHtml(draft.state)}">${escapeHtml(draft.state)}</span></div>
+      ${draft.has_attachment ? `<div class="linkedin-publication-image-wrap"><img class="linkedin-publication-image" src="/api/linkedin/publisher/drafts/${encodeURIComponent(draft.draft_id)}/attachment?v=${encodeURIComponent(draft.updated_at || "")}" alt="Immagine allegata alla bozza" loading="lazy"><small class="linkedin-publication-attachment">📷 Immagine originale allegata · ${escapeHtml(draft.attachment_name || "")}</small></div>` : draft.source_post_id ? `<small class="linkedin-publication-attachment">${escapeHtml(draft.image_error || "Recupero immagine originale del post…")}</small>` : ""}
+      <textarea maxlength="3000" ${editable ? "" : "readonly"}>${escapeHtml(draft.body)}</textarea>
+      ${draft.error ? `<small>${escapeHtml(draft.error)}</small>` : ""}
+      ${draft.post_url ? `<a href="${escapeHtml(draft.post_url)}" target="_blank" rel="noopener noreferrer">Apri post pubblicato</a>` : ""}
+      ${editable ? `<div class="linkedin-publisher-actions"><button class="button" type="button" data-publication-save>Salva modifiche</button><button class="button button--primary" type="button" data-publication-publish ${state.ready ? "" : "disabled"}>Rivedi e pubblica</button></div>` : ""}
+    </article>`;
+  }).join("") : '<p class="linkedin-empty">Nessuna bozza. Puoi scriverne una qui o partire da un post analizzato.</p>';
+}
+
+async function loadLinkedInPublisher() {
+  if (!runtimeClient.connected) return;
+  try {
+    const [state, drafts] = await Promise.all([runtimeClient.getLinkedInPublisherStatus(), runtimeClient.getLinkedInDrafts()]);
+    linkedinPublisherState = state;
+    linkedinPublicationDrafts = Array.isArray(drafts.drafts) ? drafts.drafts : [];
+    const missingSourceImages = linkedinPublicationDrafts.filter((draft) => draft.state === "draft" && draft.source_post_id && !draft.has_attachment).slice(0, 10);
+    for (const draft of missingSourceImages) {
+      try {
+        const updated = await runtimeClient.attachLinkedInDraftSourceImage(draft.draft_id);
+        linkedinPublicationDrafts = linkedinPublicationDrafts.map((item) => item.draft_id === updated.draft_id ? updated : item);
+      } catch (error) {
+        linkedinPublicationDrafts = linkedinPublicationDrafts.map((item) => item.draft_id === draft.draft_id
+          ? { ...item, image_error: `Immagine sorgente non recuperata: ${error.message}` }
+          : item);
+      }
+    }
+    renderLinkedInPublisher();
+    linkedinPublisherStatus.textContent = "";
+  } catch (error) {
+    linkedinPublisherStatus.textContent = `Publisher non disponibile: ${error.message}`;
+  }
+}
+
+function aiNewsSections(summary) {
+  const lines = String(summary || "").split(/\r?\n/);
+  const scriptIndex = lines.findIndex((line) => /script\s+(?:parlato|per\s+(?:video|reel|short))/i.test(line));
+  if (scriptIndex < 0) return { news: lines.join("\n").trim(), script: "" };
+  const sourceIndex = lines.findIndex((line, index) => index > scriptIndex && /fonti\s+(?:per\s+)?(?:lo\s+)?script/i.test(line));
+  return {
+    news: lines.slice(0, scriptIndex).join("\n").trim(),
+    script: lines.slice(scriptIndex + 1, sourceIndex < 0 ? undefined : sourceIndex).join("\n").replaceAll("**", "").trim(),
+  };
+}
+
+function aiNewsTextHtml(value) {
+  const linked = (text) => String(text || "").split(/(\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g).map((part) => {
+    const link = part.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+    return link ? `<a href="${escapeHtml(link[2])}" target="_blank" rel="noopener noreferrer">${escapeHtml(link[1])}</a>` : escapeHtml(part).replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+  }).join("");
+  return String(value || "").split(/\r?\n/).map((line) => {
+    const clean = line.trim();
+    if (!clean) return "";
+    if (/^#{1,4}\s/.test(clean)) return `<h4>${linked(clean.replace(/^#{1,4}\s+/, ""))}</h4>`;
+    if (/^[-*]\s/.test(clean)) return `<p class="ai-news-bullet">${linked(clean.replace(/^[-*]\s+/, ""))}</p>`;
+    return `<p>${linked(clean)}</p>`;
+  }).join("");
+}
+
+function renderAiNewsDashboard() {
+  const completed = aiNewsBriefings.filter((task) => task.state === "completed");
+  const withScript = completed.filter((task) => aiNewsSections(task.result?.summary).script);
+  reportAiNewsCount.textContent = String(completed.length);
+  reportAiNewsMetrics.innerHTML = [
+    ["Briefing disponibili", completed.length],
+    ["Script pronti", withScript.length],
+    ["Ultimo aggiornamento", completed[0] ? formatReportDate(completed[0].updated_at) : "—"],
+  ].map(([label, value]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></article>`).join("");
+  reportAiNewsArchive.innerHTML = aiNewsBriefings.length ? aiNewsBriefings.map((task) => `
+    <button type="button" class="ai-news-entry${task.id === selectedAiNewsId ? " ai-news-entry--active" : ""}" data-ai-news-id="${escapeHtml(task.id)}">
+      <span>${escapeHtml(task.title.replace(/^AI morning briefing\s*[—-]\s*/, ""))}</span>
+      <small>${escapeHtml(formatReportDate(task.updated_at))} · ${escapeHtml(task.state)}</small>
+    </button>`).join("") : '<p class="report-status">Nessun briefing salvato.</p>';
+  const selected = aiNewsBriefings.find((task) => task.id === selectedAiNewsId);
+  if (!selected) {
+    reportAiNewsDetail.innerHTML = '<p class="report-status">Seleziona un briefing.</p>';
+    return;
+  }
+  if (selected.state !== "completed") {
+    reportAiNewsDetail.innerHTML = `<h3>${escapeHtml(selected.title)}</h3><p class="report-status">Stato: ${escapeHtml(selected.state)}${selected.error ? ` · ${escapeHtml(selected.error)}` : ""}</p>`;
+    return;
+  }
+  const { news, script } = aiNewsSections(selected.result?.summary);
+  const links = [...new Set((String(selected.result?.summary || "").match(/https?:\/\/[^\s)]+/g) || []).map((url) => url.replace(/[.,;]+$/, "")))].slice(0, 12);
+  reportAiNewsDetail.innerHTML = `
+    <div class="report-card__heading"><div><span class="section-label">${escapeHtml(formatReportDate(selected.updated_at))}</span><h3>${escapeHtml(selected.title)}</h3></div></div>
+    <section class="ai-news-script"><div class="report-card__heading"><div><span class="section-label">Pronto da registrare</span><h3>Script · circa 1 minuto</h3></div><button class="button" type="button" data-ai-news-copy ${script ? "" : "disabled"}>Copia script</button></div><p>${escapeHtml(script || "Script non presente in questo briefing.")}</p></section>
+    <section class="ai-news-stories"><h3>Le notizie</h3>${aiNewsTextHtml(news)}</section>
+    <section class="ai-news-sources"><h3>Fonti citate</h3>${links.length ? links.map((url) => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`).join("") : "<p>Nessuna fonte citata.</p>"}</section>`;
+}
+
+async function loadAiNewsDashboard() {
+  if (!runtimeClient.connected) {
+    reportAiNewsDetail.innerHTML = '<p class="report-status">Avvia il runtime per leggere i briefing.</p>';
+    return;
+  }
+  reportAiNewsRefresh.disabled = true;
+  reportAiNewsDetail.innerHTML = '<p class="report-status">Caricamento notizie…</p>';
+  try {
+    const tasks = await runtimeClient.listTasks();
+    aiNewsBriefings = tasks.filter((task) => task.requested_agent_id === "ai-news-navigator" && /^AI morning briefing\s*[—-]/.test(task.title || ""))
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    if (!aiNewsBriefings.some((task) => task.id === selectedAiNewsId)) selectedAiNewsId = aiNewsBriefings[0]?.id || "";
+    renderAiNewsDashboard();
+  } catch (error) {
+    reportAiNewsDetail.innerHTML = `<p class="report-status">Impossibile caricare le notizie: ${escapeHtml(error.message)}</p>`;
+  } finally {
+    reportAiNewsRefresh.disabled = false;
+  }
 }
 
 function renderProjectOutputSummary(job) {
@@ -6816,13 +7559,28 @@ function openAgentActions(agentId) {
   agentActionStatus.textContent = agent.runtime.status;
   workOptions.hidden = true;
   const browsingAgent = isBrowsingAgent(agent);
+  const runPodAgent = isRunPodAgent(agent);
+  const creativeAgent = isCreativeComfyUiAgent(agent);
+  const appiumAgent = isAppiumAgent(agent);
+  setCreativeComfyUiView(creativeAgent);
   browserOptions.hidden = !browsingAgent;
+  runPodOptions.hidden = !(runPodAgent || creativeAgent);
+  appiumOptions.hidden = !appiumAgent;
   if (!agentActionDialog.open) {
     agentActionDialog.showModal();
   }
   if (browsingAgent) {
     void refreshBrowserSessions(selectedBrowserSessionId || "");
   }
+  if (runPodAgent || creativeAgent) {
+    void loadRunPodAgentConfiguration();
+    startRunPodLiveStatusRefresh();
+    startRunPodJobPolling();
+  } else {
+    stopRunPodLiveStatusRefresh();
+  }
+  if (appiumAgent) void loadAppiumAgentConfiguration();
+  else stopAppiumScreenPolling("Apri l’agente Mobile Automation per vedere lo schermo del telefono.");
 }
 
 function isBrowsingAgent(agent) {
@@ -6832,6 +7590,402 @@ function isBrowsingAgent(agent) {
   const toolsets = Array.isArray(agent.toolsets) ? agent.toolsets : [];
   const capabilities = Array.isArray(agent.capabilities) ? agent.capabilities : [];
   return agent.role === "browser" || toolsets.includes("browser") || capabilities.includes("browser");
+}
+
+function isRunPodAgent(agent) {
+  return agent?.id === "runpod-manager" || agent?.role === "media-infrastructure";
+}
+
+function isCreativeComfyUiAgent(agent) {
+  return agent?.id === "comfyui-creative-director" || agent?.role === "media-creative";
+}
+
+function isAppiumAgent(agent) {
+  return agent?.id === "mobile-automation" || agent?.role === "mobile-automation";
+}
+
+function renderAppiumStatus(status) {
+  const connected = Boolean(status?.server_connected);
+  if (appiumServerState) appiumServerState.textContent = connected ? "Connected" : status?.enabled ? "Unavailable" : "Disabled";
+  if (appiumServerDetail) appiumServerDetail.textContent = status?.server_error || `Appium ${status?.server_version || "2"} · ${status?.server_url || ""}`;
+  if (appiumServerCard) appiumServerCard.classList.toggle("runpod-card--running", connected);
+  if (appiumServerCard) appiumServerCard.classList.toggle("runpod-card--error", Boolean(status?.enabled && !connected));
+  const count = Number(status?.device_count || 0);
+  if (appiumDeviceCount) appiumDeviceCount.textContent = `${count} ready`;
+  if (appiumAdbDetail) {
+    const androidCount = Number(status?.android_device_count || 0);
+    const iosCount = Number(status?.ios_device_count || 0);
+    const androidStatus = status?.adb_error || `${androidCount} Android via ADB`;
+    appiumAdbDetail.textContent = `${androidStatus} · ${iosCount} iPhone/iPad or simulator · ${status?.ios_discovery || "iOS discovery unavailable"}`;
+  }
+  if (appiumAdbCard) appiumAdbCard.classList.toggle("runpod-card--running", count > 0);
+  if (appiumAdbCard) appiumAdbCard.classList.toggle("runpod-card--error", Boolean(status?.adb_error));
+  if (appiumTargetDevice) {
+    const previousDevice = appiumTargetDevice.value;
+    appiumTargetDevice.replaceChildren();
+    const prompt = document.createElement("option");
+    prompt.value = "";
+    prompt.textContent = "Seleziona un iPhone collegato";
+    appiumTargetDevice.append(prompt);
+    for (const device of Array.isArray(status?.devices) ? status.devices : []) {
+      if (device.platform !== "iOS" || device.state !== "device") continue;
+      const option = document.createElement("option");
+      option.value = device.id;
+      option.textContent = `${device.model || "iPhone/iPad"} · ${device.id}`;
+      appiumTargetDevice.append(option);
+    }
+    appiumTargetDevice.value = previousDevice && Array.from(appiumTargetDevice.options).some((option) => option.value === previousDevice)
+      ? previousDevice
+      : (status?.devices || []).find((device) => device.platform === "iOS" && device.state === "device")?.id || "";
+  }
+  if (appiumSessionState) {
+    appiumSessionState.textContent = status?.active_session
+      ? `Sessione attiva · ${status.active_app_bundle_id || "app non specificata"}`
+      : "Nessuna sessione di automazione aperta.";
+  }
+  if (appiumEndSessionButton) appiumEndSessionButton.disabled = !status?.active_session;
+  if (status?.active_session) startAppiumScreenPolling();
+  else stopAppiumScreenPolling("Apri un’app per vedere qui lo schermo del telefono.");
+  if (!appiumDeviceList) return;
+  appiumDeviceList.replaceChildren();
+  const devices = Array.isArray(status?.devices) ? status.devices : [];
+  if (!devices.length) {
+    const empty = document.createElement("small");
+    empty.textContent = status?.adb_available ? "No Android devices detected by ADB." : "Connect an Android device or configure ADB to see the inventory.";
+    appiumDeviceList.append(empty);
+    return;
+  }
+  for (const device of devices) {
+    const row = document.createElement("div");
+    row.className = "mobile-device";
+    const label = document.createElement("strong");
+    label.textContent = `${device.model || device.device || "Mobile device"}${device.platform ? ` · ${device.platform}` : ""}`;
+    const id = document.createElement("small");
+    id.textContent = device.id || "Unknown device ID";
+    const state = document.createElement("span");
+    state.className = `mobile-device__state ${device.state === "device" ? "mobile-device__state--ready" : "mobile-device__state--error"}`;
+    state.textContent = device.state || "unknown";
+    row.append(label, state, id);
+    appiumDeviceList.append(row);
+  }
+}
+
+async function refreshAppiumStatus() {
+  if (appiumActionStatus) appiumActionStatus.textContent = "Checking Appium and querying ADB…";
+  if (appiumRefreshButton) appiumRefreshButton.disabled = true;
+  try {
+    const status = await runtimeClient.getAppiumStatus();
+    renderAppiumStatus(status);
+    if (appiumActionStatus) appiumActionStatus.textContent = "Stato aggiornato. Scegli un iPhone per elencare e avviare un’app installata.";
+    return status;
+  } catch (error) {
+    if (appiumActionStatus) appiumActionStatus.textContent = error.message;
+    runtimeClient.logClient("error", error.message, { operation: "appium.refresh" });
+    throw error;
+  } finally {
+    if (appiumRefreshButton) appiumRefreshButton.disabled = false;
+  }
+}
+
+async function startAppiumServer() {
+  if (appiumStartButton) appiumStartButton.disabled = true;
+  if (appiumActionStatus) appiumActionStatus.textContent = "Starting the project-local Appium server…";
+  try {
+    const result = await runtimeClient.startAppium();
+    if (appiumActionStatus) appiumActionStatus.textContent = result.already_running ? "Appium is already running; checking device inventory…" : `Appium starting (PID ${result.pid ?? "n/a"}); waiting for readiness…`;
+    let status = result.status;
+    const deadline = Date.now() + 25_000;
+    while (!status?.server_connected && Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      status = await runtimeClient.getAppiumStatus();
+    }
+    renderAppiumStatus(status);
+    if (appiumActionStatus) appiumActionStatus.textContent = status?.server_connected
+      ? `Appium ${status.server_version || "2/3"} pronto · ${status.ios_device_count || 0} iPhone/iPad rilevati.`
+      : `Appium non ha risposto entro 25 secondi. Controlla data/appium.log. ${status?.server_error || ""}`;
+  } catch (error) {
+    if (appiumActionStatus) appiumActionStatus.textContent = error.message;
+    runtimeClient.logClient("error", error.message, { operation: "appium.start" });
+  } finally {
+    if (appiumStartButton) appiumStartButton.disabled = false;
+  }
+}
+
+async function stopAppiumServer() {
+  if (!window.confirm("Fermare il server Appium avviato da questa app?")) return;
+  if (appiumStopButton) appiumStopButton.disabled = true;
+  if (appiumActionStatus) appiumActionStatus.textContent = "Stopping Appium…";
+  try {
+    const result = await runtimeClient.stopAppium();
+    renderAppiumStatus(result.status);
+    if (appiumActionStatus) appiumActionStatus.textContent = result.stopped ? "Appium stopped." : "No Appium process started by this app was running.";
+  } catch (error) {
+    if (appiumActionStatus) appiumActionStatus.textContent = error.message;
+    runtimeClient.logClient("error", error.message, { operation: "appium.stop" });
+  } finally {
+    if (appiumStopButton) appiumStopButton.disabled = false;
+  }
+}
+
+async function loadAppiumAgentConfiguration() {
+  try {
+    const settings = await runtimeClient.getSystemSettings();
+    const appium = settings.appium ?? {};
+    if (appiumEnabledSelect) appiumEnabledSelect.value = String(Boolean(appium.enabled));
+    if (appiumServerUrlInput) appiumServerUrlInput.value = appium.server_url || "http://127.0.0.1:4723";
+    if (appiumAdbPathInput) appiumAdbPathInput.value = appium.adb_path || "adb";
+    if (appiumIosToolInput) appiumIosToolInput.value = appium.ios_device_tool || "idevice_id";
+    await refreshAppiumStatus();
+  } catch (error) {
+    if (appiumActionStatus) appiumActionStatus.textContent = error.message;
+    runtimeClient.logClient("error", error.message, { operation: "appium.load-settings" });
+  }
+}
+
+async function listAppiumInstalledApps() {
+  const deviceId = appiumTargetDevice?.value || "";
+  if (!deviceId) {
+    if (appiumActionStatus) appiumActionStatus.textContent = "Collega e seleziona un iPhone prima di cercare le app.";
+    return;
+  }
+  if (appiumListAppsButton) appiumListAppsButton.disabled = true;
+  if (appiumActionStatus) appiumActionStatus.textContent = "Avvio XCUITest/WebDriverAgent e lettura delle app installate. Il primo avvio può richiedere un po’…";
+  try {
+    const result = await runtimeClient.listAppiumApps(deviceId);
+    const apps = Array.isArray(result.apps) ? result.apps : [];
+    appiumInstalledApps?.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = apps.length ? "Seleziona un’app" : "Nessuna app utente trovata";
+    appiumInstalledApps?.append(placeholder);
+    for (const app of apps) {
+      const option = document.createElement("option");
+      option.value = app.bundle_id;
+      option.textContent = `${app.name}${app.version ? ` · ${app.version}` : ""} (${app.bundle_id})`;
+      appiumInstalledApps?.append(option);
+    }
+    const vinted = apps.find((app) => /vinted/i.test(`${app.name} ${app.bundle_id}`));
+    if (vinted && appiumInstalledApps) appiumInstalledApps.value = vinted.bundle_id;
+    if (appiumActionStatus) appiumActionStatus.textContent = vinted
+      ? `Trovata Vinted (${vinted.bundle_id}). Premi “Apri app selezionata” per avviarla.`
+      : `${apps.length} app installate elencate. Scegli quella da aprire.`;
+  } catch (error) {
+    if (appiumActionStatus) appiumActionStatus.textContent = `Lettura app non riuscita: ${error.message}. Se è il primo uso, controlla firma WebDriverAgent/Xcode e “Modalità sviluppatore” sull’iPhone.`;
+    runtimeClient.logClient("error", error.message, { operation: "appium.list-apps", deviceId });
+  } finally {
+    if (appiumListAppsButton) appiumListAppsButton.disabled = false;
+  }
+}
+
+async function launchAppiumSelectedApp() {
+  const deviceId = appiumTargetDevice?.value || "";
+  const bundleId = appiumInstalledApps?.value || "";
+  if (!deviceId || !bundleId) {
+    if (appiumActionStatus) appiumActionStatus.textContent = "Seleziona prima un iPhone e un’app installata.";
+    return;
+  }
+  if (appiumLaunchAppButton) appiumLaunchAppButton.disabled = true;
+  if (appiumActionStatus) appiumActionStatus.textContent = `Apertura di ${bundleId}…`;
+  try {
+    const result = await runtimeClient.launchAppiumApp(deviceId, bundleId);
+    if (appiumActionStatus) appiumActionStatus.textContent = `App avviata sul dispositivo. Sessione Appium ${result.session_id} mantenuta aperta.`;
+    await refreshAppiumStatus();
+  } catch (error) {
+    if (appiumActionStatus) appiumActionStatus.textContent = `Apertura non riuscita: ${error.message}. Al primo avvio può essere necessario firmare WebDriverAgent con Xcode.`;
+    runtimeClient.logClient("error", error.message, { operation: "appium.launch-app", deviceId, bundleId });
+  } finally {
+    if (appiumLaunchAppButton) appiumLaunchAppButton.disabled = false;
+  }
+}
+
+async function endAppiumDeviceSession() {
+  if (!window.confirm("Terminare la sessione di automazione Appium? L’app potrebbe restare aperta sul telefono.")) return;
+  if (appiumEndSessionButton) appiumEndSessionButton.disabled = true;
+  try {
+    const result = await runtimeClient.endAppiumSession();
+    if (appiumActionStatus) appiumActionStatus.textContent = result.closed ? "Sessione Appium terminata." : "Non c’era una sessione Appium attiva.";
+    await refreshAppiumStatus();
+  } catch (error) {
+    if (appiumActionStatus) appiumActionStatus.textContent = error.message;
+    runtimeClient.logClient("error", error.message, { operation: "appium.end-session" });
+  } finally {
+    if (appiumEndSessionButton) appiumEndSessionButton.disabled = false;
+  }
+}
+
+function startAppiumScreenPolling() {
+  if (appiumScreenTimer) return;
+  if (appiumScreenState) appiumScreenState.textContent = "Anteprima quasi in tempo reale · aggiornamento ogni 1,5 secondi.";
+  void updateAppiumScreenPreview();
+  appiumScreenTimer = window.setInterval(() => { void updateAppiumScreenPreview(); }, 1500);
+}
+
+function stopAppiumScreenPolling(message = "Anteprima in pausa.") {
+  if (appiumScreenTimer) window.clearInterval(appiumScreenTimer);
+  appiumScreenTimer = null;
+  if (appiumScreenState) appiumScreenState.textContent = message;
+}
+
+async function updateAppiumScreenPreview() {
+  if (appiumScreenRequestPending || appiumOptions?.hidden || !agentActionDialog?.open) return;
+  appiumScreenRequestPending = true;
+  try {
+    const blob = await runtimeClient.getAppiumScreenshot();
+    if (!appiumScreenPreview) return;
+    const nextUrl = URL.createObjectURL(blob);
+    const oldUrl = appiumScreenObjectUrl;
+    appiumScreenObjectUrl = nextUrl;
+    appiumScreenPreview.src = nextUrl;
+    appiumScreenPreview.hidden = false;
+    if (appiumScreenPlaceholder) appiumScreenPlaceholder.hidden = true;
+    if (oldUrl) URL.revokeObjectURL(oldUrl);
+    if (appiumScreenState) appiumScreenState.textContent = `Schermo aggiornato · ${new Date().toLocaleTimeString()}`;
+  } catch (error) {
+    if (appiumScreenState) appiumScreenState.textContent = `Anteprima non disponibile: ${error.message}`;
+  } finally {
+    appiumScreenRequestPending = false;
+  }
+}
+
+function setCreativeComfyUiView(enabled) {
+  agentActionDialog?.classList.toggle("agent-dialog--creative-comfyui", Boolean(enabled));
+  const heading = document.querySelector("#runpod-options-heading");
+  if (heading) heading.textContent = enabled ? "ComfyUI Creative Director" : "RunPod Manager";
+  const hideClosest = (selector, closest = "label, .runpod-dashboard, .runpod-batch-panel, .form-grid__wide") => {
+    const element = document.querySelector(selector);
+    const container = element?.closest(closest);
+    if (container) container.hidden = Boolean(enabled);
+  };
+  // Infrastructure belongs to RunPod Manager. The Creative Director receives
+  // only the creative queue, workflows, media and completed output.
+  hideClosest("#runpod-dashboard");
+  [
+    "#runpod-network-volume-id", "#runpod-data-center-id", "#runpod-template-id", "#runpod-container-image",
+    "#runpod-preferred-gpu", "#runpod-max-hourly-cost", "#runpod-volume-mount-path", "#runpod-comfyui-port",
+    "#runpod-idle-action", "#runpod-pod-name", "#runpod-pod-id", "#runpod-pod-picker", "#runpod-workflow-json",
+    "#runpod-workflow-file",
+  ].forEach((selector) => hideClosest(selector));
+  ["#runpod-save-deployment", "#runpod-load-workflow"].forEach((selector) => {
+    const button = document.querySelector(selector);
+    if (button?.parentElement) button.parentElement.hidden = Boolean(enabled);
+  });
+  const watcher = document.querySelector("#runpod-gpu-watch-status")?.closest(".runpod-batch-panel");
+  if (watcher) watcher.hidden = Boolean(enabled);
+  const controls = document.querySelector("#runpod-refresh-pods")?.closest(".form-grid__wide");
+  if (controls) {
+    const infrastructureControls = controls.querySelector(".dialog-actions");
+    const status = controls.querySelector("#runpod-action-status");
+    if (infrastructureControls) infrastructureControls.hidden = Boolean(enabled);
+    if (status) status.hidden = Boolean(enabled);
+  }
+}
+
+function setRunPodWorkflowPresetOptions(workflows) {
+  if (!runPodWorkflowPresetSelect) return;
+  const current = String(runPodWorkflowPresetSelect.value ?? "");
+  runPodWorkflowPresetSelect.replaceChildren();
+  const initial = document.createElement("option");
+  initial.value = "";
+  initial.textContent = "Choose a saved workflow";
+  runPodWorkflowPresetSelect.append(initial);
+  for (const workflow of Array.isArray(workflows) ? workflows : []) {
+    const option = document.createElement("option");
+    option.value = String(workflow?.id ?? "");
+    option.disabled = !workflow?.available;
+    option.dataset.inputKind = String(workflow?.input_kind ?? "");
+    option.dataset.outputKind = String(workflow?.output_kind ?? "");
+    option.dataset.minVram = String(workflow?.min_vram_gb ?? "");
+    option.dataset.creativePresets = JSON.stringify(Array.isArray(workflow?.creative_presets) ? workflow.creative_presets : []);
+    option.textContent = `${String(workflow?.name ?? workflow?.id ?? "Workflow")}${workflow?.available ? "" : " (file missing)"}`;
+    option.title = String(workflow?.description ?? "");
+    runPodWorkflowPresetSelect.append(option);
+  }
+  if (current && Array.from(runPodWorkflowPresetSelect.options).some((option) => option.value === current && !option.disabled)) {
+    runPodWorkflowPresetSelect.value = current;
+  }
+}
+
+async function loadRunPodAgentConfiguration() {
+  try {
+    const [settings, status, dataCenterResponse, volumeResponse, workflowResponse, promptPresetResponse] = await Promise.all([
+      runtimeClient.getSystemSettings(),
+      runtimeClient.getRunPodStatus(),
+      runtimeClient.listRunPodDataCenters(),
+      runtimeClient.listRunPodNetworkVolumes(),
+      runtimeClient.listRunPodWorkflows(),
+      runtimeClient.listComfyUiPromptPresets(),
+    ]);
+    const runpod = settings.runpod ?? {};
+    setRunPodDataCenterOptions(dataCenterResponse?.datacenters, runpod.data_center_id ?? "");
+    setRunPodVolumeOptions(volumeResponse?.network_volumes, runpod.network_volume_id ?? "");
+    applySelectedVolumeDataCenter();
+    if (runPodTemplateInput) runPodTemplateInput.value = runpod.template_id ?? "";
+    if (runPodContainerImageInput) runPodContainerImageInput.value = runpod.container_image ?? "";
+    if (runPodMaxHourlyCostInput) runPodMaxHourlyCostInput.value = runpod.max_hourly_cost ?? 0;
+    if (runPodVolumeMountInput) runPodVolumeMountInput.value = runpod.volume_mount_path ?? "/workspace";
+    if (runPodComfyUiPortInput) runPodComfyUiPortInput.value = runpod.comfyui_port ?? 8188;
+    if (runPodIdleActionSelect) runPodIdleActionSelect.value = runpod.idle_action ?? "stop";
+    setRunPodGpuOptions([], runpod.preferred_gpu ?? "", runPodGpuSelect);
+    setRunPodPodOptions(status?.pods, selectedRunPodId());
+    setRunPodWorkflowPresetOptions(workflowResponse?.workflows);
+    if (creativePromptPreset) {
+      creativePromptPresets = Array.isArray(promptPresetResponse?.presets) ? promptPresetResponse.presets : [];
+      creativePromptPreset.replaceChildren();
+      for (const preset of creativePromptPresets) {
+        const option = document.createElement("option"); option.value = String(preset?.id ?? ""); option.textContent = String(preset?.name ?? preset?.id ?? "Preset"); option.dataset.prompt = String(preset?.prompt ?? ""); creativePromptPreset.append(option);
+      }
+      if (creativePromptPreset.options.length && creativePromptText && !creativePromptText.value.trim()) creativePromptText.value = creativePromptPreset.options[0].dataset.prompt || "";
+    }
+    const volume = (Array.isArray(volumeResponse?.network_volumes) ? volumeResponse.network_volumes : [])
+      .find((item) => String(item?.id ?? "") === String(runpod.network_volume_id ?? ""));
+    const volumeDataCenter = applySelectedVolumeDataCenter();
+    let gpus = [];
+    if (volumeDataCenter) {
+      const gpuResponse = await runtimeClient.listRunPodGpus(volumeDataCenter);
+      gpus = Array.isArray(gpuResponse?.gpus) ? gpuResponse.gpus : [];
+      setRunPodGpuOptions(gpus, runpod.preferred_gpu ?? "", runPodGpuSelect);
+    }
+    // Opening the RunPod agent is itself a live availability check; no manual
+    // button press is required to see whether the tracked GPUs appeared.
+    let gpuWatch = null;
+    if (volumeDataCenter) {
+      try {
+        gpuWatch = await runtimeClient.checkRunPodGpuWatch();
+        renderRunPodGpuWatch(gpuWatch);
+      } catch (error) {
+        if (runPodGpuWatchStatus) runPodGpuWatchStatus.textContent = `Automatic GPU check failed: ${error.message}`;
+      }
+    }
+    runPodDashboardSnapshot = { settings, volume, gpus, gpuWatch };
+    renderRunPodDashboard({ settings, status, volume, gpus });
+    renderRunPodActionResult("Ready", { message: "Volume, regional GPU availability and Pod state refreshed." });
+  } catch (error) {
+    renderRunPodActionResult("RunPod configuration failed", { error: error.message });
+  }
+}
+
+async function refreshRunPodLiveStatus() {
+  if (!agentActionDialog?.open || runPodOptions?.hidden) return;
+  try {
+    if (!runtimeClient.connected) await runtimeClient.connect();
+    const status = await runtimeClient.getRunPodStatus();
+    setRunPodPodOptions(status?.pods, selectedRunPodId());
+    renderRunPodDashboard({ ...runPodDashboardSnapshot, status });
+  } catch {
+    if (runPodCardManagerDetail) runPodCardManagerDetail.textContent = "Runtime connection lost; retrying…";
+    setRunPodCardState(runPodCardManager, "error");
+  }
+}
+
+function startRunPodLiveStatusRefresh() {
+  if (runPodStatusRefreshTimer) clearInterval(runPodStatusRefreshTimer);
+  void refreshRunPodLiveStatus();
+  runPodStatusRefreshTimer = window.setInterval(() => void refreshRunPodLiveStatus(), 10_000);
+}
+
+function stopRunPodLiveStatusRefresh() {
+  if (runPodStatusRefreshTimer) clearInterval(runPodStatusRefreshTimer);
+  runPodStatusRefreshTimer = null;
 }
 
 function browserSessionLabel(session) {
@@ -6996,6 +8150,12 @@ async function connectRuntime() {
     }
     await refreshProjectJobToasts();
     await refreshProjectJobHistory(false);
+    await ensureAutoMonitoringJobs();
+    if (!monitoringDashboardRefreshTimer) {
+      monitoringDashboardRefreshTimer = window.setInterval(() => {
+        if (runtimeClient.connected) void refreshMonitoringDashboard();
+      }, 15000);
+    }
   } catch (error) {
     setRuntimeConnection(false);
     setBootMessage(error.message);
@@ -7042,6 +8202,132 @@ function systemModelInputField() {
   return systemSettingsField("model");
 }
 
+function setRunPodGpuOptions(gpus, selectedGpu = "", picker = runPodGpuSelect) {
+  if (!picker) return;
+  const selected = String(selectedGpu ?? "").trim();
+  const list = Array.isArray(gpus) ? gpus : [];
+  const known = new Set(list.map((gpu) => String(gpu?.id ?? "")));
+  const options = ["<option value=\"\">Choose a GPU</option>"];
+  if (selected && !known.has(selected)) {
+    options.push(`<option value="${escapeHtml(selected)}">${escapeHtml(selected)} (saved selection)</option>`);
+  }
+  for (const gpu of list) {
+    const id = String(gpu?.id ?? "").trim();
+    if (!id) continue;
+    const name = String(gpu?.name ?? id);
+    const memory = Number(gpu?.memory_gb ?? 0);
+    const secure = Number(gpu?.secure_price ?? 0);
+    const community = Number(gpu?.community_price ?? 0);
+    const stock = String(gpu?.stock_status ?? "").trim();
+    const price = [secure > 0 ? `secure $${secure}/h` : "", community > 0 ? `community $${community}/h` : ""].filter(Boolean).join(" · ");
+    const label = `${name} · ${memory} GB${stock ? ` · ${stock} stock` : ""}${price ? ` · ${price}` : ""}`;
+    options.push(`<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`);
+  }
+  picker.innerHTML = options.join("");
+  picker.value = selected;
+}
+
+function setRunPodPodOptions(pods, selectedPodId = "") {
+  if (!runPodPicker) return;
+  const list = Array.isArray(pods) ? pods : [];
+  const runningPod = list.find((pod) => String(pod?.status ?? "").toUpperCase() === "RUNNING");
+  const selected = String(selectedPodId ?? "").trim() || String(runningPod?.id ?? "").trim();
+  const options = ["<option value=\"\">Choose an existing Pod</option>"];
+  for (const pod of list) {
+    const id = String(pod?.id ?? "").trim();
+    if (!id) continue;
+    const label = [pod?.name || id, pod?.status || "unknown", id].filter(Boolean).join(" · ");
+    options.push(`<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`);
+  }
+  runPodPicker.innerHTML = options.join("");
+  runPodPicker.value = selected;
+  if (selected && runPodIdInput) runPodIdInput.value = selected;
+}
+
+function setRunPodDataCenterOptions(datacenters, selectedDataCenter = "") {
+  if (!runPodDataCenterInput) return;
+  const selected = String(selectedDataCenter ?? "").trim();
+  const list = Array.isArray(datacenters) ? datacenters : [];
+  const known = new Set(list.map((dataCenter) => String(dataCenter?.id ?? "")));
+  const options = ["<option value=\"\">Choose a data center</option>"];
+  if (selected && !known.has(selected)) {
+    options.push(`<option value="${escapeHtml(selected)}">${escapeHtml(selected)} (saved, unavailable)</option>`);
+  }
+  for (const dataCenter of list) {
+    const id = String(dataCenter?.id ?? "").trim();
+    if (!id) continue;
+    const name = String(dataCenter?.name ?? id);
+    const location = String(dataCenter?.location ?? "").trim();
+    const count = Array.isArray(dataCenter?.gpuAvailability) ? dataCenter.gpuAvailability.length : 0;
+    options.push(`<option value="${escapeHtml(id)}">${escapeHtml(`${name}${location ? ` · ${location}` : ""} · ${count} GPU types`)}</option>`);
+  }
+  runPodDataCenterInput.innerHTML = options.join("");
+  runPodDataCenterInput.value = selected;
+}
+
+function setRunPodVolumeOptions(volumes, selectedVolumeId = "") {
+  if (!runPodNetworkVolumeInput) return;
+  const selected = String(selectedVolumeId ?? "").trim();
+  const list = Array.isArray(volumes) ? volumes : [];
+  const known = new Set(list.map((volume) => String(volume?.id ?? "")));
+  runPodVolumeDataCenters.clear();
+  const options = ["<option value=\"\">Choose a Network Volume</option>"];
+  if (selected && !known.has(selected)) {
+    options.push(`<option value="${escapeHtml(selected)}">${escapeHtml(selected)} (saved, unavailable)</option>`);
+  }
+  for (const volume of list) {
+    const id = String(volume?.id ?? "").trim();
+    if (!id) continue;
+    const dataCenter = String(volume?.dataCenter ?? "").trim();
+    if (dataCenter) runPodVolumeDataCenters.set(id, dataCenter);
+    const label = [volume?.name || id, dataCenter || "unknown region", volume?.type || "Network Volume"].filter(Boolean).join(" · ");
+    options.push(`<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`);
+  }
+  runPodNetworkVolumeInput.innerHTML = options.join("");
+  runPodNetworkVolumeInput.value = selected;
+}
+
+function applySelectedVolumeDataCenter() {
+  const volumeId = String(runPodNetworkVolumeInput?.value ?? "").trim();
+  const dataCenter = runPodVolumeDataCenters.get(volumeId);
+  if (dataCenter && runPodDataCenterInput) {
+    if (!Array.from(runPodDataCenterInput.options).some((option) => option.value === dataCenter)) {
+      const option = document.createElement("option");
+      option.value = dataCenter;
+      option.textContent = `${dataCenter} · Network Volume region`;
+      runPodDataCenterInput.append(option);
+    }
+    runPodDataCenterInput.value = dataCenter;
+  }
+  return dataCenter || "";
+}
+
+function setRunPodCardState(element, state) {
+  const card = element?.closest(".runpod-card");
+  if (!card) return;
+  card.classList.remove("runpod-card--running", "runpod-card--stopped", "runpod-card--error");
+  if (state) card.classList.add(`runpod-card--${state}`);
+}
+
+function renderRunPodDashboard({ settings, status, volume, gpus }) {
+  const runpod = settings?.runpod ?? {};
+  const pods = Array.isArray(status?.pods) ? status.pods : [];
+  const running = pods.filter((pod) => String(pod?.status ?? "").toUpperCase() === "RUNNING");
+  const selectedGpu = String(runpod.preferred_gpu ?? runPodGpuSelect?.value ?? "");
+  if (runPodCardManager) runPodCardManager.textContent = status?.configured ? "Configured" : "Needs configuration";
+  if (runPodCardManagerDetail) runPodCardManagerDetail.textContent = status?.error || "API key and deployment settings are ready.";
+  setRunPodCardState(runPodCardManager, status?.configured && !status?.error ? "running" : "error");
+  if (runPodCardVolume) runPodCardVolume.textContent = volume?.name || runpod.network_volume_id || "No volume selected";
+  if (runPodCardVolumeDetail) runPodCardVolumeDetail.textContent = volume?.dataCenter ? `Region ${volume.dataCenter}` : "Choose a Network Volume.";
+  setRunPodCardState(runPodCardVolume, volume?.dataCenter ? "running" : "error");
+  if (runPodCardGpus) runPodCardGpus.textContent = `${Array.isArray(gpus) ? gpus.length : 0} available`;
+  if (runPodCardGpusDetail) runPodCardGpusDetail.textContent = selectedGpu ? `Selected: ${selectedGpu}` : "Open the picker to refresh availability.";
+  setRunPodCardState(runPodCardGpus, Array.isArray(gpus) && gpus.length ? "running" : "stopped");
+  if (runPodCardPods) runPodCardPods.textContent = running.length ? `${running.length} running` : pods.length ? `${pods.length} stopped` : "No Pods";
+  if (runPodCardPodsDetail) runPodCardPodsDetail.textContent = pods.length ? pods.map((pod) => `${pod.name || pod.id}: ${pod.status || "unknown"}`).join(" · ") : "Create a Pod when ready.";
+  setRunPodCardState(runPodCardPods, running.length ? "running" : pods.length ? "stopped" : "");
+}
+
 function renderSecretStatus(status) {
   projectKeyStatus.textContent = `Progetto: ${status.project_configured ? "configurata" : "non configurata"}`;
   agentKeyStatus.textContent = `Agente: ${status.agent_configured ? "configurata" : "non configurata"}`;
@@ -7050,15 +8336,17 @@ function renderSecretStatus(status) {
 }
 
 function renderSystemSecretStatus(status) {
-  if (!systemProjectKeyStatus || !systemDiscordBotStatus || !systemAccordiAdminStatus) {
+  if (!systemProjectKeyStatus || !systemDiscordBotStatus || !systemAccordiAdminStatus || !systemRunPodStatus) {
     return;
   }
   systemProjectKeyStatus.textContent = `Project: ${status.project_configured ? "configured" : "not configured"}`;
   systemDiscordBotStatus.textContent = `Discord bot token: ${status.discord_bot_configured ? "configured" : "not configured"}`;
   systemAccordiAdminStatus.textContent = `Accordi admin token: ${status.accordi_admin_configured ? "configured" : "not configured"}`;
+  systemRunPodStatus.textContent = `RunPod API key: ${status.runpod_configured ? "configured" : "not configured"}`;
   systemProjectKeyStatus.classList.toggle("secret-status--configured", status.project_configured);
   systemDiscordBotStatus.classList.toggle("secret-status--configured", status.discord_bot_configured);
   systemAccordiAdminStatus.classList.toggle("secret-status--configured", status.accordi_admin_configured);
+  systemRunPodStatus.classList.toggle("secret-status--configured", status.runpod_configured);
 }
 
 function splitNumericIds(value) {
@@ -7269,9 +8557,10 @@ async function openSystemSettings() {
   systemSettingsError.textContent = "";
   systemSettingsDialog.showModal();
   try {
-    const [settings, status] = await Promise.all([
+    const [settings, status, runpodStatus] = await Promise.all([
       runtimeClient.getSystemSettings(),
       runtimeClient.getSecretStatus(""),
+      runtimeClient.getRunPodStatus(),
     ]);
     systemSettingsField("provider").value = settings.model.provider;
     systemSettingsField("model").value = settings.model.model;
@@ -7292,10 +8581,27 @@ async function openSystemSettings() {
     systemSettingsField("discord_allowed_channel_ids").value = (settings.discord?.allowed_channel_ids ?? []).join(", ");
     systemSettingsField("discord_bot_token").value = "";
     systemSettingsField("accordi_admin_token").value = "";
+    systemSettingsField("runpod_enabled").value = String(Boolean(settings.runpod?.enabled));
+    systemSettingsField("runpod_api_key").value = "";
+    systemSettingsField("runpod_network_volume_id").value = settings.runpod?.network_volume_id ?? "";
+    systemSettingsField("runpod_data_center_id").value = settings.runpod?.data_center_id ?? "";
+    systemSettingsField("runpod_template_id").value = settings.runpod?.template_id ?? "";
+    systemSettingsField("runpod_container_image").value = settings.runpod?.container_image ?? "";
+    setRunPodGpuOptions([], settings.runpod?.preferred_gpu ?? "", systemSettingsField("runpod_preferred_gpu"));
+    systemSettingsField("runpod_max_hourly_cost").value = settings.runpod?.max_hourly_cost ?? 0;
+    systemSettingsField("runpod_volume_mount_path").value = settings.runpod?.volume_mount_path ?? "/workspace";
+    systemSettingsField("runpod_comfyui_port").value = settings.runpod?.comfyui_port ?? 8188;
+    systemSettingsField("runpod_idle_action").value = settings.runpod?.idle_action ?? "stop";
     systemSettingsField("discord_error_notifications").value = String(Boolean(settings.diagnostics?.discord_error_notifications));
     systemSettingsField("discord_webhook_url").value = settings.diagnostics?.discord_webhook_url ?? "";
     updateSystemProviderControls(false);
     renderSystemSecretStatus(status);
+    if (systemRunPodStatus && settings.runpod?.enabled) {
+      const podCount = Array.isArray(runpodStatus?.pods) ? runpodStatus.pods.length : 0;
+      systemRunPodStatus.textContent = runpodStatus?.error
+        ? `RunPod: ${runpodStatus.error}`
+        : `RunPod: ready · ${podCount} Pod${podCount === 1 ? "" : "s"} visible`;
+    }
   } catch (error) {
     systemSettingsError.textContent = error.message;
   }
@@ -7432,7 +8738,6 @@ function selectFromPointer(event) {
         const beforeLayout = currentLayoutState();
         const moved = agentWorld.commandPlaceAgent(selectedAgentId, tile, "layout move");
         if (moved) {
-          setAutoAgents(false);
           saveLayoutState(beforeLayout);
           setBootMessage(`${network.getAgent(selectedAgentId)?.label ?? "Agente"} spostato.`);
         } else {
@@ -7474,7 +8779,6 @@ function selectFromPointer(event) {
     const beforeLayout = currentLayoutState();
     const moved = agentWorld.commandMoveAgent(selectedAgentId, tile, "manual move");
     if (moved) {
-      setAutoAgents(false);
       saveLayoutState(beforeLayout);
     }
   }
@@ -7607,6 +8911,7 @@ undoLayoutButton?.addEventListener("click", undoLayoutEdit);
 redoLayoutButton?.addEventListener("click", redoLayoutEdit);
 roomDrawToggle?.addEventListener("click", () => setRoomDrawMode(!roomDrawMode));
 doorToggle?.addEventListener("click", () => setDoorMode(!doorMode));
+rotateStationButton?.addEventListener("click", rotateSelectedStation);
 addRoomButton?.addEventListener("click", addLayoutRoom);
 deleteRoomButton?.addEventListener("click", deleteSelectedRoom);
 addWorkstationButton?.addEventListener("click", addEditorWorkstation);
@@ -7617,8 +8922,143 @@ atmosphereToggle?.addEventListener("click", cycleAtmosphere);
 reportsDashboardButton?.addEventListener("click", () => {
   void openVintedReports();
 });
+monitoringDashboardButton?.addEventListener("click", () => {
+  void openMonitoringDashboard();
+});
 reportRefreshButton?.addEventListener("click", () => {
   void loadVintedReport();
+});
+reportAiNewsRefresh?.addEventListener("click", () => { void loadAiNewsDashboard(); });
+reportLinkedInRefresh?.addEventListener("click", () => { void loadLinkedInPosts(); });
+reportLinkedInSearch?.addEventListener("input", () => {
+  window.clearTimeout(linkedinSearchTimer);
+  linkedinSearchTimer = window.setTimeout(() => { void loadLinkedInPosts(); }, 300);
+});
+reportLinkedInFilter?.addEventListener("change", renderLinkedInPosts);
+reportLinkedInList?.addEventListener("click", (event) => {
+  const row = event.target.closest("[data-linkedin-post-id]");
+  if (row) void loadLinkedInDetail(row.dataset.linkedinPostId || "");
+});
+reportLinkedInDetail?.addEventListener("click", async (event) => {
+  const sendToPublisher = event.target.closest("[data-linkedin-send-to-publisher]");
+  if (sendToPublisher) {
+    const body = sendToPublisher.closest(".linkedin-draft")?.querySelector("textarea")?.value || "";
+    sendToPublisher.disabled = true;
+    try {
+      await runtimeClient.createLinkedInDraft(body, selectedLinkedInPostId);
+      await loadLinkedInPublisher();
+      linkedinPublisherStatus.textContent = "Bozza pronta nel Publisher: rivedila prima di pubblicarla.";
+      document.querySelector(".linkedin-publisher")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (error) {
+      const status = reportLinkedInDetail.querySelector("#linkedin-detail-status");
+      if (status) status.textContent = `Bozza non salvata: ${error.message}`;
+    } finally { sendToPublisher.disabled = false; }
+    return;
+  }
+  const copy = event.target.closest("[data-linkedin-copy]");
+  if (copy) {
+    const draft = copy.closest(".linkedin-draft")?.querySelector("textarea")?.value || "";
+    try { await navigator.clipboard.writeText(draft); copy.textContent = "Copiato"; }
+    catch (_error) { copy.textContent = "Copia non riuscita"; }
+    return;
+  }
+  const archive = event.target.closest("[data-linkedin-archive], [data-linkedin-poster]");
+  if (archive) {
+    const poster = archive.hasAttribute("data-linkedin-poster");
+    const index = Number(archive.dataset.linkedinArchive ?? archive.dataset.linkedinPoster);
+    const status = reportLinkedInDetail.querySelector("#linkedin-detail-status");
+    archive.disabled = true;
+    if (status) status.textContent = "Salvataggio media in corso…";
+    try {
+      await runtimeClient.archiveLinkedInMedia(selectedLinkedInPostId, index, poster);
+      await loadLinkedInDetail(selectedLinkedInPostId);
+      const updated = reportLinkedInDetail.querySelector("#linkedin-detail-status");
+      if (updated) updated.textContent = "Media salvato nel PC. Usa “Scarica file” per aprirlo o esportarlo.";
+    } catch (error) {
+      if (status) status.textContent = `Download non riuscito: ${error.message}`;
+      archive.disabled = false;
+    }
+    return;
+  }
+  const rewrite = event.target.closest("[data-linkedin-rewrite]");
+  if (rewrite) {
+    const prompt = reportLinkedInDetail.querySelector("#linkedin-rewrite-prompt")?.value || "";
+    linkedinRewritePromptsByPost.set(selectedLinkedInPostId, prompt);
+    const status = reportLinkedInDetail.querySelector("#linkedin-detail-status");
+    rewrite.disabled = true;
+    if (status) status.textContent = "Generazione bozza in corso…";
+    try {
+      await runtimeClient.rewriteLinkedInPost(selectedLinkedInPostId, prompt);
+      await loadLinkedInDetail(selectedLinkedInPostId);
+    } catch (error) {
+      if (status) status.textContent = `Riscrittura non riuscita: ${error.message}`;
+      rewrite.disabled = false;
+    }
+  }
+});
+reportLinkedInDetail?.addEventListener("input", (event) => {
+  if (!event.target.matches("#linkedin-rewrite-prompt")) return;
+  linkedinRewritePromptsByPost.set(selectedLinkedInPostId, event.target.value);
+});
+linkedinPublisherRefresh?.addEventListener("click", () => { void loadLinkedInPublisher(); });
+linkedinPublisherCreateDraft?.addEventListener("click", async () => {
+  linkedinPublisherCreateDraft.disabled = true;
+  try {
+    await runtimeClient.createLinkedInDraft(linkedinPublisherNewBody.value, selectedLinkedInPostId);
+    linkedinPublisherNewBody.value = "";
+    await loadLinkedInPublisher();
+    linkedinPublisherStatus.textContent = "Bozza salvata. Nessun post pubblicato.";
+  } catch (error) { linkedinPublisherStatus.textContent = `Bozza non salvata: ${error.message}`; }
+  finally { linkedinPublisherCreateDraft.disabled = false; }
+});
+linkedinPublisherDrafts?.addEventListener("click", async (event) => {
+  const card = event.target.closest("[data-publication-draft-id]");
+  if (!card) return;
+  const draftId = Number(card.dataset.publicationDraftId);
+  const body = card.querySelector("textarea")?.value || "";
+  const save = event.target.closest("[data-publication-save]");
+  const publish = event.target.closest("[data-publication-publish]");
+  if (!save && !publish) return;
+  event.target.disabled = true;
+  try {
+    let message = "";
+    if (save) {
+      await runtimeClient.updateLinkedInDraft(draftId, body);
+      message = `Bozza #${draftId} aggiornata.`;
+    } else {
+      const stored = linkedinPublicationDrafts.find((draft) => draft.draft_id === draftId);
+      if (!stored || stored.body !== body) throw new Error("Salva le modifiche prima di pubblicare.");
+      if (window.prompt("Stai per pubblicare sul profilo LinkedIn aperto nel tuo Chrome standard. Scrivi PUBBLICA per confermare:", "") !== "PUBBLICA") {
+        linkedinPublisherStatus.textContent = "Pubblicazione annullata.";
+        return;
+      }
+      const result = await runtimeClient.publishLinkedInDraft(draftId, body);
+      message = result.state === "published" ? `Bozza #${draftId} pubblicata.`
+        : result.state === "unknown" ? `Esito incerto: controlla LinkedIn prima di riprovare. ${result.error || ""}`
+        : `Pubblicazione non riuscita: ${result.error || "controlla la bozza"}`;
+    }
+    await loadLinkedInPublisher();
+    linkedinPublisherStatus.textContent = message;
+  } catch (error) { linkedinPublisherStatus.textContent = `Operazione non riuscita: ${error.message}`; }
+  finally { event.target.disabled = false; }
+});
+reportAiNewsArchive?.addEventListener("click", (event) => {
+  const entry = event.target.closest("[data-ai-news-id]");
+  if (!entry) return;
+  selectedAiNewsId = entry.dataset.aiNewsId || "";
+  renderAiNewsDashboard();
+});
+reportAiNewsDetail?.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-ai-news-copy]");
+  if (!button) return;
+  const task = aiNewsBriefings.find((item) => item.id === selectedAiNewsId);
+  const script = aiNewsSections(task?.result?.summary).script;
+  if (!script) return;
+  try {
+    await navigator.clipboard.writeText(script);
+    button.textContent = "Copiato!";
+    window.setTimeout(() => { if (button.isConnected) button.textContent = "Copia script"; }, 1800);
+  } catch (_error) { button.textContent = "Copia non riuscita"; }
 });
 reportPeriod?.addEventListener("change", () => {
   void loadVintedReport();
@@ -7652,11 +9092,49 @@ reportTabButtons.forEach((button) => {
     reportPanels.forEach((panel) => {
       panel.hidden = panel.dataset.reportPanel !== selectedTab;
     });
+    if (selectedTab === "ai-news") void loadAiNewsDashboard();
+    if (selectedTab === "linkedin") void loadLinkedInPosts();
+    if (selectedTab === "linkedin-publisher") void loadLinkedInPublisher();
+    if (selectedTab === "monitoring") void refreshMonitoringDashboard();
   });
+});
+monitoringRefreshButton?.addEventListener("click", () => { void refreshMonitoringDashboard(); });
+monitoringJobs?.addEventListener("click", async (event) => {
+  const startButton = event.target.closest("[data-monitoring-start]");
+  if (startButton) {
+    const definition = monitoringJobDefinitions.find((item) => item.action === startButton.dataset.monitoringStart);
+    if (!definition) return;
+    startButton.disabled = true;
+    try {
+      await startMonitoringJob(definition);
+      await refreshMonitoringDashboard();
+    } catch (error) {
+      if (monitoringStatus) monitoringStatus.textContent = `Avvio non riuscito: ${error.message}`;
+    } finally {
+      startButton.disabled = false;
+    }
+    return;
+  }
+  const stopButton = event.target.closest("[data-monitoring-stop]");
+  if (stopButton) {
+    stopButton.disabled = true;
+    try {
+      await runtimeClient.cancelProjectJob(stopButton.dataset.monitoringStop);
+      await refreshProjectJobHistory(false);
+      await refreshMonitoringDashboard();
+    } catch (error) {
+      if (monitoringStatus) monitoringStatus.textContent = `Arresto non riuscito: ${error.message}`;
+      stopButton.disabled = false;
+    }
+  }
 });
 reportCompetitorStatus?.addEventListener("change", () => {
   reportCompetitorStatusFilter = reportCompetitorStatus.value || "all";
   renderReportCompetitors();
+});
+reportProcacciatoreStatus?.addEventListener("change", () => {
+  reportProcacciatoreStatusFilter = reportProcacciatoreStatus.value || "all";
+  renderReportProcacciatore();
 });
 eventLog?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-activity-job]");
@@ -7693,6 +9171,23 @@ reportOwnedForm?.addEventListener("submit", async (event) => {
   }
 });
 reportOwnedProfiles?.addEventListener("click", async (event) => {
+  const ignoreButton = event.target.closest("[data-owned-item-ignore]");
+  if (ignoreButton) {
+    const memberId = ignoreButton.dataset.ownedItemMember;
+    const itemId = ignoreButton.dataset.ownedItemIgnore;
+    if (!memberId || !itemId || !window.confirm(`Non tracciare più l'articolo ${itemId} in questo profilo? Lo storico resterà salvato.`)) return;
+    ignoreButton.disabled = true;
+    reportOwnedError.textContent = "";
+    try {
+      await runtimeClient.ignoreVintedOwnedProfileItem(memberId, itemId);
+      await loadVintedReport();
+    } catch (error) {
+      reportOwnedError.textContent = error.message;
+      reportUiError("ui.vinted-reports.owned-item-ignore", error, { phase: "ignore-owned-item", member_id: memberId, item_id: itemId });
+      ignoreButton.disabled = false;
+    }
+    return;
+  }
   const button = event.target.closest("[data-owned-profile-remove]");
   if (!button) return;
   button.disabled = true;
@@ -7894,6 +9389,13 @@ memoryCoreSettingsButton?.addEventListener("click", () => {
 
 agentActionDialog.querySelectorAll("[data-agent-action-close]").forEach((button) => {
   button.addEventListener("click", () => agentActionDialog.close());
+});
+agentActionDialog.addEventListener("close", () => {
+  stopRunPodLiveStatusRefresh();
+  stopAppiumScreenPolling("Anteprima in pausa mentre la finestra dell’agente è chiusa.");
+  // Closing this popup restores autonomy only for the agent it belongs to.
+  const agent = network.getAgent(selectedAgentId);
+  if (agent) agentWorld.resumeAutoAgent(agent);
 });
 document.querySelector("#assign-work").addEventListener("click", () => {
   workOptions.hidden = false;
@@ -8323,6 +9825,739 @@ document.querySelector("#save-api-key").addEventListener("click", async () => {
   }
 });
 
+function renderRunPodActionResult(label, result) {
+  if (runPodActionStatus) {
+    const error = String(result?.error ?? "").trim();
+    const message = String(result?.message ?? "").trim();
+    const id = String(result?.id ?? "").trim();
+    const promptId = String(result?.prompt_id ?? result?.promptId ?? "").trim();
+    const status = String(result?.status ?? "").trim();
+    const details = error || message || [id && `Pod ${id}`, status, promptId && `workflow ${promptId}`].filter(Boolean).join(" · ") || "Complete";
+    runPodActionStatus.textContent = `${label}: ${details}`;
+  }
+}
+
+function restoreRunPodJobs() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(runPodJobsStorageKey) || "[]");
+    runPodJobs = Array.isArray(saved) ? saved.filter((job) => job?.podId && job?.promptId).slice(0, 12) : [];
+  } catch {
+    runPodJobs = [];
+  }
+  renderRunPodJobs();
+}
+
+function persistRunPodJobs() {
+  try {
+    window.localStorage.setItem(runPodJobsStorageKey, JSON.stringify(runPodJobs.slice(0, 12)));
+  } catch {
+    // Local display persistence is optional; never block an active ComfyUI job for it.
+  }
+}
+
+function runPodOutputUrl(job, output) {
+  const port = Number(runPodDashboardSnapshot?.settings?.runpod?.comfyui_port ?? 8188) || 8188;
+  const url = new URL(`https://${encodeURIComponent(job.podId)}-${port}.proxy.runpod.net/view`);
+  url.searchParams.set("filename", String(output.filename ?? ""));
+  url.searchParams.set("subfolder", String(output.subfolder ?? ""));
+  url.searchParams.set("type", String(output.type ?? "output"));
+  return url.href;
+}
+
+function collectRunPodOutputs(history, promptId) {
+  const record = history?.[promptId] || Object.values(history || {})[0];
+  if (!record || typeof record !== "object") return { status: "Waiting to start", done: false, outputs: [], error: "" };
+  const status = String(record?.status?.status_str ?? "Running");
+  const done = Boolean(record?.status?.completed) || ["success", "error"].includes(status.toLowerCase());
+  const messages = Array.isArray(record?.status?.messages) ? record.status.messages : [];
+  const failure = messages.find((message) => Array.isArray(message) && String(message[0]).includes("execution_error"));
+  const error = failure ? JSON.stringify(failure[1] ?? failure).slice(0, 1000) : "";
+  const found = [];
+  const seen = new Set();
+  for (const nodeOutput of Object.values(record?.outputs ?? {})) {
+    if (!nodeOutput || typeof nodeOutput !== "object") continue;
+    for (const property of ["images", "gifs", "videos"]) {
+      for (const output of Array.isArray(nodeOutput[property]) ? nodeOutput[property] : []) {
+        if (!output?.filename) continue;
+        const key = [output.filename, output.subfolder ?? "", output.type ?? "output"].join("/");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        found.push({ filename: String(output.filename), subfolder: String(output.subfolder ?? ""), type: String(output.type ?? "output") });
+      }
+    }
+  }
+  return { status, done, outputs: found, error };
+}
+
+function isVideoOutput(filename) {
+  return /\.(mp4|webm|mov|mkv|avi)$/i.test(filename);
+}
+
+function renderRunPodJobs() {
+  if (!runPodJobResults) return;
+  runPodJobResults.replaceChildren();
+  if (!runPodJobs.length) {
+    const empty = document.createElement("small");
+    empty.textContent = "No workflow has been queued from this browser yet.";
+    runPodJobResults.append(empty);
+    return;
+  }
+  for (const job of runPodJobs) {
+    const card = document.createElement("article");
+    card.className = "runpod-job";
+    const title = document.createElement("strong");
+    title.textContent = `${job.workflowName || "ComfyUI workflow"} · ${job.promptId}`;
+    const status = document.createElement("span");
+    status.className = "runpod-job__status";
+    status.textContent = job.status || "Queued";
+    card.append(title, status);
+    if (job.error) {
+      const error = document.createElement("span");
+      error.className = "runpod-job__error";
+      error.textContent = job.error;
+      card.append(error);
+    }
+    if (Array.isArray(job.outputs) && job.outputs.length) {
+      const outputs = document.createElement("div");
+      outputs.className = "runpod-job__outputs";
+      for (const output of job.outputs) {
+        const url = runPodOutputUrl(job, output);
+        if (isVideoOutput(output.filename)) {
+          const video = document.createElement("video");
+          video.controls = true;
+          video.preload = "metadata";
+          video.src = url;
+          outputs.append(video);
+        } else {
+          const image = document.createElement("img");
+          image.loading = "lazy";
+          image.alt = output.filename;
+          image.src = url;
+          outputs.append(image);
+        }
+        const link = document.createElement("a");
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = `Download ${output.filename}`;
+        outputs.append(link);
+      }
+      card.append(outputs);
+    }
+    runPodJobResults.append(card);
+  }
+}
+
+async function pollRunPodJobs() {
+  const activeJobs = runPodJobs.filter((job) => !job.done);
+  if (!activeJobs.length) {
+    if (runPodJobPollTimer) window.clearInterval(runPodJobPollTimer);
+    runPodJobPollTimer = null;
+    return;
+  }
+  try {
+    if (!runtimeClient.connected) await runtimeClient.connect();
+    await Promise.all(activeJobs.map(async (job) => {
+      try {
+        const history = await runtimeClient.getRunPodComfyUiHistory(job.podId, job.promptId);
+        const update = collectRunPodOutputs(history, job.promptId);
+        Object.assign(job, update);
+      } catch (error) {
+        job.status = "Waiting for ComfyUI history";
+        job.error = error.message;
+      }
+    }));
+    persistRunPodJobs();
+    renderRunPodJobs();
+  } catch {
+    // The status panel already exposes runtime connectivity; keep jobs for the next polling cycle.
+  }
+}
+
+function startRunPodJobPolling() {
+  void pollRunPodJobs();
+  if (runPodJobPollTimer) return;
+  runPodJobPollTimer = window.setInterval(() => void pollRunPodJobs(), 3000);
+}
+
+function batchOutputUrl(batch, item, outputIndex) {
+  return `/api/runpod/batches/${encodeURIComponent(batch.id)}/items/${encodeURIComponent(item.id)}/outputs/${outputIndex}`;
+}
+
+function renderRunPodBatches(batches) {
+  if (!runPodBatchResults) return;
+  runPodBatchResults.replaceChildren();
+  if (!Array.isArray(batches) || !batches.length) {
+    const empty = document.createElement("small");
+    empty.textContent = "No batch created from this browser yet.";
+    runPodBatchResults.append(empty);
+    return;
+  }
+  for (const batch of batches.slice(0, 8)) {
+    const card = document.createElement("article");
+    card.className = "runpod-batch";
+    const title = document.createElement("strong");
+    title.textContent = `${batch.id} · ${batch.status}`;
+    const detail = document.createElement("small");
+    const counts = batch.counts && typeof batch.counts === "object" ? batch.counts : {};
+    detail.textContent = `Pod: ${batch.pod_id || "deploying automatically"} · ${counts.completed || 0} completed · ${counts.processing || 0} processing · ${counts.queued || 0} queued · ${counts.failed || 0} failed`;
+    card.append(title, detail);
+    if (batch.error) {
+      const error = document.createElement("span");
+      error.className = "runpod-job__error";
+      error.textContent = String(batch.error);
+      card.append(error);
+    }
+    const items = Array.isArray(batch.items) ? batch.items : [];
+    const list = document.createElement("div");
+    list.className = "runpod-batch__items";
+    for (const item of items) {
+      const line = document.createElement("div");
+      line.textContent = `${item.ordinal}. ${item.filename} — ${item.status}${item.error ? ` (${item.error})` : ""}`;
+      list.append(line);
+      for (const [outputIndex, output] of (Array.isArray(item.outputs) ? item.outputs : []).entries()) {
+        if (!output?.filename) continue;
+        const link = document.createElement("a");
+        link.href = output.local_path ? batchOutputUrl(batch, item, outputIndex) : runPodOutputUrl({ podId: batch.pod_id }, output);
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = `Output: ${output.filename}`;
+        list.append(link);
+      }
+    }
+    card.append(list);
+    if (["starting", "waiting_for_gpu", "waiting_for_comfyui", "running"].includes(String(batch.status))) {
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "button";
+      cancel.textContent = "Stop batch";
+      cancel.addEventListener("click", async () => {
+        await runRunPodAction("Stopping automatic batch", async () => runtimeClient.cancelRunPodBatch(batch.id));
+        void refreshRunPodBatches();
+      });
+      card.append(cancel);
+    }
+    runPodBatchResults.append(card);
+  }
+}
+
+async function refreshRunPodBatches() {
+  if (!runtimeClient.connected) await runtimeClient.connect();
+  const response = await runtimeClient.listRunPodBatches();
+  const batches = Array.isArray(response?.batches) ? response.batches : [];
+  renderRunPodBatches(batches);
+  const active = batches.some((batch) => ["starting", "waiting_for_gpu", "waiting_for_comfyui", "running"].includes(String(batch?.status)));
+  if (!active && runPodBatchPollTimer) {
+    window.clearInterval(runPodBatchPollTimer);
+    runPodBatchPollTimer = null;
+  }
+  return batches;
+}
+
+function startRunPodBatchPolling() {
+  void refreshRunPodBatches().catch(() => {});
+  if (runPodBatchPollTimer) return;
+  runPodBatchPollTimer = window.setInterval(() => void refreshRunPodBatches().catch(() => {}), 5000);
+}
+
+async function readMediaAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.readAsDataURL(file);
+  });
+}
+
+restoreRunPodJobs();
+
+function selectedRunPodId() {
+  return String(runPodIdInput?.value ?? "").trim();
+}
+
+function requireRunPodId() {
+  const podId = selectedRunPodId();
+  if (!podId) {
+    renderRunPodActionResult("RunPod action failed", { error: "Enter or select a Target Pod ID first." });
+  }
+  return podId;
+}
+
+async function runRunPodAction(label, action) {
+  if (!runtimeClient.connected) {
+    renderRunPodActionResult("Reconnecting to runtime", { message: "Trying the local runtime…" });
+    try {
+      await runtimeClient.connect();
+    } catch (error) {
+      renderRunPodActionResult(`${label} unavailable`, { error: "The local runtime is offline. Refresh the page after starting it." });
+      return null;
+    }
+  }
+  renderRunPodActionResult(label, { status: "working" });
+  try {
+    const result = await action();
+    if (result?.id && runPodIdInput) {
+      runPodIdInput.value = result.id;
+    }
+    if (result?.id && result?.status && runPodCardPods) {
+      const state = String(result.status).toUpperCase();
+      runPodCardPods.textContent = state === "RUNNING" ? "1 running" : state;
+      if (runPodCardPodsDetail) runPodCardPodsDetail.textContent = `${result.name || result.id}: ${state}`;
+      setRunPodCardState(runPodCardPods, state === "RUNNING" ? "running" : "stopped");
+    }
+    renderRunPodActionResult(label, result);
+    return result;
+  } catch (error) {
+    renderRunPodActionResult(`${label} failed`, { error: error.message });
+    reportUiError("ui.runpod.action", error, { action: label });
+    return null;
+  }
+}
+
+runPodRefreshPodsButton?.addEventListener("click", async () => {
+  const status = await runRunPodAction("Refreshing RunPod inventory", async () => runtimeClient.getRunPodStatus());
+  setRunPodPodOptions(status?.pods, selectedRunPodId());
+});
+
+runPodListVolumesButton?.addEventListener("click", async () => {
+  const result = await runRunPodAction("Refreshing Network Volumes", async () => runtimeClient.listRunPodNetworkVolumes());
+  const volumes = Array.isArray(result?.network_volumes) ? result.network_volumes : [];
+  setRunPodVolumeOptions(volumes, String(runPodNetworkVolumeInput?.value ?? ""));
+  const dataCenter = applySelectedVolumeDataCenter();
+  renderRunPodActionResult("Network Volume picker updated", {
+    volumes: volumes.length,
+    selected_volume: String(runPodNetworkVolumeInput?.value ?? "") || "Choose a Network Volume",
+    volume_data_center: dataCenter || "Select a volume to derive its data center.",
+  });
+});
+
+runPodListDataCentersButton?.addEventListener("click", async () => {
+  const result = await runRunPodAction("Refreshing RunPod regions", async () => runtimeClient.listRunPodDataCenters());
+  const dataCenters = Array.isArray(result?.datacenters) ? result.datacenters : [];
+  setRunPodDataCenterOptions(dataCenters, String(runPodDataCenterInput?.value ?? ""));
+  renderRunPodActionResult("Region picker updated", {
+    available_regions: dataCenters.length,
+    next_step: "Select the data center hosting the Network Volume, then press List GPUs.",
+  });
+});
+
+runPodPicker?.addEventListener("change", () => {
+  if (runPodIdInput && runPodPicker.value) runPodIdInput.value = runPodPicker.value;
+});
+
+runPodNetworkVolumeInput?.addEventListener("change", () => {
+  const dataCenter = applySelectedVolumeDataCenter();
+  if (dataCenter) {
+    renderRunPodActionResult("Network Volume selected", {
+      volume_data_center: dataCenter,
+      next_step: "Press List GPUs to see GPUs available for this exact volume region.",
+    });
+  }
+});
+
+async function refreshRunPodGpuChoices(announce = true) {
+  const dataCenterId = String(runPodDataCenterInput?.value ?? "").trim();
+  if (!dataCenterId) {
+    if (announce) renderRunPodActionResult("List GPUs failed", { error: "Select a Network Volume first." });
+    return [];
+  }
+  const result = await runRunPodAction("Listing available GPUs", async () => runtimeClient.listRunPodGpus(dataCenterId));
+  const gpus = Array.isArray(result?.gpus) ? result.gpus : [];
+  const selected = String(runPodGpuSelect?.value ?? "");
+  setRunPodGpuOptions(gpus, selected, runPodGpuSelect);
+  if (runPodCardGpus) runPodCardGpus.textContent = `${gpus.length} available`;
+  if (runPodCardGpusDetail) runPodCardGpusDetail.textContent = selected ? `Selected: ${selected}` : "Choose one to deploy.";
+  setRunPodCardState(runPodCardGpus, gpus.length ? "running" : "stopped");
+  if (announce) renderRunPodActionResult(`GPU picker updated for ${dataCenterId}`, {
+    message: `${gpus.length} compatible GPU types ready to select.`,
+  });
+  return gpus;
+}
+
+runPodListGpusButton?.addEventListener("click", async () => {
+  await refreshRunPodGpuChoices(true);
+});
+
+runPodGpuSelect?.addEventListener("focus", () => {
+  void refreshRunPodGpuChoices(false);
+});
+
+runPodSaveDeploymentButton?.addEventListener("click", async () => {
+  await runRunPodAction("Saving RunPod deployment configuration", async () => {
+    const settings = await runtimeClient.getSystemSettings();
+    const nextRunPod = {
+      ...(settings.runpod ?? {}),
+      network_volume_id: String(runPodNetworkVolumeInput?.value ?? "").trim(),
+      data_center_id: String(runPodDataCenterInput?.value ?? "").trim(),
+      template_id: String(runPodTemplateInput?.value ?? "").trim(),
+      container_image: String(runPodContainerImageInput?.value ?? "").trim(),
+      preferred_gpu: String(runPodGpuSelect?.value ?? "").trim(),
+      max_hourly_cost: Number(runPodMaxHourlyCostInput?.value ?? 0),
+      volume_mount_path: String(runPodVolumeMountInput?.value ?? "/workspace").trim() || "/workspace",
+      comfyui_port: Number(runPodComfyUiPortInput?.value ?? 8188),
+      idle_action: String(runPodIdleActionSelect?.value ?? "stop"),
+    };
+    const updated = await runtimeClient.updateSystemSettings({ ...settings, runpod: nextRunPod });
+    return { ok: true, runpod: updated.runpod };
+  });
+});
+
+appiumSaveButton?.addEventListener("click", async () => {
+  if (appiumSaveButton) appiumSaveButton.disabled = true;
+  if (appiumActionStatus) appiumActionStatus.textContent = "Saving Appium settings…";
+  try {
+    const settings = await runtimeClient.getSystemSettings();
+    const updated = await runtimeClient.updateSystemSettings({
+      ...settings,
+      appium: {
+        ...(settings.appium ?? {}),
+        enabled: appiumEnabledSelect?.value === "true",
+        server_url: String(appiumServerUrlInput?.value ?? "http://127.0.0.1:4723").trim(),
+        adb_path: String(appiumAdbPathInput?.value ?? "adb").trim() || "adb",
+        ios_device_tool: String(appiumIosToolInput?.value ?? "idevice_id").trim() || "idevice_id",
+      },
+    });
+    if (appiumActionStatus) appiumActionStatus.textContent = "Settings saved. Checking the configured server…";
+    await refreshAppiumStatus();
+    if (appiumActionStatus) appiumActionStatus.textContent = `Settings saved. Appium checks ${updated.appium?.enabled ? "enabled" : "disabled"}.`;
+  } catch (error) {
+    if (appiumActionStatus) appiumActionStatus.textContent = error.message;
+    runtimeClient.logClient("error", error.message, { operation: "appium.save-settings" });
+  } finally {
+    if (appiumSaveButton) appiumSaveButton.disabled = false;
+  }
+});
+
+appiumRefreshButton?.addEventListener("click", () => { void refreshAppiumStatus().catch(() => {}); });
+appiumStartButton?.addEventListener("click", () => { void startAppiumServer(); });
+appiumStopButton?.addEventListener("click", () => { void stopAppiumServer(); });
+appiumListAppsButton?.addEventListener("click", () => { void listAppiumInstalledApps(); });
+appiumLaunchAppButton?.addEventListener("click", () => { void launchAppiumSelectedApp(); });
+appiumEndSessionButton?.addEventListener("click", () => { void endAppiumDeviceSession(); });
+
+runPodCreatePodButton?.addEventListener("click", async () => {
+  if (!window.confirm("Create a billed RunPod Pod using the saved configuration?")) return;
+  await runRunPodAction("Creating RunPod Pod", async () => runtimeClient.createRunPodPod({
+    name: String(runPodNameInput?.value ?? "Agent Lab ComfyUI").trim(),
+    gpuId: String(runPodGpuSelect?.value ?? "").trim(),
+  }));
+});
+
+runPodStartPodButton?.addEventListener("click", async () => {
+  const podId = requireRunPodId();
+  if (!podId) return;
+  await runRunPodAction("Starting RunPod Pod", async () => runtimeClient.startRunPodPod(podId));
+});
+
+runPodStopPodButton?.addEventListener("click", async () => {
+  const podId = requireRunPodId();
+  if (!podId) return;
+  if (!window.confirm(`Stop Pod ${podId}?`)) return;
+  await runRunPodAction("Stopping RunPod Pod", async () => runtimeClient.stopRunPodPod(podId));
+});
+
+runPodTerminatePodButton?.addEventListener("click", async () => {
+  const podId = requireRunPodId();
+  if (!podId) return;
+  if (!window.confirm(`Terminate Pod ${podId}? This may delete its local disk.`)) return;
+  await runRunPodAction("Terminating RunPod Pod", async () => runtimeClient.terminateRunPodPod(podId));
+});
+
+runPodComfyUiHealthButton?.addEventListener("click", async () => {
+  const podId = requireRunPodId();
+  if (!podId) return;
+  await runRunPodAction("Checking ComfyUI", async () => runtimeClient.getRunPodComfyUiHealth(podId));
+});
+
+function applyRunPodWorkflow(workflow, sourceLabel, suppliedLoaders = null) {
+  if (!workflow || typeof workflow !== "object" || Array.isArray(workflow) || Array.isArray(workflow.nodes) || Array.isArray(workflow.links)) {
+    throw new Error("This is a visual/canvas workflow. Export it from ComfyUI as API format first.");
+  }
+  const derivedLoaders = Object.entries(workflow).flatMap(([id, node]) => {
+    const classType = String(node?.class_type ?? "");
+    const inputs = node?.inputs && typeof node.inputs === "object" ? node.inputs : {};
+    const normalized = classType.toLowerCase();
+    if (normalized.includes("loadimage")) return [{ id, class_type: classType, kind: "image", input: "image", current: String(inputs.image ?? "") }];
+    if (normalized.includes("loadvideo")) {
+      const input = Object.prototype.hasOwnProperty.call(inputs, "video_name") && !Object.prototype.hasOwnProperty.call(inputs, "video") ? "video_name" : "video";
+      return [{ id, class_type: classType, kind: "video", input, current: String(inputs[input] ?? "") }];
+    }
+    return [];
+  });
+  runPodWorkflowLoaders = Array.isArray(suppliedLoaders) && suppliedLoaders.length
+    ? suppliedLoaders.map((loader) => ({
+      id: String(loader.id ?? ""), class_type: String(loader.class_type ?? loader.classType ?? ""), kind: String(loader.kind ?? ""), input: String(loader.input ?? ""), current: String(loader.current ?? ""),
+    })).filter((loader) => loader.id && ["image", "video"].includes(loader.kind))
+    : derivedLoaders;
+  if (!runPodWorkflowLoaders.length) {
+    throw new Error("The workflow has no LoadImage or LoadVideo node, so uploaded media cannot be inserted automatically.");
+  }
+  if (runPodWorkflowInput) runPodWorkflowInput.value = JSON.stringify(workflow, null, 2);
+  if (runPodMediaLoaderSelect) {
+    runPodMediaLoaderSelect.replaceChildren();
+    for (const loader of runPodWorkflowLoaders) {
+      const option = document.createElement("option");
+      option.value = loader.id;
+      option.dataset.kind = loader.kind;
+      option.textContent = `Node ${loader.id} · ${loader.class_type} · ${loader.kind} · ${loader.current || "no file selected"}`;
+      runPodMediaLoaderSelect.append(option);
+    }
+  }
+  const imageLoaders = runPodWorkflowLoaders.filter((loader) => loader.kind === "image").length;
+  const videoLoaders = runPodWorkflowLoaders.filter((loader) => loader.kind === "video").length;
+  if (runPodWorkflowStatus) {
+    const inputs = [imageLoaders ? `${imageLoaders} image loader${imageLoaders === 1 ? "" : "s"}` : "", videoLoaders ? `${videoLoaders} video loader${videoLoaders === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+    runPodWorkflowStatus.textContent = `${sourceLabel} loaded: ${inputs}. Choose matching media, upload it, then Queue Workflow.`;
+  }
+  renderRunPodActionResult("Workflow loaded", { source: sourceLabel, image_loaders: imageLoaders, video_loaders: videoLoaders });
+}
+
+runPodLoadWorkflowButton?.addEventListener("click", () => {
+  void (async () => {
+    try {
+      const file = runPodWorkflowFileInput?.files?.[0];
+      if (!file) {
+        if (runPodWorkflowStatus) runPodWorkflowStatus.textContent = "Choose a ComfyUI API JSON workflow first.";
+        return;
+      }
+      const text = await file.text();
+      const workflow = JSON.parse(text);
+      applyRunPodWorkflow(workflow, file.name);
+    } catch (error) {
+      if (runPodWorkflowStatus) runPodWorkflowStatus.textContent = error.message;
+      renderRunPodActionResult("Workflow load failed", { error: error.message });
+    }
+  })();
+});
+
+runPodLoadWorkflowPresetButton?.addEventListener("click", () => {
+  void (async () => {
+    try {
+      const presetId = String(runPodWorkflowPresetSelect?.value ?? "").trim();
+      if (!presetId) throw new Error("Choose a saved workflow first.");
+      const preset = await runtimeClient.getRunPodWorkflow(presetId);
+      applyRunPodWorkflow(preset.workflow, String(preset.name ?? presetId), preset.loaders);
+    } catch (error) {
+      if (runPodWorkflowStatus) runPodWorkflowStatus.textContent = error.message;
+      renderRunPodActionResult("Saved workflow load failed", { error: error.message });
+    }
+  })();
+});
+
+creativePromptPreset?.addEventListener("change", () => {
+  const prompt = creativePromptPreset.selectedOptions?.[0]?.dataset?.prompt || "";
+  if (creativePromptText) creativePromptText.value = prompt;
+});
+runPodWorkflowPresetSelect?.addEventListener("change", () => void (async () => {
+  const option = runPodWorkflowPresetSelect.selectedOptions?.[0];
+  const workflowId = String(option?.value ?? "");
+  if (!workflowId) return;
+  const allowed = JSON.parse(String(option?.dataset?.creativePresets ?? "[]"));
+  if (creativePromptPreset) {
+    creativePromptPreset.replaceChildren();
+    for (const preset of creativePromptPresets.filter((item) => !allowed.length || allowed.includes(item.id))) {
+      const item = document.createElement("option"); item.value = String(preset.id); item.textContent = String(preset.name); item.dataset.prompt = String(preset.prompt ?? ""); creativePromptPreset.append(item);
+    }
+    if (creativePromptText) creativePromptText.value = creativePromptPreset.selectedOptions?.[0]?.dataset?.prompt || "";
+  }
+  if (creativePromptStatus) creativePromptStatus.textContent = `Checking compatible GPU for ${option.textContent}…`;
+  try {
+    const availability = await runtimeClient.getRunPodWorkflowAvailability(workflowId);
+    const gpus = Array.isArray(availability.available) ? availability.available : [];
+    if (creativePromptStatus) creativePromptStatus.textContent = gpus.length
+      ? `${option.textContent} · ${availability.min_vram_gb} GB minimum · compatible now: ${gpus.map((gpu) => gpu.name).join(", ")}`
+      : `${option.textContent} · Waiting for a compatible ${availability.min_vram_gb} GB GPU in ${availability.region}.`;
+  } catch (error) { if (creativePromptStatus) creativePromptStatus.textContent = error.message; }
+})());
+creativeGeneratePrompt?.addEventListener("click", () => void (async () => {
+  try {
+    const file = creativePromptImage?.files?.[0];
+    if (!file) throw new Error("Choose a reference image first.");
+    if (creativePromptStatus) creativePromptStatus.textContent = "Analysing image with the configured OpenAI-compatible provider…";
+    const result = await runtimeClient.generateComfyUiPrompt({ filename: file.name, imageBase64: await readMediaAsDataUrl(file) });
+    if (creativePromptText) creativePromptText.value = String(result.prompt || "");
+    if (creativePromptStatus) creativePromptStatus.textContent = `Prompt generated with ${result.model || "configured model"}.`;
+  } catch (error) { if (creativePromptStatus) creativePromptStatus.textContent = error.message; }
+})());
+
+runPodQueueWorkflowButton?.addEventListener("click", async () => {
+  const podId = requireRunPodId();
+  if (!podId) return;
+  const raw = String(runPodWorkflowInput?.value ?? "").trim();
+  if (!raw) {
+    renderRunPodActionResult("Queue workflow failed", { error: "Paste a ComfyUI workflow JSON before queuing it." });
+    return;
+  }
+  let workflow;
+  try {
+    workflow = JSON.parse(raw);
+  } catch (error) {
+    renderRunPodActionResult("Queue workflow failed", { error: `Workflow JSON is invalid: ${error.message}` });
+    return;
+  }
+  const result = await runRunPodAction("Queuing ComfyUI workflow", async () => runtimeClient.queueRunPodComfyUiPrompt(podId, workflow, {
+    mediaName: runPodUploadedMedia.name,
+    mediaKind: runPodUploadedMedia.kind,
+    mediaLoaderId: String(runPodMediaLoaderSelect?.value ?? "").trim(),
+  }));
+  const promptId = String(result?.prompt_id ?? result?.promptId ?? "").trim();
+  if (promptId) {
+    const selectedPreset = runPodWorkflowPresetSelect?.selectedOptions?.[0];
+    const workflowName = String(selectedPreset?.value ? selectedPreset.textContent : runPodWorkflowFileInput?.files?.[0]?.name ?? "ComfyUI workflow").trim();
+    runPodJobs = [{
+      podId,
+      promptId,
+      workflowName,
+      status: "Queued · waiting for ComfyUI",
+      done: false,
+      outputs: [],
+      error: "",
+      createdAt: new Date().toISOString(),
+    }, ...runPodJobs.filter((job) => !(job.podId === podId && job.promptId === promptId))].slice(0, 12);
+    persistRunPodJobs();
+    renderRunPodJobs();
+    startRunPodJobPolling();
+  }
+  if (result && runPodUploadedMedia.name && runPodUploadStatus) {
+    const count = Number(result.media_injected_nodes ?? 0);
+    runPodUploadStatus.textContent = count
+      ? `Queued: inserted ${runPodUploadedMedia.name} into ${count} compatible ${runPodUploadedMedia.kind} loader node${count === 1 ? "" : "s"}.`
+      : `Queued. No compatible loader node was found for ${runPodUploadedMedia.kind} media.`;
+  }
+});
+
+runPodUploadMediaButton?.addEventListener("click", () => {
+  void (async () => {
+    try {
+      const podId = requireRunPodId();
+      if (!podId) return;
+      const file = runPodMediaFileInput?.files?.[0];
+      if (!file) {
+        if (runPodUploadStatus) runPodUploadStatus.textContent = "Choose an image or video first.";
+        return;
+      }
+      if (file.size > 25 * 1024 * 1024) {
+        if (runPodUploadStatus) runPodUploadStatus.textContent = "Media is larger than the 25 MB upload limit.";
+        return;
+      }
+      const mediaKind = file.type.startsWith("video/") ? "video" : "image";
+      const selectedLoader = runPodWorkflowLoaders.find((loader) => loader.id === String(runPodMediaLoaderSelect?.value ?? ""));
+      if (selectedLoader && selectedLoader.kind !== mediaKind) {
+        throw new Error(`Choose a ${mediaKind === "video" ? "LoadVideo" : "LoadImage"} node before uploading this ${mediaKind}.`);
+      }
+      if (runPodUploadStatus) runPodUploadStatus.textContent = `Reading ${file.name}…`;
+      const dataBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("Could not read the selected media."));
+        reader.onload = () => resolve(String(reader.result ?? ""));
+        reader.readAsDataURL(file);
+      });
+      if (runPodUploadStatus) runPodUploadStatus.textContent = `Uploading ${file.name} to ComfyUI…`;
+      const result = await runRunPodAction("Uploading media to ComfyUI", async () => runtimeClient.uploadRunPodComfyUiMedia(podId, {
+        filename: file.name,
+        dataBase64,
+      }));
+      if (!result) return;
+      const workflowName = [String(result.subfolder ?? "").trim(), String(result.name ?? file.name)].filter(Boolean).join("/");
+      runPodUploadedMedia = { name: workflowName, kind: mediaKind };
+      const loader = mediaKind === "video" ? "LoadVideo" : "LoadImage";
+      if (runPodUploadStatus) runPodUploadStatus.textContent = `Uploaded ${mediaKind}. It will be inserted into compatible ${loader} nodes when you queue the workflow.`;
+      renderRunPodActionResult("Media uploaded", { message: `${workflowName} is ready for automatic ${loader} injection.` });
+    } catch (error) {
+      if (runPodUploadStatus) runPodUploadStatus.textContent = error.message;
+      renderRunPodActionResult("Media upload failed", { error: error.message });
+    }
+  })();
+});
+
+runPodRefreshBatchesButton?.addEventListener("click", () => {
+  void runRunPodAction("Refreshing automatic batches", refreshRunPodBatches);
+});
+
+runPodStartBatchButton?.addEventListener("click", () => {
+  void (async () => {
+    try {
+      const raw = String(runPodWorkflowInput?.value ?? "").trim();
+      if (!raw) throw new Error("Load a ComfyUI API workflow before starting a batch.");
+      const workflow = JSON.parse(raw);
+      const files = Array.from(runPodBatchFilesInput?.files ?? []);
+      if (!files.length) throw new Error("Select one or more images/videos for the batch.");
+      if (files.some((file) => file.size > 25 * 1024 * 1024)) throw new Error("Each batch file must be 25 MB or smaller.");
+      const selectedLoader = runPodWorkflowLoaders.find((loader) => loader.id === String(runPodMediaLoaderSelect?.value ?? ""));
+      if (!selectedLoader) throw new Error("Choose the target LoadImage or LoadVideo node first.");
+      const incompatible = files.find((file) => (file.type.startsWith("video/") ? "video" : "image") !== selectedLoader.kind);
+      if (incompatible) throw new Error(`${incompatible.name} does not match selected ${selectedLoader.kind === "video" ? "LoadVideo" : "LoadImage"} node.`);
+      runPodStartBatchButton.disabled = true;
+      renderRunPodActionResult("Creating automatic batch", { message: `Saving ${files.length} file(s) locally before deployment…` });
+      if (!runtimeClient.connected) await runtimeClient.connect();
+      const batch = await runtimeClient.createRunPodBatch({
+        workflow,
+        mediaLoaderId: selectedLoader.id,
+        autoDeploy: true,
+        autoShutdown: true,
+        minVramGb: Number(runPodWorkflowPresetSelect?.selectedOptions?.[0]?.dataset?.minVram || 0),
+        workflowId: String(runPodWorkflowPresetSelect?.value ?? ""),
+        creativePrompt: String(creativePromptText?.value ?? "").trim(),
+      });
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        renderRunPodActionResult("Preparing automatic batch", { message: `Saving ${index + 1}/${files.length}: ${file.name}` });
+        await runtimeClient.addRunPodBatchItem(batch.id, { filename: file.name, dataBase64: await readMediaAsDataUrl(file) });
+      }
+      const started = await runtimeClient.startRunPodBatch(batch.id);
+      renderRunPodActionResult("Automatic batch started", { message: `${batch.id} · ${files.length} item(s). Pod deployment and cleanup are automatic.` });
+      if (runPodBatchFilesInput) runPodBatchFilesInput.value = "";
+      renderRunPodBatches([started]);
+      startRunPodBatchPolling();
+    } catch (error) {
+      renderRunPodActionResult("Automatic batch failed", { error: error.message });
+      reportUiError("ui.runpod.batch", error, {});
+    } finally {
+      if (runPodStartBatchButton) runPodStartBatchButton.disabled = false;
+    }
+  })();
+});
+
+function renderRunPodGpuWatch(watch) {
+  if (!runPodGpuWatchStatus) return;
+  const gpus = watch?.gpus && typeof watch.gpus === "object" ? Object.values(watch.gpus) : [];
+  const available = gpus.filter((gpu) => gpu?.available).map((gpu) => gpu.name).join(", ");
+  runPodGpuWatchStatus.textContent = watch?.error
+    ? `Watcher error: ${watch.error}`
+    : `Watcher ${watch?.enabled ? "active" : "inactive"} · last check ${watch?.last_check || "never"} · ${available ? `available: ${available}` : "no tracked GPU available"}`;
+  void refreshRunPodGpuHistorySummary();
+}
+
+async function refreshRunPodGpuHistorySummary() {
+  const target = document.querySelector("#runpod-gpu-history-summary");
+  if (!target || !runtimeClient.connected) return;
+  try {
+    const result = await runtimeClient.getRunPodGpuHistorySummary();
+    const hours = Array.isArray(result.hours) ? result.hours : [];
+    if (!hours.length) {
+      target.textContent = "Availability history will appear after the first regional check.";
+      return;
+    }
+    const leaders = hours.slice(0, 4).map((entry) =>
+      `${String(entry.hour).padStart(2, "0")}:00 · avg ${entry.average_available} GPU(s) (${entry.checks} checks)`
+    );
+    target.textContent = `Best local-time availability windows · ${leaders.join(" | ")}`;
+  } catch (error) {
+    target.textContent = `Could not load GPU history: ${error.message}`;
+  }
+}
+
+runPodGpuWatchEnable?.addEventListener("click", async () => {
+  const gpuIds = Array.from(runPodGpuWatchGpus?.selectedOptions ?? []).map((option) => option.value);
+  const result = await runRunPodAction("Enabling GPU availability watcher", async () => runtimeClient.configureRunPodGpuWatch({ enabled: true, gpuIds, intervalSeconds: Number(runPodGpuWatchInterval?.value ?? 60) }));
+  renderRunPodGpuWatch(result);
+});
+
+runPodGpuWatchCheck?.addEventListener("click", async () => {
+  const result = await runRunPodAction("Checking tracked GPU availability", async () => runtimeClient.checkRunPodGpuWatch());
+  renderRunPodGpuWatch(result);
+});
+
 systemSettingsForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   syncSystemModelFieldFromPicker();
@@ -8359,6 +10594,18 @@ systemSettingsForm?.addEventListener("submit", async (event) => {
         discord_error_notifications: value("discord_error_notifications") === "true",
         discord_webhook_url: value("discord_webhook_url"),
       },
+      runpod: {
+        enabled: value("runpod_enabled") === "true",
+        network_volume_id: value("runpod_network_volume_id"),
+        data_center_id: value("runpod_data_center_id"),
+        template_id: value("runpod_template_id"),
+        container_image: value("runpod_container_image"),
+        preferred_gpu: value("runpod_preferred_gpu"),
+        max_hourly_cost: Number(value("runpod_max_hourly_cost") || 0),
+        volume_mount_path: value("runpod_volume_mount_path") || "/workspace",
+        comfyui_port: Number(value("runpod_comfyui_port") || 8188),
+        idle_action: value("runpod_idle_action") || "stop",
+      },
     });
     if (value("project_api_key")) {
       const status = await runtimeClient.setProjectSecret(value("project_api_key"));
@@ -8374,6 +10621,11 @@ systemSettingsForm?.addEventListener("submit", async (event) => {
       const status = await runtimeClient.setAccordiAdminSecret(value("accordi_admin_token"));
       renderSystemSecretStatus(status);
       systemSettingsField("accordi_admin_token").value = "";
+    }
+    if (value("runpod_api_key")) {
+      const status = await runtimeClient.setRunPodSecret(value("runpod_api_key"));
+      renderSystemSecretStatus(status);
+      systemSettingsField("runpod_api_key").value = "";
     }
     applySystemSettingsToUi(settings);
     const agents = await runtimeClient.listAgents();

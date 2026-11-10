@@ -2,7 +2,7 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 
 from agent_runtime import server
 from agent_runtime.briefings import MorningBriefingConfig, MorningBriefingScheduler
@@ -11,6 +11,7 @@ from agent_runtime.knowledge import KnowledgeWiki
 from agent_runtime.models import AgentDefinition, DiscordBotSettings, SystemSettings, TaskCreate
 from agent_runtime.project_gateway import ProjectGateway
 from agent_runtime.secrets import SecretStore
+from agent_runtime.appium_manager import AppiumManager
 
 
 class ServerTests(unittest.IsolatedAsyncioTestCase):
@@ -83,6 +84,51 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("completed", completed.state.value)
         self.assertEqual("specialist", completed.assigned_agent_id)
 
+    async def test_appium_status_api_uses_saved_system_configuration(self):
+        expected = {"server_connected": False, "devices": [], "device_count": 0}
+        with patch.object(AppiumManager, "status", return_value=expected) as status:
+            result = await server.appium_status()
+
+        status.assert_called_once()
+        self.assertEqual(expected, result)
+
+    async def test_appium_installed_apps_and_launch_are_explicit_device_actions(self):
+        apps = [{"bundle_id": "lt.manodrabuziai.fr", "name": "Vinted", "version": "1"}]
+        with patch.object(AppiumManager, "list_ios_apps", return_value=apps) as list_apps:
+            listed = server.appium_list_apps("iphone-udid")
+        list_apps.assert_called_once_with("iphone-udid")
+        self.assertEqual(apps, listed["apps"])
+
+        expected = {"launched": True, "device_id": "iphone-udid", "bundle_id": "lt.manodrabuziai.fr", "session_id": "session-1"}
+        with patch.object(AppiumManager, "launch_ios_app", return_value=expected) as launch:
+            opened = server.appium_launch_app(server.AppiumLaunchRequest(device_id="iphone-udid", bundle_id="lt.manodrabuziai.fr"))
+        launch.assert_called_once_with("iphone-udid", "lt.manodrabuziai.fr")
+        self.assertEqual(expected, opened)
+
+    async def test_appium_screenshot_returns_image_png(self):
+        image = b"\x89PNG\r\n\x1a\nimage"
+        with patch.object(AppiumManager, "get_device_screenshot", return_value=image):
+            result = server.appium_screenshot()
+        self.assertEqual("image/png", result.media_type)
+        self.assertEqual(image, result.body)
+
+    async def test_linkedin_rewrite_uses_only_the_user_prompt_and_current_model(self):
+        response = type("Response", (), {"output_text": "Bozza generata"})()
+        client = Mock()
+        client.responses.create = Mock(return_value=response)
+        request = server.LinkedInRewriteRequest(prompt="Write in English. Keep it to three sentences.")
+        with patch("agent_runtime.server.get_linkedin_post", return_value={"text": "Testo sorgente"}), \
+             patch.object(server.secrets(), "get_project", return_value="test-key"), \
+             patch("agent_runtime.vinted_ai._build_openai_client", return_value=client), \
+             patch("agent_runtime.server.save_linkedin_rewrite", return_value={"draft": "Bozza generata"}):
+            result = await server.rewrite_linkedin_post("post-1", request)
+
+        self.assertEqual(result["draft"], "Bozza generata")
+        kwargs = client.responses.create.call_args.kwargs
+        self.assertEqual(kwargs["model"], "gpt-5.4-mini")
+        self.assertEqual(kwargs["input"], "Write in English. Keep it to three sentences.")
+        self.assertNotIn("instructions", kwargs)
+
     async def test_browser_session_api_handlers_use_runtime_browser_control(self):
         opened = await server.create_browser_session(
             server.BrowserSessionCreate(
@@ -117,7 +163,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
 
         task = await server.run_ai_news_briefing()
         self.assertEqual("ai-news-navigator", task.requested_agent_id)
-        self.assertEqual("chat", task.channel)
+        self.assertEqual("task", task.channel)
         self.assertEqual("news", task.capability)
 
     async def test_wiki_proposal_api_handlers(self):

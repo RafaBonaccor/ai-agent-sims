@@ -91,6 +91,43 @@ export class RuntimeClient {
     });
   }
 
+  getAppiumStatus() {
+    return this.request("/api/appium/status");
+  }
+
+  startAppium() {
+    return this.request("/api/appium/start", { method: "POST", body: JSON.stringify({}) });
+  }
+
+  stopAppium() {
+    return this.request("/api/appium/stop", { method: "POST", body: JSON.stringify({}) });
+  }
+
+  listAppiumApps(deviceId) {
+    return this.request(`/api/appium/apps?device_id=${encodeURIComponent(deviceId)}`);
+  }
+
+  launchAppiumApp(deviceId, bundleId) {
+    return this.request("/api/appium/launch", {
+      method: "POST",
+      body: JSON.stringify({ device_id: deviceId, bundle_id: bundleId }),
+    });
+  }
+
+  endAppiumSession() {
+    return this.request("/api/appium/end-session", { method: "POST", body: JSON.stringify({}) });
+  }
+
+  async getAppiumScreenshot() {
+    const response = await fetch("/api/appium/screenshot", { headers: { Accept: "image/png" } });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      const detail = formatErrorDetail(body.detail ?? response.statusText ?? "Screenshot failed");
+      throw new Error(`GET /api/appium/screenshot: ${response.status} ${detail}`);
+    }
+    return response.blob();
+  }
+
   getAgentMemory(agentId) {
     return this.request(`/api/agents/${encodeURIComponent(agentId)}/memory`);
   }
@@ -205,6 +242,129 @@ export class RuntimeClient {
     });
   }
 
+  setRunPodSecret(apiKey) {
+    return this.request("/api/secrets/runpod", { method: "PUT", body: JSON.stringify({ api_key: apiKey }) });
+  }
+
+  getRunPodStatus() {
+    return this.request("/api/runpod/status");
+  }
+
+  listRunPodWorkflows() {
+    return this.request("/api/runpod/workflows");
+  }
+
+  getRunPodWorkflow(presetId) {
+    return this.request(`/api/runpod/workflows/${encodeURIComponent(presetId)}`);
+  }
+  getRunPodWorkflowAvailability(presetId) { return this.request(`/api/runpod/workflows/${encodeURIComponent(presetId)}/availability`); }
+
+  listComfyUiPromptPresets() { return this.request("/api/comfyui/prompt-presets"); }
+  generateComfyUiPrompt({ filename, imageBase64 }) { return this.request("/api/comfyui/generate-prompt", { method: "POST", body: JSON.stringify({ filename, image_base64: imageBase64 }) }); }
+
+  listRunPodDataCenters() {
+    return this.request("/api/runpod/datacenters");
+  }
+
+  listRunPodNetworkVolumes() {
+    return this.request("/api/runpod/network-volumes");
+  }
+
+  getRunPodNetworkVolume(volumeId) {
+    return this.request(`/api/runpod/network-volumes/${encodeURIComponent(volumeId)}`);
+  }
+
+  listRunPodGpus(dataCenterId = "") {
+    const query = dataCenterId ? `?data_center_id=${encodeURIComponent(dataCenterId)}` : "";
+    return this.request(`/api/runpod/gpus${query}`);
+  }
+
+  getRunPodGpuWatch() { return this.request("/api/runpod/gpu-watch"); }
+  configureRunPodGpuWatch({ enabled, gpuIds, intervalSeconds }) {
+    return this.request("/api/runpod/gpu-watch", { method: "PUT", body: JSON.stringify({ enabled, gpu_ids: gpuIds, interval_seconds: intervalSeconds }) });
+  }
+  checkRunPodGpuWatch() { return this.request("/api/runpod/gpu-watch/check", { method: "POST" }); }
+  getRunPodGpuHistorySummary() { return this.request("/api/runpod/gpu-watch/history/summary"); }
+
+  createRunPodPod({ name, gpuId }) {
+    return this.request("/api/runpod/pods", {
+      method: "POST",
+      body: JSON.stringify({ name, gpu_id: gpuId }),
+    });
+  }
+
+  startRunPodPod(podId) {
+    return this.request(`/api/runpod/pods/${encodeURIComponent(podId)}/start`, { method: "POST" });
+  }
+
+  stopRunPodPod(podId) {
+    return this.request(`/api/runpod/pods/${encodeURIComponent(podId)}/stop`, { method: "POST" });
+  }
+
+  terminateRunPodPod(podId) {
+    return this.request(`/api/runpod/pods/${encodeURIComponent(podId)}`, { method: "DELETE" });
+  }
+
+  getRunPodComfyUiHealth(podId) {
+    return this.request(`/api/runpod/pods/${encodeURIComponent(podId)}/comfyui/health`);
+  }
+
+  queueRunPodComfyUiPrompt(podId, workflow, { mediaName = "", mediaKind = "", mediaLoaderId = "" } = {}) {
+    return this.request(`/api/runpod/pods/${encodeURIComponent(podId)}/comfyui/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ workflow, media_name: mediaName, media_kind: mediaKind, media_loader_id: mediaLoaderId }),
+    });
+  }
+
+  uploadRunPodComfyUiImage(podId, { filename, dataBase64, overwrite = true }) {
+    return this.uploadRunPodComfyUiMedia(podId, { filename, dataBase64, overwrite });
+  }
+
+  uploadRunPodComfyUiMedia(podId, { filename, dataBase64, overwrite = true }) {
+    return this.request(`/api/runpod/pods/${encodeURIComponent(podId)}/comfyui/upload-media`, {
+      method: "POST",
+      body: JSON.stringify({ filename, data_base64: dataBase64, overwrite }),
+    });
+  }
+
+  getRunPodComfyUiHistory(podId, promptId) {
+    return this.request(`/api/runpod/pods/${encodeURIComponent(podId)}/comfyui/history/${encodeURIComponent(promptId)}`);
+  }
+
+  listRunPodBatches() {
+    return this.request("/api/runpod/batches");
+  }
+
+  createRunPodBatch({ workflow, mediaLoaderId = "", autoDeploy = true, autoShutdown = true, minVramGb = 0, workflowId = "", creativePrompt = "" }) {
+    return this.request("/api/runpod/batches", {
+      method: "POST",
+      body: JSON.stringify({
+        workflow,
+        media_loader_id: mediaLoaderId,
+        auto_deploy: autoDeploy,
+        auto_shutdown: autoShutdown,
+        min_vram_gb: minVramGb,
+        workflow_id: workflowId,
+        creative_prompt: creativePrompt,
+      }),
+    });
+  }
+
+  addRunPodBatchItem(batchId, { filename, dataBase64 }) {
+    return this.request(`/api/runpod/batches/${encodeURIComponent(batchId)}/items`, {
+      method: "POST",
+      body: JSON.stringify({ filename, data_base64: dataBase64 }),
+    });
+  }
+
+  startRunPodBatch(batchId) {
+    return this.request(`/api/runpod/batches/${encodeURIComponent(batchId)}/start`, { method: "POST" });
+  }
+
+  cancelRunPodBatch(batchId) {
+    return this.request(`/api/runpod/batches/${encodeURIComponent(batchId)}/cancel`, { method: "POST" });
+  }
+
   deleteProjectSecret() {
     return this.request("/api/secrets/project", { method: "DELETE" });
   }
@@ -236,6 +396,55 @@ export class RuntimeClient {
     return this.request(`/api/vinted/reports?days=${encodeURIComponent(days)}&limit=${encodeURIComponent(limit)}`);
   }
 
+  getLinkedInPosts(search = "", limit = 500) {
+    return this.request(`/api/linkedin/posts?search=${encodeURIComponent(search)}&limit=${encodeURIComponent(limit)}`);
+  }
+
+  getLinkedInPost(postId) {
+    return this.request(`/api/linkedin/posts/${encodeURIComponent(postId)}`);
+  }
+
+  archiveLinkedInMedia(postId, mediaIndex, poster = false) {
+    return this.request(`/api/linkedin/posts/${encodeURIComponent(postId)}/media/${encodeURIComponent(mediaIndex)}/archive?poster=${poster}`, { method: "POST" });
+  }
+
+  rewriteLinkedInPost(postId, prompt = "") {
+    return this.request(`/api/linkedin/posts/${encodeURIComponent(postId)}/rewrite`, {
+      method: "POST", body: JSON.stringify({ prompt }),
+    });
+  }
+
+  getLinkedInPublisherStatus() {
+    return this.request("/api/linkedin/publisher/status");
+  }
+
+  getLinkedInDrafts() {
+    return this.request("/api/linkedin/publisher/drafts");
+  }
+
+  attachLinkedInDraftSourceImage(draftId) {
+    return this.request(`/api/linkedin/publisher/drafts/${encodeURIComponent(draftId)}/source-image`, { method: "POST" });
+  }
+
+  createLinkedInDraft(body, sourcePostId = "") {
+    return this.request("/api/linkedin/publisher/drafts", {
+      method: "POST", body: JSON.stringify({ body, source_post_id: sourcePostId }),
+    });
+  }
+
+  updateLinkedInDraft(draftId, body) {
+    return this.request(`/api/linkedin/publisher/drafts/${encodeURIComponent(draftId)}`, {
+      method: "PUT", body: JSON.stringify({ body }),
+    });
+  }
+
+  publishLinkedInDraft(draftId, expectedBody) {
+    return this.request(`/api/linkedin/publisher/drafts/${encodeURIComponent(draftId)}/publish`, {
+      method: "POST", headers: { "X-Agent-Lab-Confirm": "publish" },
+      body: JSON.stringify({ expected_body: expectedBody }),
+    });
+  }
+
   getVintedCompetitorReport(memberId, limit = 5000) {
     return this.request(`/api/vinted/reports/competitors/${encodeURIComponent(memberId)}?limit=${encodeURIComponent(limit)}`);
   }
@@ -263,6 +472,12 @@ export class RuntimeClient {
 
   removeVintedOwnedProfile(memberId) {
     return this.request(`/api/vinted/owned-profiles/${encodeURIComponent(memberId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  ignoreVintedOwnedProfileItem(memberId, itemId) {
+    return this.request(`/api/vinted/owned-profiles/${encodeURIComponent(memberId)}/items/${encodeURIComponent(itemId)}`, {
       method: "DELETE",
     });
   }

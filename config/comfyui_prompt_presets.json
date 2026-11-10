@@ -1,0 +1,8 @@
+{
+  "presets": [
+    {"id":"product-orbit","name":"Product orbit","prompt":"Create a clean premium product video from the reference image. Preserve the exact item identity, shape, material, colour, engravings and proportions. Gentle slow camera orbit, subtle realistic movement, neutral coherent home-studio background, soft natural light, vertical composition, no text, no logos, no extra objects."},
+    {"id":"hand-detail","name":"Hand detail","prompt":"Create a realistic close-up product video from the reference image. Preserve the exact item identity. A woman gently holds or presents the item with natural hand movement, focus on fine details, soft daylight, simple background coherent with the object, vertical social-video framing, no face, no text, no logos."},
+    {"id":"worn-detail","name":"Worn detail","prompt":"Create a realistic fashion detail video from the reference image. Preserve the exact product identity and place it naturally where it is worn. Show only the relevant body area, never the face. Subtle movement, believable scale, soft daylight, simple tasteful background, vertical composition, no text or logos."},
+    {"id":"editorial-home","name":"Editorial home","prompt":"Create a refined but believable home-shot product video from the reference image. Preserve the exact item. Gentle camera movement, warm natural lighting, simple non-empty background matched to the product, product remains the clear focus, vertical composition, no text, no logos."}
+  ]
+}

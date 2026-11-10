@@ -4,6 +4,8 @@ import asyncio
 import logging
 import os
 import re
+import json
+from urllib.parse import urlencode
 from pathlib import Path
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -17,10 +19,12 @@ from .models import RuntimeEvent, TaskCreate
 from .project_gateway import ProjectGateway
 from .vinted_reports import write_vinted_report_html
 from .vinted_reports import build_vinted_report
+from .runpod_manager import RunPodManager, RunPodManagerError
+from .runpod_batches import RunPodBatchError, RunPodBatchService
 
 
 LOGGER = logging.getLogger("agent_lab.discord")
-SendMessage = Callable[[str], Awaitable[None]]
+SendMessage = Callable[..., Awaitable[None]]
 DiscordAttachmentType = Any
 
 
@@ -99,9 +103,14 @@ class DiscordGateway:
         if self.project_bridge is None and self.project_gateway is not None:
             self.project_bridge = DiscordProjectBridge(Path(__file__).resolve().parent.parent, self.project_gateway)
         self.codex_bridge = CodexCliBridge(Path(__file__).resolve().parent.parent, logger=self.logger)
+        self.runpod_batches = RunPodBatchService(
+            Path(__file__).resolve().parent.parent / "data" / "runpod_batches",
+            self.runpod_manager,
+        )
         self.pending: dict[str, PendingDiscordTask] = {}
         self.pending_project_jobs: dict[str, tuple[PendingDiscordProjectJob, SendMessage]] = {}
         self.channel_defaults: dict[str, str] = {}
+        self.last_allowed_channel_id: int = self._load_last_allowed_channel_id()
         self.connected = False
         self.enabled = bool(self.config.token)
         self._bot: Any = None
@@ -121,7 +130,184 @@ class DiscordGateway:
             "messageContent": self.config.enable_message_content,
             "allowedGuilds": sorted(self.config.allowed_guild_ids),
             "allowedChannels": sorted(self.config.allowed_channel_ids),
+            "notificationTargetConfigured": bool(self._notification_channel_id()),
         }
+
+    @property
+    def _last_channel_path(self) -> Path:
+        return Path(__file__).resolve().parent.parent / "data" / "discord_last_channel.json"
+
+    def _load_last_allowed_channel_id(self) -> int:
+        try:
+            value = json.loads(self._last_channel_path.read_text(encoding="utf-8")).get("channel_id", 0)
+            return max(0, int(value or 0))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return 0
+
+    def _remember_allowed_channel(self, channel_id: int) -> None:
+        channel_id = max(0, int(channel_id or 0))
+        if not channel_id:
+            return
+        self.last_allowed_channel_id = channel_id
+        try:
+            self._last_channel_path.parent.mkdir(parents=True, exist_ok=True)
+            self._last_channel_path.write_text(json.dumps({"channel_id": channel_id}) + "\n", encoding="utf-8")
+        except OSError:
+            self.logger.exception("discord_last_channel_persist_failed")
+
+    def _notification_channel_id(self) -> int:
+        if self.last_allowed_channel_id:
+            return self.last_allowed_channel_id
+        return min(self.config.allowed_channel_ids) if self.config.allowed_channel_ids else 0
+
+    async def watch_task_result(self, task: Any) -> None:
+        """Route a scheduled agent task result to the last active Discord channel."""
+        channel_id = self._notification_channel_id()
+        if not channel_id:
+            self.logger.warning("discord_scheduled_task_no_target task=%s", getattr(task, "id", ""))
+            return
+
+        async def send(message: str, **_kwargs: Any) -> None:
+            if self._bot is None:
+                raise RuntimeError("Discord bot is not running")
+            channel = self._bot.get_channel(channel_id)
+            if channel is None:
+                channel = await self._bot.fetch_channel(channel_id)
+            for chunk in chunk_discord_message(str(message or "")):
+                await channel.send(chunk, allowed_mentions=self._discord.AllowedMentions.none())
+
+        task_id = str(getattr(task, "id", "") or "")
+        agent_id = str(getattr(task, "requested_agent_id", "") or "ai-news-navigator")
+        description = str(getattr(task, "description", "") or "")
+        if task_id:
+            self.pending[task_id] = PendingDiscordTask(agent_id=agent_id, prompt=description, send=send)
+            self.logger.info("discord_scheduled_task_delivery_registered task=%s channel=%s", task_id, channel_id)
+
+    def runpod_manager(self) -> RunPodManager:
+        secrets = getattr(getattr(self.runtime, "executor", None), "secrets", None)
+        api_key = secrets.get_runpod_api_key() if secrets is not None else None
+        return RunPodManager(self.runtime.get_system_settings().runpod, api_key)
+
+    def load_runpod_workflow_preset(self, preset_id: str) -> tuple[dict[str, object], str, dict[str, object]]:
+        """Load only project-owned saved presets; Discord never accepts arbitrary paths."""
+        requested = str(preset_id or "").strip()
+        library_path = Path(__file__).resolve().parent.parent / "config" / "runpod_workflows.json"
+        try:
+            library = json.loads(library_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RunPodBatchError(f"Workflow library cannot be read: {error}") from error
+        presets = library.get("presets", []) if isinstance(library, dict) else []
+        preset = next((item for item in presets if isinstance(item, dict) and str(item.get("id", "")) == requested), None)
+        if not isinstance(preset, dict):
+            raise RunPodBatchError("Unknown workflow preset. Use `wan-14b-image-to-video` or `seedvr2-native-video`.")
+        path = Path(str(preset.get("path", ""))).expanduser()
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parent.parent / path
+        try:
+            workflow = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RunPodBatchError(f"Saved workflow cannot be read: {error}") from error
+        if not isinstance(workflow, dict) or "nodes" in workflow or "links" in workflow:
+            raise RunPodBatchError("Saved workflow is not ComfyUI API format.")
+        return workflow, str(preset.get("name", requested)), preset
+
+    @staticmethod
+    def find_runpod_media_loader(workflow: dict[str, object], media_kind: str) -> str:
+        """Select the actual upload node, never helper/list loader nodes."""
+        kind = str(media_kind).lower()
+        exact = "loadimage" if kind == "image" else "loadvideo"
+        for node_id, node in workflow.items():
+            if not isinstance(node, dict):
+                continue
+            class_type = str(node.get("class_type", "")).strip().lower()
+            if class_type == exact or (kind == "video" and "loadvideo" in class_type):
+                return str(node_id)
+        raise RunPodBatchError(f"Saved preset has no compatible {exact.title()} input node.")
+
+    async def _announce_runpod_batch_completion(self, batch_id: str, send: SendMessage) -> None:
+        while True:
+            await asyncio.sleep(8)
+            try:
+                batch = self.runpod_batches.get_batch(batch_id)
+            except RunPodBatchError:
+                return
+            status = str(batch.get("status", ""))
+            if status not in {"completed", "completed_with_errors", "failed", "cancelled"}:
+                continue
+            counts = batch.get("counts", {}) if isinstance(batch.get("counts"), dict) else {}
+            summary = f"RunPod batch `{batch_id}` {status}. Completed: {counts.get('completed', 0)} · failed: {counts.get('failed', 0)} · cancelled: {counts.get('cancelled', 0)}."
+            error = str(batch.get("error", "") or "")
+            if error:
+                summary += f"\nError: {error[:700]}"
+            archived_files: list[Path] = []
+            for item in batch.get("items", []) if isinstance(batch.get("items"), list) else []:
+                if not isinstance(item, dict):
+                    continue
+                for index, output in enumerate(item.get("outputs", []) if isinstance(item.get("outputs"), list) else []):
+                    if not isinstance(output, dict):
+                        continue
+                    if output.get("local_path"):
+                        try:
+                            archived_files.append(self.runpod_batches.output_file(batch_id, str(item.get("id", "")), index))
+                        except RunPodBatchError as error:
+                            summary += f"\nCould not attach {output.get('filename', 'output')}: {error}"
+            if archived_files:
+                summary += f"\nAttached {len(archived_files)} generated output file(s)."
+            await send(summary, files=archived_files[:10])
+            return
+
+    def resolve_runpod_pod_id(self, pod_id: str) -> str:
+        requested = str(pod_id or "").strip()
+        if requested:
+            return requested
+        pods = self.runpod_manager().list_pods()
+        running = [pod for pod in pods if str(pod.get("status", "")).upper() == "RUNNING"]
+        candidates = running or pods
+        if len(candidates) != 1:
+            raise RunPodManagerError("Specify pod_id because there is not exactly one current Pod.")
+        return str(candidates[0].get("id", ""))
+
+    def format_runpod_status(self) -> str:
+        manager = self.runpod_manager()
+        status = manager.status()
+        if status.get("error"):
+            return f"Runpod status unavailable: {status['error']}"
+        pods = list(status.get("pods") or [])
+        lines = [
+            "**Runpod Manager**",
+            f"Volume: `{status.get('network_volume_id') or 'not configured'}` · region `{status.get('data_center_id') or 'derived from volume'}`",
+            f"GPU: `{status.get('preferred_gpu') or 'not selected'}`",
+        ]
+        if not pods:
+            lines.append("Pods: none")
+        else:
+            lines.append("Pods:")
+            lines.extend(f"- `{pod.get('name') or pod.get('id')}` — **{pod.get('status') or 'unknown'}** (`{pod.get('id')}`)" for pod in pods)
+        return "\n".join(lines)
+
+    def format_runpod_gpus(self) -> str:
+        manager = self.runpod_manager()
+        settings = self.runtime.get_system_settings().runpod
+        volume = manager.get_network_volume(settings.network_volume_id) if settings.network_volume_id else {}
+        data_center = str(volume.get("dataCenter") or settings.data_center_id or "").strip()
+        if not data_center:
+            raise RunPodManagerError("Configure a Network Volume or data center first.")
+        gpus = manager.list_gpu_types(data_center)
+        lines = [f"**Runpod GPUs for `{data_center}`** ({len(gpus)} available)"]
+        for gpu in gpus[:20]:
+            price = gpu.get("secure_price") or gpu.get("community_price") or "?"
+            lines.append(f"- `{gpu.get('id')}` · {gpu.get('memory_gb', '?')} GB · {gpu.get('stock_status', 'unknown')} · from ${price}/h")
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_runpod_pod_result(action: str, result: dict[str, object]) -> str:
+        return f"{action} Pod `{result.get('name') or result.get('id')}` — **{result.get('status') or 'requested'}**."
+
+    @staticmethod
+    def format_runpod_health(result: dict[str, object]) -> str:
+        if result.get("ok"):
+            return f"ComfyUI is **ready** at `{result.get('url')}`."
+        return f"ComfyUI is not ready: {result.get('error') or 'unknown error'}"
 
     async def start(self) -> None:
         if not self.config.token:
@@ -193,6 +379,215 @@ class DiscordGateway:
             if not await gateway._allow_interaction(interaction):
                 return
             await interaction.response.send_message(gateway.format_agents(), ephemeral=True)
+
+        @bot.tree.command(name="runpod_status", description="Show Runpod Pods, their state, and the configured volume")
+        async def runpod_status_command(interaction: Any) -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            try:
+                await interaction.response.send_message(gateway.format_runpod_status(), ephemeral=True)
+            except RunPodManagerError as error:
+                await interaction.response.send_message(f"Runpod unavailable: {error}", ephemeral=True)
+
+        @bot.tree.command(name="runpod_gpus", description="List GPUs available in the selected Network Volume region")
+        async def runpod_gpus_command(interaction: Any) -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            try:
+                await interaction.followup.send(gateway.format_runpod_gpus(), ephemeral=True)
+            except RunPodManagerError as error:
+                await interaction.followup.send(f"Runpod GPU lookup failed: {error}", ephemeral=True)
+
+        @bot.tree.command(name="runpod_start", description="Start a stopped Runpod Pod")
+        @app_commands.describe(pod_id="Pod ID; leave empty to use the only/current Pod")
+        async def runpod_start_command(interaction: Any, pod_id: str = "") -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            try:
+                result = gateway.runpod_manager().start_pod(gateway.resolve_runpod_pod_id(pod_id))
+                await interaction.followup.send(gateway.format_runpod_pod_result("Started", result), ephemeral=True)
+            except RunPodManagerError as error:
+                await interaction.followup.send(f"Runpod start failed: {error}", ephemeral=True)
+
+        @bot.tree.command(name="runpod_stop", description="Stop a Runpod Pod and release its GPU")
+        @app_commands.describe(pod_id="Pod ID; leave empty to use the only/current Pod", confirm="Must be true to stop the Pod")
+        async def runpod_stop_command(interaction: Any, confirm: bool = False, pod_id: str = "") -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            if not confirm:
+                await interaction.response.send_message("Set `confirm` to true to stop the Pod.", ephemeral=True)
+                return
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            try:
+                result = gateway.runpod_manager().stop_pod(gateway.resolve_runpod_pod_id(pod_id))
+                await interaction.followup.send(gateway.format_runpod_pod_result("Stopped", result), ephemeral=True)
+            except RunPodManagerError as error:
+                await interaction.followup.send(f"Runpod stop failed: {error}", ephemeral=True)
+
+        @bot.tree.command(name="runpod_terminate", description="Permanently terminate a Runpod Pod")
+        @app_commands.describe(pod_id="Pod ID", confirm="Must be true to terminate the Pod")
+        async def runpod_terminate_command(interaction: Any, pod_id: str, confirm: bool = False) -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            if not confirm:
+                await interaction.response.send_message("Set `confirm` to true to permanently terminate the Pod.", ephemeral=True)
+                return
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            try:
+                result = gateway.runpod_manager().terminate_pod(gateway.resolve_runpod_pod_id(pod_id))
+                await interaction.followup.send(f"Terminated Pod `{result['id']}`.", ephemeral=True)
+            except RunPodManagerError as error:
+                await interaction.followup.send(f"Runpod termination failed: {error}", ephemeral=True)
+
+        @bot.tree.command(name="runpod_health", description="Check whether ComfyUI is ready on a Runpod Pod")
+        @app_commands.describe(pod_id="Pod ID; leave empty to use the only/current Pod")
+        async def runpod_health_command(interaction: Any, pod_id: str = "") -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            try:
+                result = gateway.runpod_manager().comfyui_health(gateway.resolve_runpod_pod_id(pod_id))
+                await interaction.followup.send(gateway.format_runpod_health(result), ephemeral=True)
+            except RunPodManagerError as error:
+                await interaction.followup.send(f"ComfyUI health check failed: {error}", ephemeral=True)
+
+        @bot.tree.command(name="runpod_upload_image", description="Upload an attached PNG, JPEG, or WebP image to ComfyUI")
+        @app_commands.describe(image="Image to upload", pod_id="Pod ID; leave empty to use the only/current Pod")
+        async def runpod_upload_image_command(interaction: Any, image: DiscordAttachmentType, pod_id: str = "") -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            content_type = str(getattr(image, "content_type", "") or "")
+            if not content_type.startswith("image/"):
+                await interaction.response.send_message("Attach a PNG, JPEG, or WebP image.", ephemeral=True)
+                return
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            try:
+                content = await image.read()
+                result = gateway.runpod_manager().upload_comfyui_image(
+                    gateway.resolve_runpod_pod_id(pod_id),
+                    str(getattr(image, "filename", "upload.png") or "upload.png"),
+                    content,
+                )
+                uploaded_name = "/".join(part for part in [str(result.get("subfolder", "") or "").strip(), str(result.get("name", "") or "").strip()] if part)
+                await interaction.followup.send(f"Uploaded to ComfyUI. Set `LoadImage.image` to `{uploaded_name}`.", ephemeral=True)
+            except RunPodManagerError as error:
+                await interaction.followup.send(f"Runpod image upload failed: {error}", ephemeral=True)
+
+        @bot.tree.command(name="runpod_upload_media", description="Upload an attached image or video to ComfyUI")
+        @app_commands.describe(media="PNG, JPEG, WebP, MP4, WebM, or MOV file", pod_id="Pod ID; leave empty to use the only/current Pod")
+        async def runpod_upload_media_command(interaction: Any, media: DiscordAttachmentType, pod_id: str = "") -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            content_type = str(getattr(media, "content_type", "") or "")
+            filename = str(getattr(media, "filename", "upload") or "upload")
+            suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            is_video = content_type.startswith("video/") or suffix in {"mp4", "webm", "mov"}
+            is_image = content_type.startswith("image/") or suffix in {"png", "jpg", "jpeg", "webp"}
+            if not (is_video or is_image):
+                await interaction.response.send_message("Attach a PNG, JPEG, WebP, MP4, WebM, or MOV file.", ephemeral=True)
+                return
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            try:
+                content = await media.read()
+                result = gateway.runpod_manager().upload_comfyui_media(
+                    gateway.resolve_runpod_pod_id(pod_id), filename, content,
+                )
+                uploaded_name = "/".join(part for part in [str(result.get("subfolder", "") or "").strip(), str(result.get("name", "") or "").strip()] if part)
+                loader = "LoadVideo" if is_video else "LoadImage"
+                await interaction.followup.send(
+                    f"Uploaded {('video' if is_video else 'image')} to ComfyUI as `{uploaded_name}`. "
+                    f"Attach it to `/runpod_workflow` as `media` to fill compatible `{loader}` nodes automatically.",
+                    ephemeral=True,
+                )
+            except RunPodManagerError as error:
+                await interaction.followup.send(f"Runpod media upload failed: {error}", ephemeral=True)
+
+        @bot.tree.command(name="runpod_batch", description="Run a saved ComfyUI workflow on several attached media files")
+        @app_commands.describe(
+            preset="wan-14b-image-to-video, seedvr2-native-video, or seedvr2-image-upscale",
+            media1="First image/video", media2="Optional media", media3="Optional media", media4="Optional media", media5="Optional media",
+        )
+        async def runpod_batch_command(
+            interaction: Any,
+            preset: str,
+            media1: DiscordAttachmentType,
+            media2: Optional[DiscordAttachmentType] = None,
+            media3: Optional[DiscordAttachmentType] = None,
+            media4: Optional[DiscordAttachmentType] = None,
+            media5: Optional[DiscordAttachmentType] = None,
+        ) -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            attachments = [item for item in (media1, media2, media3, media4, media5) if item is not None]
+            await interaction.response.defer(thinking=True)
+            try:
+                workflow, workflow_name, metadata = gateway.load_runpod_workflow_preset(preset)
+                required_kind = str(metadata.get("input_kind", "image") or "image").lower()
+                loader_id = gateway.find_runpod_media_loader(workflow, required_kind)
+                batch = gateway.runpod_batches.create_batch(
+                    workflow, media_loader_id=loader_id, auto_deploy=True, auto_shutdown=True,
+                    min_vram_gb=int(metadata.get("min_vram_gb", 0) or 0), workflow_id=str(metadata.get("id", preset)),
+                )
+                batch_id = str(batch["id"])
+                for attachment in attachments:
+                    filename = str(getattr(attachment, "filename", "upload") or "upload")
+                    suffix = Path(filename).suffix.lower()
+                    kind = "video" if suffix in {".mp4", ".webm", ".mov", ".mkv", ".avi"} else "image"
+                    if kind != required_kind:
+                        raise RunPodBatchError(f"{filename} is {kind}; preset `{preset}` requires {required_kind} input.")
+                    gateway.runpod_batches.add_item(batch_id, filename, await attachment.read())
+                gateway.runpod_batches.start_batch(batch_id)
+            except (RunPodBatchError, RunPodManagerError) as error:
+                await interaction.followup.send(f"RunPod batch failed to start: {error}", ephemeral=True)
+                return
+            async def send(reply: str, *, files: list[Path] | None = None) -> None:
+                attachments = [discord.File(str(path), filename=path.name) for path in (files or [])]
+                await interaction.followup.send(reply, files=attachments or None, allowed_mentions=discord.AllowedMentions.none())
+            await send(
+                f"RunPod batch `{batch_id}` started · `{workflow_name}` · {len(attachments)} item(s). "
+                "It deploys a Pod only if necessary and closes only a Pod created by this batch."
+            )
+            asyncio.create_task(gateway._announce_runpod_batch_completion(batch_id, send), name=f"discord-runpod-batch-{batch_id}")
+
+        @bot.tree.command(name="runpod_workflow", description="Queue an attached ComfyUI API workflow JSON on a Pod")
+        @app_commands.describe(workflow="ComfyUI API workflow JSON file", media="Optional image/video to insert into loader nodes", pod_id="Pod ID; leave empty to use the only/current Pod")
+        async def runpod_workflow_command(interaction: Any, workflow: DiscordAttachmentType, media: Optional[DiscordAttachmentType] = None, pod_id: str = "") -> None:
+            if not await gateway._allow_interaction(interaction):
+                return
+            if not str(getattr(workflow, "filename", "") or "").lower().endswith(".json"):
+                await interaction.response.send_message("Attach a ComfyUI API workflow `.json` file.", ephemeral=True)
+                return
+            await interaction.response.defer(thinking=True, ephemeral=True)
+            try:
+                import json
+
+                payload = json.loads((await workflow.read()).decode("utf-8"))
+                manager = gateway.runpod_manager()
+                resolved_pod_id = gateway.resolve_runpod_pod_id(pod_id)
+                media_name = ""
+                media_kind = ""
+                injected_nodes = 0
+                if media is not None:
+                    filename = str(getattr(media, "filename", "upload") or "upload")
+                    content_type = str(getattr(media, "content_type", "") or "")
+                    suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                    media_kind = "video" if content_type.startswith("video/") or suffix in {"mp4", "webm", "mov"} else "image"
+                    upload = manager.upload_comfyui_media(resolved_pod_id, filename, await media.read())
+                    media_name = "/".join(part for part in [str(upload.get("subfolder", "") or "").strip(), str(upload.get("name", "") or "").strip()] if part)
+                    payload, injected_nodes = manager.inject_comfyui_media(payload, media_name, media_kind)
+                result = gateway.runpod_manager().queue_comfyui_prompt(
+                    resolved_pod_id, payload,
+                )
+                prompt_id = str(result.get("prompt_id") or result.get("promptId") or "")
+                await interaction.followup.send(
+                    f"Workflow queued{f' · prompt `{prompt_id}`' if prompt_id else ''}"
+                    f"{f' · inserted {media_kind} into {injected_nodes} loader node(s)' if media_name else ''}.",
+                    ephemeral=True,
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError, RunPodManagerError) as error:
+                await interaction.followup.send(f"Runpod workflow failed: {error}", ephemeral=True)
 
         @bot.tree.command(name="report", description="Generate and download the marketplace intelligence HTML report")
         @app_commands.describe(days="Report period in days, from 1 to 365")
@@ -744,6 +1139,17 @@ class DiscordGateway:
             await self._handle_runtime_event(event)
 
     async def _handle_runtime_event(self, event: RuntimeEvent) -> None:
+        if event.type == "runpod.gpu.available":
+            channel_id = self.last_allowed_channel_id or next(iter(self.config.allowed_channel_ids), 0)
+            channel = self._bot.get_channel(channel_id) if self._bot is not None and channel_id else None
+            if channel is not None:
+                name = str(event.data.get("name") or event.entity_id or "RunPod GPU")
+                region = str(event.data.get("region") or "configured region")
+                memory = event.data.get("memory_gb")
+                price = event.data.get("community_price")
+                details = " · ".join(part for part in [f"{memory} GB" if memory else "", f"community ${price}/h" if price else ""] if part)
+                await channel.send(f"🟢 **RunPod GPU available**\n{name} · {region}{f' · {details}' if details else ''}", allowed_mentions=self._discord.AllowedMentions.none())
+            return
         task_id = event.task_id or ""
         if not task_id or task_id not in self.pending:
             job_id = event.entity_id or ""
@@ -797,6 +1203,7 @@ class DiscordGateway:
                 ephemeral=True,
             )
             return False
+        self._remember_allowed_channel(channel_id)
         return True
 
     async def _handle_text_message(self, message: Any) -> None:
@@ -808,6 +1215,7 @@ class DiscordGateway:
         channel_id = int(getattr(channel, "id", 0) or 0)
         if not self._is_allowed(guild_id, channel_id):
             return
+        self._remember_allowed_channel(channel_id)
 
         content = str(getattr(message, "content", "") or "").strip()
         mentioned = self._bot is not None and self._bot.user in getattr(message, "mentions", [])
@@ -831,8 +1239,64 @@ class DiscordGateway:
         content = self._strip_bot_mention(content).strip() if mentioned else content
         default_agent = self.channel_defaults.get(str(channel_id), self.config.default_agent_id)
         parsed = parse_text_command(content, self.config.command_prefix, default_agent, mentioned)
-        async def send(reply: str) -> None:
-            await self._send_channel_message(channel, reply)
+        async def send(reply: str, *, files: list[Path] | None = None) -> None:
+            if files:
+                await channel.send(
+                    content=reply,
+                    files=[self._discord.File(str(path), filename=path.name) for path in files],
+                    allowed_mentions=self._discord.AllowedMentions.none() if self._discord else None,
+                )
+            else:
+                await self._send_channel_message(channel, reply)
+
+        batch_prefix = f"{self.config.command_prefix}runpod-batch"
+        image_upscale_prefix = f"{self.config.command_prefix}upscale-image"
+        video_upscale_prefix = f"{self.config.command_prefix}upscale-video"
+        if content.lower().startswith((batch_prefix, image_upscale_prefix, video_upscale_prefix)):
+            if content.lower().startswith(image_upscale_prefix):
+                preset_id = "seedvr2-image-upscale"
+            elif content.lower().startswith(video_upscale_prefix):
+                preset_id = "seedvr2-native-video"
+            else:
+                preset_id = content[len(batch_prefix):].strip().split(maxsplit=1)[0] if content[len(batch_prefix):].strip() else ""
+            if not preset_id:
+                await send("Usage: `!runpod-batch wan-14b-image-to-video`, `!upscale-image`, or `!upscale-video` + attach media.")
+                return
+            valid_attachments = []
+            for item in attachments:
+                filename = str(getattr(item, "filename", "") or "").strip()
+                suffix = Path(filename).suffix.lower()
+                if suffix in {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".webm", ".mov"}:
+                    valid_attachments.append(item)
+            if not valid_attachments:
+                await send("Attach one or more PNG, JPEG, WebP, MP4, WebM, or MOV files with the batch command.")
+                return
+            try:
+                workflow, workflow_name, metadata = self.load_runpod_workflow_preset(preset_id)
+                required_kind = str(metadata.get("input_kind", "image") or "image").lower()
+                loader_id = self.find_runpod_media_loader(workflow, required_kind)
+                batch = self.runpod_batches.create_batch(
+                    workflow, media_loader_id=loader_id, auto_deploy=True, auto_shutdown=True,
+                    min_vram_gb=int(metadata.get("min_vram_gb", 0) or 0), workflow_id=str(metadata.get("id", preset_id)),
+                )
+                batch_id = str(batch["id"])
+                for attachment in valid_attachments:
+                    self.runpod_batches.add_item(
+                        batch_id,
+                        str(getattr(attachment, "filename", "upload") or "upload"),
+                        await attachment.read(),
+                    )
+                self.runpod_batches.start_batch(batch_id)
+            except (RunPodBatchError, RunPodManagerError) as error:
+                await send(f"RunPod batch failed to start: {error}")
+                return
+            self.logger.info("discord_runpod_batch_started channel_id=%s batch_id=%s preset=%s items=%s", channel_id, batch_id, preset_id, len(valid_attachments))
+            await send(
+                f"RunPod batch `{batch_id}` started · `{workflow_name}` · {len(valid_attachments)} item(s). "
+                "It will deploy a Pod only if none is active, process sequentially, then stop the Pod only if the batch created it."
+            )
+            asyncio.create_task(self._announce_runpod_batch_completion(batch_id, send), name=f"discord-runpod-batch-{batch_id}")
+            return
 
         if (content or attachments) and parsed is None and self.project_bridge is not None:
             eleven_command = self.project_bridge.parse_eleven_script_text_command(
